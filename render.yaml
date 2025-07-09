@@ -1,0 +1,40 @@
+# Simplified Render configuration for the rebuilt application
+databases:
+  - name: document-catalog-db
+    region: oregon
+
+services:
+  # Main FastAPI Application
+  - type: web
+    name: document-catalog-app
+    env: python
+    region: oregon
+    plan: starter
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r simplified_app/requirements.txt
+    startCommand: "cd simplified_app && python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: "/health"
+    envVars:
+      - key: ENVIRONMENT
+        value: "production"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: document-catalog-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false # Set manually in Render dashboard
+      - key: OPENAI_API_KEY
+        sync: false # Set manually in Render dashboard
+      - key: STORAGE_TYPE
+        value: "render_disk"
+      - key: MAX_FILE_SIZE
+        value: "104857600" # 100MB
+      - key: MAX_CONCURRENT_PROCESSING
+        value: "2"
+    disk:
+      name: document-storage
+      mountPath: /opt/render/project/storage
+      sizeGB: 10

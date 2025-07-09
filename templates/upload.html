@@ -1,0 +1,370 @@
+{% extends "base.html" %} {% block title %}Upload Documents - Document Catalog{%
+endblock %} {% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-8">
+    <div class="card">
+      <div class="card-header">
+        <h5 class="mb-0"><i class="fas fa-upload me-2"></i>Upload Documents</h5>
+      </div>
+      <div class="card-body">
+        <!-- Upload Form -->
+        <form id="uploadForm" enctype="multipart/form-data">
+          <div class="upload-area mb-4" id="uploadArea">
+            <i class="fas fa-cloud-upload-alt fa-3x text-muted mb-3"></i>
+            <h5 class="text-muted">Drag & Drop Files Here</h5>
+            <p class="text-muted mb-3">or click to browse</p>
+            <input
+              type="file"
+              id="fileInput"
+              name="files"
+              multiple
+              accept=".pdf,.jpg,.jpeg,.png,.txt,.docx"
+              style="display: none"
+            />
+            <button
+              type="button"
+              class="btn btn-outline-primary"
+              onclick="document.getElementById('fileInput').click()"
+            >
+              <i class="fas fa-folder-open me-2"></i>Choose Files
+            </button>
+          </div>
+
+          <!-- File List -->
+          <div id="fileList" class="mb-4" style="display: none">
+            <h6>Selected Files:</h6>
+            <div id="selectedFiles"></div>
+          </div>
+
+          <!-- Upload Button -->
+          <div class="text-center">
+            <button
+              type="submit"
+              class="btn btn-primary btn-lg"
+              id="uploadBtn"
+              disabled
+            >
+              <i class="fas fa-upload me-2"></i>Upload Documents
+            </button>
+          </div>
+        </form>
+
+        <!-- Progress Section -->
+        <div id="uploadProgress" class="mt-4" style="display: none">
+          <h6>Upload Progress:</h6>
+          <div class="progress mb-3">
+            <div
+              class="progress-bar"
+              role="progressbar"
+              style="width: 0%"
+              id="progressBar"
+            ></div>
+          </div>
+          <div id="uploadStatus"></div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="uploadResults" class="mt-4" style="display: none">
+          <h6>Upload Results:</h6>
+          <div id="resultsContent"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Upload Guidelines -->
+    <div class="card mt-4">
+      <div class="card-header">
+        <h6 class="mb-0">
+          <i class="fas fa-info-circle me-2"></i>Upload Guidelines
+        </h6>
+      </div>
+      <div class="card-body">
+        <div class="row">
+          <div class="col-md-6">
+            <h6>Supported File Types:</h6>
+            <ul class="list-unstyled">
+              <li>
+                <i class="fas fa-file-pdf text-danger me-2"></i>PDF Documents
+              </li>
+              <li>
+                <i class="fas fa-file-image text-primary me-2"></i>Images (JPG,
+                PNG)
+              </li>
+              <li>
+                <i class="fas fa-file-alt text-secondary me-2"></i>Text Files
+              </li>
+              <li>
+                <i class="fas fa-file-word text-info me-2"></i>Word Documents
+              </li>
+            </ul>
+          </div>
+          <div class="col-md-6">
+            <h6>Processing Information:</h6>
+            <ul class="list-unstyled">
+              <li>
+                <i class="fas fa-robot text-success me-2"></i>AI analysis
+                automatically performed
+              </li>
+              <li>
+                <i class="fas fa-search text-warning me-2"></i>Text extraction
+                and indexing
+              </li>
+              <li>
+                <i class="fas fa-tags text-info me-2"></i>Keyword and category
+                detection
+              </li>
+              <li>
+                <i class="fas fa-eye text-primary me-2"></i>Preview generation
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div class="alert alert-info mt-3">
+          <i class="fas fa-lightbulb me-2"></i>
+          <strong>Tip:</strong> Documents are processed in the background. You
+          can check processing status in the search interface.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %} {% block scripts %}
+<script>
+  $(document).ready(function () {
+    let selectedFiles = [];
+
+    // File input change handler
+    $("#fileInput").on("change", function (e) {
+      handleFiles(e.target.files);
+    });
+
+    // Drag and drop handlers
+    $("#uploadArea")
+      .on("dragover", function (e) {
+        e.preventDefault();
+        $(this).addClass("dragover");
+      })
+      .on("dragleave", function (e) {
+        e.preventDefault();
+        $(this).removeClass("dragover");
+      })
+      .on("drop", function (e) {
+        e.preventDefault();
+        $(this).removeClass("dragover");
+        handleFiles(e.originalEvent.dataTransfer.files);
+      });
+
+    // Handle selected files
+    function handleFiles(files) {
+      selectedFiles = Array.from(files);
+      displaySelectedFiles();
+      $("#uploadBtn").prop("disabled", selectedFiles.length === 0);
+    }
+
+    // Display selected files
+    function displaySelectedFiles() {
+      const container = $("#selectedFiles");
+      container.empty();
+
+      if (selectedFiles.length === 0) {
+        $("#fileList").hide();
+        return;
+      }
+
+      $("#fileList").show();
+
+      selectedFiles.forEach((file, index) => {
+        const fileSize = (file.size / 1024 / 1024).toFixed(2);
+        const fileIcon = getFileIcon(file.name);
+
+        container.append(`
+                    <div class="d-flex justify-content-between align-items-center border rounded p-2 mb-2">
+                        <div>
+                            <i class="${fileIcon} me-2"></i>
+                            <strong>${file.name}</strong>
+                            <small class="text-muted ms-2">(${fileSize} MB)</small>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeFile(${index})">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                `);
+      });
+    }
+
+    // Remove file from selection
+    window.removeFile = function (index) {
+      selectedFiles.splice(index, 1);
+      displaySelectedFiles();
+      $("#uploadBtn").prop("disabled", selectedFiles.length === 0);
+    };
+
+    // Get file icon based on extension
+    function getFileIcon(filename) {
+      const ext = filename.split(".").pop().toLowerCase();
+      switch (ext) {
+        case "pdf":
+          return "fas fa-file-pdf text-danger";
+        case "jpg":
+        case "jpeg":
+        case "png":
+          return "fas fa-file-image text-primary";
+        case "txt":
+          return "fas fa-file-alt text-secondary";
+        case "docx":
+        case "doc":
+          return "fas fa-file-word text-info";
+        default:
+          return "fas fa-file text-muted";
+      }
+    }
+
+    // Form submission
+    $("#uploadForm").on("submit", function (e) {
+      e.preventDefault();
+
+      if (selectedFiles.length === 0) {
+        alert("Please select files to upload.");
+        return;
+      }
+
+      uploadFiles();
+    });
+
+    // Upload files
+    function uploadFiles() {
+      const formData = new FormData();
+
+      selectedFiles.forEach((file) => {
+        formData.append("files", file);
+      });
+
+      // Show progress
+      $("#uploadProgress").show();
+      $("#uploadBtn").prop("disabled", true);
+      $("#progressBar").css("width", "0%");
+      $("#uploadStatus").text("Preparing upload...");
+
+      // Create XMLHttpRequest for progress tracking
+      const xhr = new XMLHttpRequest();
+
+      // Progress handler
+      xhr.upload.addEventListener("progress", function (e) {
+        if (e.lengthComputable) {
+          const percentComplete = (e.loaded / e.total) * 100;
+          $("#progressBar").css("width", percentComplete + "%");
+          $("#uploadStatus").text(
+            `Uploading... ${Math.round(percentComplete)}%`
+          );
+        }
+      });
+
+      // Success handler
+      xhr.addEventListener("load", function () {
+        if (xhr.status === 200) {
+          try {
+            const response = JSON.parse(xhr.responseText);
+            handleUploadSuccess(response);
+          } catch (e) {
+            handleUploadError("Invalid response from server");
+          }
+        } else {
+          handleUploadError(`Upload failed with status: ${xhr.status}`);
+        }
+      });
+
+      // Error handler
+      xhr.addEventListener("error", function () {
+        handleUploadError("Upload failed due to network error");
+      });
+
+      // Send request
+      xhr.open("POST", "/api/documents/upload");
+      xhr.send(formData);
+    }
+
+    // Handle upload success
+    function handleUploadSuccess(response) {
+      $("#progressBar").css("width", "100%");
+      $("#uploadStatus").text("Upload completed!");
+
+      const resultsContainer = $("#resultsContent");
+      resultsContainer.empty();
+
+      if (response.success) {
+        resultsContainer.append(`
+                    <div class="alert alert-success">
+                        <i class="fas fa-check-circle me-2"></i>
+                        ${response.message}
+                    </div>
+                `);
+
+        if (response.documents && response.documents.length > 0) {
+          resultsContainer.append("<h6>Uploaded Documents:</h6>");
+          response.documents.forEach((doc) => {
+            resultsContainer.append(`
+                            <div class="d-flex justify-content-between align-items-center border rounded p-2 mb-2">
+                                <div>
+                                    <i class="fas fa-file-alt me-2"></i>
+                                    <strong>${doc.filename}</strong>
+                                    <span class="badge bg-info ms-2">${doc.status}</span>
+                                </div>
+                                <small class="text-muted">ID: ${doc.id}</small>
+                            </div>
+                        `);
+          });
+        }
+
+        // Reset form after successful upload
+        setTimeout(() => {
+          resetForm();
+        }, 3000);
+      } else {
+        resultsContainer.append(`
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        ${response.message || "Upload completed with warnings"}
+                    </div>
+                `);
+      }
+
+      $("#uploadResults").show();
+    }
+
+    // Handle upload error
+    function handleUploadError(message) {
+      $("#uploadStatus").text("Upload failed!");
+      $("#progressBar")
+        .removeClass("bg-primary")
+        .addClass("bg-danger")
+        .css("width", "100%");
+
+      const resultsContainer = $("#resultsContent");
+      resultsContainer.empty();
+      resultsContainer.append(`
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-circle me-2"></i>
+                    ${message}
+                </div>
+            `);
+
+      $("#uploadResults").show();
+      $("#uploadBtn").prop("disabled", false);
+    }
+
+    // Reset form
+    function resetForm() {
+      selectedFiles = [];
+      $("#fileInput").val("");
+      $("#fileList").hide();
+      $("#uploadProgress").hide();
+      $("#uploadResults").hide();
+      $("#uploadBtn").prop("disabled", true);
+      $("#progressBar")
+        .removeClass("bg-danger")
+        .addClass("bg-primary")
+        .css("width", "0%");
+    }
+  });
+</script>
+{% endblock %}

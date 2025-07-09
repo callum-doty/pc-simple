@@ -1,0 +1,11 @@
+# Environment variables
+.env
+
+# Python cache
+__pycache__/
+
+# Database files
+*.db
+
+# Development storage
+dev_storage/

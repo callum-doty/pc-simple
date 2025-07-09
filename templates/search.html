@@ -1,0 +1,447 @@
+{% extends "base.html" %} {% block title %}Search Documents - Document Catalog{%
+endblock %} {% block content %}
+<div class="row">
+  <div class="col-md-8">
+    <!-- Search Form -->
+    <div class="card mb-4">
+      <div class="card-body">
+        <h5 class="card-title">
+          <i class="fas fa-search me-2"></i>Search Documents
+        </h5>
+        <form id="searchForm">
+          <div class="row">
+            <div class="col-md-8">
+              <input
+                type="text"
+                class="form-control"
+                id="searchQuery"
+                placeholder="Search documents by filename, content, or keywords..."
+              />
+            </div>
+            <div class="col-md-4">
+              <button type="submit" class="btn btn-primary w-100">
+                <i class="fas fa-search me-1"></i>Search
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Search Results -->
+    <div id="searchResults">
+      <div class="text-center py-5">
+        <i class="fas fa-search fa-3x text-muted mb-3"></i>
+        <h5 class="text-muted">Enter a search term to find documents</h5>
+      </div>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div id="loadingSpinner" class="text-center py-5" style="display: none">
+      <div class="spinner-border text-primary" role="status">
+        <span class="visually-hidden">Loading...</span>
+      </div>
+      <p class="mt-2 text-muted">Searching documents...</p>
+    </div>
+  </div>
+
+  <div class="col-md-4">
+    <!-- Filters -->
+    <div class="card mb-4">
+      <div class="card-header">
+        <h6 class="mb-0"><i class="fas fa-filter me-2"></i>Filters</h6>
+      </div>
+      <div class="card-body">
+        <div class="mb-3">
+          <label for="primaryCategoryFilter" class="form-label"
+            >Primary Category</label
+          >
+          <select class="form-select" id="primaryCategoryFilter">
+            <option value="">All Primary Categories</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label for="subcategoryFilter" class="form-label">Subcategory</label>
+          <select class="form-select" id="subcategoryFilter" disabled>
+            <option value="">All Subcategories</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label for="categoryFilter" class="form-label"
+            >Specific Category</label
+          >
+          <select class="form-select" id="categoryFilter">
+            <option value="">All Categories</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label for="sortBy" class="form-label">Sort By</label>
+          <select class="form-select" id="sortBy">
+            <option value="created_at">Upload Date</option>
+            <option value="filename">Filename</option>
+            <option value="file_size">File Size</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label for="sortDirection" class="form-label">Sort Direction</label>
+          <select class="form-select" id="sortDirection">
+            <option value="desc">Newest First</option>
+            <option value="asc">Oldest First</option>
+          </select>
+        </div>
+        <button
+          type="button"
+          class="btn btn-outline-secondary btn-sm"
+          id="clearFilters"
+        >
+          <i class="fas fa-times me-1"></i>Clear Filters
+        </button>
+      </div>
+    </div>
+
+    <!-- Quick Stats -->
+    <div class="card">
+      <div class="card-header">
+        <h6 class="mb-0"><i class="fas fa-chart-bar me-2"></i>Quick Stats</h6>
+      </div>
+      <div class="card-body">
+        <div id="quickStats">
+          <div class="d-flex justify-content-between mb-2">
+            <span>Total Documents:</span>
+            <span class="badge bg-primary" id="totalDocs">-</span>
+          </div>
+          <div class="d-flex justify-content-between mb-2">
+            <span>Categories:</span>
+            <span class="badge bg-info" id="totalCategories">-</span>
+          </div>
+          <div class="d-flex justify-content-between">
+            <span>Search Results:</span>
+            <span class="badge bg-success" id="searchCount">-</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Document Card Template -->
+<template id="documentCardTemplate">
+  <div class="card document-card mb-3">
+    <div class="row g-0">
+      <div class="col-md-3">
+        <div class="preview-container p-3">
+          <img
+            src=""
+            class="img-fluid preview-image rounded"
+            alt="Document preview"
+          />
+        </div>
+      </div>
+      <div class="col-md-9">
+        <div class="card-body">
+          <h6 class="card-title">
+            <i class="fas fa-file-alt me-2"></i>
+            <span class="filename"></span>
+          </h6>
+          <p class="card-text summary text-muted"></p>
+          <div class="extra-info mb-2"></div>
+          <div class="keywords mb-2"></div>
+          <div class="d-flex justify-content-between align-items-center">
+            <small class="text-muted">
+              <i class="fas fa-calendar me-1"></i>
+              <span class="upload-date"></span>
+            </small>
+            <div class="btn-group btn-group-sm">
+              <button type="button" class="btn btn-outline-primary view-btn">
+                <i class="fas fa-eye"></i>
+              </button>
+              <button type="button" class="btn btn-outline-info download-btn">
+                <i class="fas fa-download"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+{% endblock %} {% block scripts %}
+<script>
+  $(document).ready(function () {
+    let currentPage = 1;
+    let currentQuery = "";
+    let currentFilters = {};
+
+    // Search form submission
+    $("#searchForm").on("submit", function (e) {
+      e.preventDefault();
+      currentQuery = $("#searchQuery").val();
+      currentPage = 1;
+      performSearch();
+    });
+
+    // Filter changes
+    $(
+      "#primaryCategoryFilter, #subcategoryFilter, #categoryFilter, #sortBy, #sortDirection"
+    ).on("change", function () {
+      currentPage = 1;
+      performSearch();
+    });
+
+    // Primary category change - load subcategories
+    $("#primaryCategoryFilter").on("change", function () {
+      const primaryCategory = $(this).val();
+      const subcategorySelect = $("#subcategoryFilter");
+
+      subcategorySelect
+        .empty()
+        .append('<option value="">All Subcategories</option>');
+
+      if (primaryCategory) {
+        subcategorySelect.prop("disabled", false);
+        // Load subcategories for the selected primary category
+        fetch(
+          `/api/taxonomy/categories/${encodeURIComponent(
+            primaryCategory
+          )}/subcategories`
+        )
+          .then((response) => response.json())
+          .then((data) => {
+            if (data.success && data.subcategories) {
+              data.subcategories.forEach((subcategory) => {
+                subcategorySelect.append(
+                  `<option value="${subcategory.name}">${subcategory.name} (${subcategory.count})</option>`
+                );
+              });
+            }
+          })
+          .catch((error) =>
+            console.error("Error loading subcategories:", error)
+          );
+      } else {
+        subcategorySelect.prop("disabled", true);
+      }
+
+      currentPage = 1;
+      performSearch();
+    });
+
+    // Clear filters
+    $("#clearFilters").on("click", function () {
+      $("#primaryCategoryFilter").val("");
+      $("#subcategoryFilter").val("").prop("disabled", true);
+      $("#categoryFilter").val("");
+      $("#sortBy").val("created_at");
+      $("#sortDirection").val("desc");
+      currentPage = 1;
+      performSearch();
+    });
+
+    // Perform search
+    function performSearch() {
+      const query = $("#searchQuery").val();
+      const category = $("#categoryFilter").val();
+      const sortBy = $("#sortBy").val();
+      const sortDirection = $("#sortDirection").val();
+
+      $("#loadingSpinner").show();
+      $("#searchResults").hide();
+
+      const params = new URLSearchParams({
+        q: query,
+        page: currentPage,
+        per_page: 20,
+        sort_by: sortBy,
+        sort_direction: sortDirection,
+      });
+
+      if (category) {
+        params.append("category", category);
+      }
+
+      fetch(`/api/documents/search?${params}`)
+        .then((response) => response.json())
+        .then((data) => {
+          displaySearchResults(data);
+          updateStats(data);
+          updateFilters(data.facets);
+        })
+        .catch((error) => {
+          console.error("Search error:", error);
+          showError("An error occurred while searching. Please try again.");
+        })
+        .finally(() => {
+          $("#loadingSpinner").hide();
+          $("#searchResults").show();
+        });
+    }
+
+    // Display search results
+    function displaySearchResults(data) {
+      const container = $("#searchResults");
+      container.empty();
+
+      if (data.documents && data.documents.length > 0) {
+        data.documents.forEach((doc) => {
+          const card = createDocumentCard(doc);
+          container.append(card);
+        });
+
+        // Add pagination if needed
+        if (data.pagination && data.pagination.pages > 1) {
+          const pagination = createPagination(data.pagination);
+          container.append(pagination);
+        }
+      } else {
+        container.html(`
+                <div class="text-center py-5">
+                    <i class="fas fa-search fa-3x text-muted mb-3"></i>
+                    <h5 class="text-muted">No documents found</h5>
+                    <p class="text-muted">Try adjusting your search terms or filters.</p>
+                </div>
+            `);
+      }
+    }
+
+    // Create document card
+    function createDocumentCard(doc) {
+      const template = $("#documentCardTemplate").html();
+      const card = $(template);
+
+      card.find(".filename").text(doc.filename);
+      card.find(".summary").text(doc.summary || "No summary available");
+      card
+        .find(".upload-date")
+        .text(new Date(doc.created_at).toLocaleDateString());
+
+      // Set preview image
+      if (doc.preview_url) {
+        card.find(".preview-image").attr("src", doc.preview_url);
+      } else {
+        card.find(".preview-image").attr("src", "/static/placeholder.svg");
+      }
+
+      const keywordsContainer = card.find(".keywords");
+      // Add keywords
+      if (doc.keywords && doc.keywords.length > 0) {
+        doc.keywords.forEach((keyword) => {
+          keywordsContainer.append(`
+                    <span class="badge bg-secondary keyword-badge me-1">${keyword}</span>
+                `);
+        });
+      }
+
+      // Add extra info
+      const extraInfoContainer = card.find(".extra-info");
+      if (doc.document_type) {
+        extraInfoContainer.append(`
+            <span class="badge bg-primary me-1">${doc.document_type}</span>
+        `);
+      }
+      if (doc.campaign_type) {
+        extraInfoContainer.append(`
+            <span class="badge bg-success me-1">${doc.campaign_type}</span>
+        `);
+      }
+      if (doc.document_tone) {
+        extraInfoContainer.append(`
+            <span class="badge bg-warning me-1">${doc.document_tone}</span>
+        `);
+      }
+
+      // Add keywords
+      if (doc.keywords && doc.keywords.length > 0) {
+        doc.keywords.forEach((keyword) => {
+          keywordsContainer.append(`
+                    <span class="badge bg-secondary keyword-badge me-1">${keyword}</span>
+                `);
+        });
+      }
+
+      // Add categories
+      if (doc.categories && doc.categories.length > 0) {
+        doc.categories.forEach((category) => {
+          keywordsContainer.append(`
+                    <span class="badge bg-info keyword-badge me-1">${category}</span>
+                `);
+        });
+      }
+
+      // Add event handlers
+      card.find(".view-btn").on("click", () => viewDocument(doc.id));
+      card.find(".download-btn").on("click", () => downloadDocument(doc.id));
+
+      return card;
+    }
+
+    // Update stats
+    function updateStats(data) {
+      $("#searchCount").text(data.total_count || 0);
+    }
+
+    // Update filters
+    function updateFilters(facets) {
+      const categorySelect = $("#categoryFilter");
+      const primaryCategorySelect = $("#primaryCategoryFilter");
+      const currentCategoryValue = categorySelect.val();
+      const currentPrimaryValue = primaryCategorySelect.val();
+
+      // Update specific categories
+      categorySelect.find("option:not(:first)").remove();
+      if (facets && facets.categories) {
+        facets.categories.forEach((category) => {
+          categorySelect.append(`
+                    <option value="${category.name}">${category.name} (${category.count})</option>
+                `);
+        });
+      }
+      categorySelect.val(currentCategoryValue);
+
+      // Update primary categories
+      primaryCategorySelect.find("option:not(:first)").remove();
+      if (facets && facets.primary_categories) {
+        facets.primary_categories.forEach((category) => {
+          primaryCategorySelect.append(`
+                    <option value="${category.name}">${category.name} (${category.count})</option>
+                `);
+        });
+      }
+      primaryCategorySelect.val(currentPrimaryValue);
+    }
+
+    // View document
+    function viewDocument(docId) {
+      window.open(`/api/documents/${docId}/preview`, "_blank");
+    }
+
+    // Download document
+    function downloadDocument(docId) {
+      window.location.href = `/api/documents/${docId}/download`;
+    }
+
+    // Show error message
+    function showError(message) {
+      $("#searchResults").html(`
+            <div class="alert alert-danger">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                ${message}
+            </div>
+        `);
+    }
+
+    // Load initial stats
+    fetch("/api/stats")
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.success) {
+          $("#totalDocs").text(data.stats.total_documents || 0);
+          $("#totalCategories").text(data.stats.status_counts?.completed || 0);
+        }
+      })
+      .catch((error) => console.error("Stats error:", error));
+
+    // Perform initial search to show recent documents
+    performSearch();
+  });
+</script>
+{% endblock %}
