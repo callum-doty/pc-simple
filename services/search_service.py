@@ -13,6 +13,7 @@ from models.document import Document, DocumentStatus
 from models.taxonomy import TaxonomyTerm
 from config import get_settings
 from services.preview_service import PreviewService
+import datetime
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -24,129 +25,6 @@ class SearchService:
     def __init__(self):
         self.db = SessionLocal()
         self.preview_service = PreviewService()
-
-    async def search(
-        self,
-        query: str = "",
-        page: int = 1,
-        per_page: int = 20,
-        category: Optional[str] = None,
-        status: Optional[str] = None,
-        sort_by: str = "created_at",
-        sort_direction: str = "desc",
-    ) -> Dict[str, Any]:
-        """
-        Search documents with filtering and pagination
-        Returns documents, pagination info, and facets
-        """
-        try:
-            # Build base query
-            base_query = self.db.query(Document).filter(
-                Document.status == DocumentStatus.COMPLETED
-            )
-
-            # Apply text search
-            if query.strip():
-                search_term = f"%{query.strip()}%"
-                base_query = base_query.filter(
-                    or_(
-                        Document.filename.ilike(search_term),
-                        Document.search_content.ilike(search_term),
-                        Document.extracted_text.ilike(search_term),
-                    )
-                )
-
-            # Apply category filter
-            if category:
-                # Search in keywords JSON field
-                base_query = base_query.filter(
-                    Document.keywords.op("->>")("categories").op("?")(category)
-                )
-
-            # Apply status filter
-            if status:
-                base_query = base_query.filter(Document.status == status)
-
-            # Get total count for pagination
-            total_count = base_query.count()
-
-            # Apply sorting
-            if sort_direction.lower() == "desc":
-                base_query = base_query.order_by(desc(getattr(Document, sort_by)))
-            else:
-                base_query = base_query.order_by(getattr(Document, sort_by))
-
-            # Apply pagination
-            offset = (page - 1) * per_page
-            documents = base_query.offset(offset).limit(per_page).all()
-
-            # Format documents for response
-            formatted_docs = []
-            for doc in documents:
-                # Generate preview URL dynamically
-                preview_url = self.preview_service.get_preview_url(doc.file_path)
-
-                formatted_doc = {
-                    "id": doc.id,
-                    "filename": doc.filename,
-                    "file_size": doc.file_size,
-                    "status": doc.status,
-                    "created_at": (
-                        doc.created_at.isoformat() if doc.created_at else None
-                    ),
-                    "summary": doc.get_summary(),
-                    "categories": doc.get_categories(),
-                    "keywords": doc.get_keyword_list(),
-                    "preview_url": preview_url,
-                    "file_type": doc.get_metadata("file_type", "unknown"),
-                    "document_type": (
-                        doc.ai_analysis.get("document_analysis", {}).get(
-                            "document_type"
-                        )
-                        if doc.ai_analysis
-                        else None
-                    ),
-                    "campaign_type": (
-                        doc.ai_analysis.get("document_analysis", {}).get(
-                            "campaign_type"
-                        )
-                        if doc.ai_analysis
-                        else None
-                    ),
-                    "document_tone": (
-                        doc.ai_analysis.get("document_analysis", {}).get(
-                            "document_tone"
-                        )
-                        if doc.ai_analysis
-                        else None
-                    ),
-                }
-                formatted_docs.append(formatted_doc)
-
-            # Generate pagination info
-            pagination = self._create_pagination_info(page, per_page, total_count)
-
-            # Generate facets (categories for filtering)
-            facets = await self._generate_facets()
-
-            return {
-                "documents": formatted_docs,
-                "pagination": pagination,
-                "facets": facets,
-                "total_count": total_count,
-                "query": query,
-            }
-
-        except Exception as e:
-            logger.error(f"Error in search: {str(e)}")
-            return {
-                "documents": [],
-                "pagination": {"page": 1, "per_page": per_page, "total": 0, "pages": 0},
-                "facets": {"categories": []},
-                "total_count": 0,
-                "query": query,
-                "error": str(e),
-            }
 
     def _create_pagination_info(
         self, page: int, per_page: int, total_count: int
@@ -445,6 +323,369 @@ class SearchService:
         except Exception as e:
             logger.error(f"Error getting all categories: {str(e)}")
             return []
+
+    async def search_by_canonical_term(
+        self, canonical_term: str, limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """Search documents by canonical taxonomy term"""
+        try:
+            documents = []
+
+            docs_with_keywords = (
+                self.db.query(Document)
+                .filter(
+                    Document.status == DocumentStatus.COMPLETED,
+                    Document.keywords.isnot(None),
+                )
+                .all()
+            )
+
+            for doc in docs_with_keywords:
+                keyword_mappings = doc.get_keyword_mappings()
+
+                # Check if any mapping contains the canonical term
+                for mapping in keyword_mappings:
+                    if (
+                        mapping.get("mapped_canonical_term", "").lower()
+                        == canonical_term.lower()
+                    ):
+                        documents.append(
+                            {
+                                "id": doc.id,
+                                "filename": doc.filename,
+                                "created_at": (
+                                    doc.created_at.isoformat()
+                                    if doc.created_at
+                                    else None
+                                ),
+                                "summary": doc.get_summary(),
+                                "categories": doc.get_categories(),
+                                "keywords": doc.get_keyword_list(),
+                                "mapping_count": doc.get_mapping_count(),
+                                "matched_mapping": mapping,  # Include the specific mapping that matched
+                                "preview_url": self.preview_service.get_preview_url(
+                                    doc.file_path
+                                ),
+                            }
+                        )
+                        break  # Only add document once even if multiple mappings match
+
+            # Sort by creation date and limit
+            documents.sort(key=lambda x: x["created_at"] or "", reverse=True)
+            return documents[:limit]
+
+        except Exception as e:
+            logger.error(
+                f"Error searching by canonical term {canonical_term}: {str(e)}"
+            )
+            return []
+
+    async def search_by_verbatim_term(
+        self, verbatim_term: str, limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """Search documents by verbatim term extracted from documents"""
+        try:
+            documents = []
+
+            docs_with_keywords = (
+                self.db.query(Document)
+                .filter(
+                    Document.status == DocumentStatus.COMPLETED,
+                    Document.keywords.isnot(None),
+                )
+                .all()
+            )
+
+            for doc in docs_with_keywords:
+                keyword_mappings = doc.get_keyword_mappings()
+
+                # Check if any mapping contains the verbatim term
+                for mapping in keyword_mappings:
+                    if (
+                        verbatim_term.lower()
+                        in mapping.get("verbatim_term", "").lower()
+                    ):
+                        documents.append(
+                            {
+                                "id": doc.id,
+                                "filename": doc.filename,
+                                "created_at": (
+                                    doc.created_at.isoformat()
+                                    if doc.created_at
+                                    else None
+                                ),
+                                "summary": doc.get_summary(),
+                                "categories": doc.get_categories(),
+                                "keywords": doc.get_keyword_list(),
+                                "mapping_count": doc.get_mapping_count(),
+                                "matched_mapping": mapping,
+                                "preview_url": self.preview_service.get_preview_url(
+                                    doc.file_path
+                                ),
+                            }
+                        )
+                        break
+
+            documents.sort(key=lambda x: x["created_at"] or "", reverse=True)
+            return documents[:limit]
+
+        except Exception as e:
+            logger.error(f"Error searching by verbatim term {verbatim_term}: {str(e)}")
+            return []
+
+    async def get_mapping_statistics(self) -> Dict[str, Any]:
+        """Get statistics about keyword mappings across all documents"""
+        try:
+            docs_with_keywords = (
+                self.db.query(Document)
+                .filter(
+                    Document.status == DocumentStatus.COMPLETED,
+                    Document.keywords.isnot(None),
+                )
+                .all()
+            )
+
+            total_mappings = 0
+            canonical_term_counts = {}
+            primary_category_counts = {}
+            verbatim_terms = set()
+
+            for doc in docs_with_keywords:
+                mappings = doc.get_keyword_mappings()
+                total_mappings += len(mappings)
+
+                for mapping in mappings:
+                    # Count canonical terms
+                    canonical_term = mapping.get("mapped_canonical_term", "")
+                    if canonical_term:
+                        canonical_term_counts[canonical_term] = (
+                            canonical_term_counts.get(canonical_term, 0) + 1
+                        )
+
+                    # Count primary categories
+                    primary_category = mapping.get("mapped_primary_category", "")
+                    if primary_category:
+                        primary_category_counts[primary_category] = (
+                            primary_category_counts.get(primary_category, 0) + 1
+                        )
+
+                    # Collect unique verbatim terms
+                    verbatim_term = mapping.get("verbatim_term", "")
+                    if verbatim_term:
+                        verbatim_terms.add(verbatim_term)
+
+            return {
+                "total_documents_with_mappings": len(docs_with_keywords),
+                "total_keyword_mappings": total_mappings,
+                "average_mappings_per_document": (
+                    total_mappings / len(docs_with_keywords)
+                    if docs_with_keywords
+                    else 0
+                ),
+                "unique_verbatim_terms": len(verbatim_terms),
+                "unique_canonical_terms": len(canonical_term_counts),
+                "top_canonical_terms": sorted(
+                    canonical_term_counts.items(), key=lambda x: x[1], reverse=True
+                )[:10],
+                "primary_category_distribution": primary_category_counts,
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting mapping statistics: {str(e)}")
+            return {}
+
+    async def search(
+        self,
+        query: str = "",
+        page: int = 1,
+        per_page: int = 20,
+        category: Optional[str] = None,
+        canonical_term: Optional[str] = None,  # New parameter
+        sort_by: str = "created_at",
+        sort_direction: str = "desc",
+    ) -> Dict[str, Any]:
+        """
+        Enhanced search with canonical term filtering
+        """
+        try:
+            # Build base query
+            base_query = self.db.query(Document).filter(
+                Document.status == DocumentStatus.COMPLETED
+            )
+
+            # Apply text search
+            if query.strip():
+                search_term = f"%{query.strip()}%"
+                base_query = base_query.filter(
+                    or_(
+                        Document.filename.ilike(search_term),
+                        Document.search_content.ilike(search_term),
+                        Document.extracted_text.ilike(search_term),
+                    )
+                )
+
+            # Get all documents first, then filter by mappings if needed
+            all_documents = base_query.all()
+
+            # Filter by canonical term if specified
+            if canonical_term:
+                filtered_documents = []
+                for doc in all_documents:
+                    mappings = doc.get_keyword_mappings()
+                    for mapping in mappings:
+                        if (
+                            mapping.get("mapped_canonical_term", "").lower()
+                            == canonical_term.lower()
+                        ):
+                            filtered_documents.append(doc)
+                            break
+                all_documents = filtered_documents
+
+            # Apply legacy category filter for backward compatibility
+            if category and not canonical_term:
+                filtered_documents = []
+                for doc in all_documents:
+                    if category in doc.get_categories():
+                        filtered_documents.append(doc)
+                all_documents = filtered_documents
+
+            total_count = len(all_documents)
+
+            # Apply sorting
+            if sort_by == "created_at":
+                all_documents.sort(
+                    key=lambda x: x.created_at or datetime.min,
+                    reverse=(sort_direction.lower() == "desc"),
+                )
+            elif sort_by == "mapping_count":
+                all_documents.sort(
+                    key=lambda x: x.get_mapping_count(),
+                    reverse=(sort_direction.lower() == "desc"),
+                )
+
+            # Apply pagination
+            offset = (page - 1) * per_page
+            documents = all_documents[offset : offset + per_page]
+
+            # Format documents for response with enhanced mapping info
+            formatted_docs = []
+            for doc in documents:
+                preview_url = self.preview_service.get_preview_url(doc.file_path)
+
+                formatted_doc = {
+                    "id": doc.id,
+                    "filename": doc.filename,
+                    "file_size": doc.file_size,
+                    "status": doc.status,
+                    "created_at": (
+                        doc.created_at.isoformat() if doc.created_at else None
+                    ),
+                    "summary": doc.get_summary(),
+                    "categories": doc.get_categories(),
+                    "keywords": doc.get_keyword_list(),
+                    "preview_url": preview_url,
+                    "file_type": doc.get_metadata("file_type", "unknown"),
+                    # Enhanced mapping information
+                    "mapping_count": doc.get_mapping_count(),
+                    "verbatim_terms": doc.get_verbatim_terms()[:5],  # Show first 5
+                    "canonical_terms": doc.get_canonical_terms()[:5],  # Show first 5
+                    "keyword_mappings": doc.get_keyword_mappings()[
+                        :3
+                    ],  # Show first 3 for preview
+                    # Legacy fields for backward compatibility
+                    "document_type": (
+                        doc.ai_analysis.get("document_analysis", {}).get(
+                            "document_type"
+                        )
+                        if doc.ai_analysis
+                        else None
+                    ),
+                    "campaign_type": (
+                        doc.ai_analysis.get("document_analysis", {}).get(
+                            "campaign_type"
+                        )
+                        if doc.ai_analysis
+                        else None
+                    ),
+                    "document_tone": (
+                        doc.ai_analysis.get("document_analysis", {}).get(
+                            "document_tone"
+                        )
+                        if doc.ai_analysis
+                        else None
+                    ),
+                }
+                formatted_docs.append(formatted_doc)
+
+            # Generate pagination info
+            pagination = self._create_pagination_info(page, per_page, total_count)
+
+            # Enhanced facets with canonical terms
+            facets = await self._generate_enhanced_facets()
+
+            return {
+                "documents": formatted_docs,
+                "pagination": pagination,
+                "facets": facets,
+                "total_count": total_count,
+                "query": query,
+                "canonical_term_filter": canonical_term,
+            }
+
+        except Exception as e:
+            logger.error(f"Error in enhanced search: {str(e)}")
+            return {
+                "documents": [],
+                "pagination": {"page": 1, "per_page": per_page, "total": 0, "pages": 0},
+                "facets": {"categories": [], "canonical_terms": []},
+                "total_count": 0,
+                "query": query,
+                "error": str(e),
+            }
+
+    async def _generate_enhanced_facets(self) -> Dict[str, Any]:
+        """Generate enhanced facets including canonical terms"""
+        try:
+            # Get existing taxonomy-based categories
+            facets = await self._generate_facets()
+
+            # Add canonical terms facet
+            canonical_term_counts = {}
+
+            docs_with_keywords = (
+                self.db.query(Document)
+                .filter(
+                    Document.status == DocumentStatus.COMPLETED,
+                    Document.keywords.isnot(None),
+                )
+                .all()
+            )
+
+            for doc in docs_with_keywords:
+                mappings = doc.get_keyword_mappings()
+                for mapping in mappings:
+                    canonical_term = mapping.get("mapped_canonical_term", "")
+                    if canonical_term:
+                        canonical_term_counts[canonical_term] = (
+                            canonical_term_counts.get(canonical_term, 0) + 1
+                        )
+
+            # Sort canonical terms by frequency
+            sorted_canonical_terms = sorted(
+                canonical_term_counts.items(), key=lambda x: x[1], reverse=True
+            )[
+                :20
+            ]  # Top 20 most frequent
+
+            facets["canonical_terms"] = [
+                {"name": term, "count": count} for term, count in sorted_canonical_terms
+            ]
+
+            return facets
+
+        except Exception as e:
+            logger.error(f"Error generating enhanced facets: {str(e)}")
+            return {"categories": [], "canonical_terms": []}
 
     def __del__(self):
         """Cleanup database connection"""

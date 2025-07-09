@@ -114,9 +114,10 @@ class DocumentService:
         ai_analysis: Dict[str, Any] = None,
         keywords: List[str] = None,
         categories: List[str] = None,
+        keyword_mappings: List[Dict[str, str]] = None,  # Add this parameter
         **metadata,
     ) -> bool:
-        """Update document content and analysis"""
+        """Update document content and analysis with rich keyword mappings"""
         try:
             document = await self.get_document(document_id)
             if not document:
@@ -130,16 +131,26 @@ class DocumentService:
             if ai_analysis:
                 document.set_ai_analysis(ai_analysis)
 
-            # Update keywords
-            if keywords or categories:
-                document.set_keywords(keywords or [], categories or [])
+            # Enhanced keyword storage with mappings
+            if keywords or categories or keyword_mappings:
+                enhanced_keywords = {
+                    "keywords": keywords or [],
+                    "categories": categories or [],
+                    "keyword_mappings": keyword_mappings
+                    or [],  # Store the rich mappings
+                    "mapping_count": len(keyword_mappings) if keyword_mappings else 0,
+                    "extraction_timestamp": datetime.utcnow().isoformat(),
+                }
+                document.keywords = enhanced_keywords
 
             # Update metadata
             if metadata:
                 document.set_metadata(**metadata)
 
             self.db.commit()
-            logger.info(f"Updated document {document_id} content")
+            logger.info(
+                f"Updated document {document_id} content with {len(keyword_mappings or [])} keyword mappings"
+            )
             return True
 
         except Exception as e:

@@ -6,7 +6,7 @@ Uses FastAPI BackgroundTasks and thread pools for simplified async processing
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import time
 from datetime import datetime
 
@@ -119,6 +119,61 @@ class BackgroundProcessor:
 
             return False
 
+    def _extract_keyword_mappings(
+        self, ai_analysis: Dict[str, Any]
+    ) -> List[Dict[str, str]]:
+        """Extract rich keyword mappings from AI analysis"""
+        keyword_mappings = []
+
+        try:
+            # Handle unified analysis format
+            if "keyword_mappings" in ai_analysis:
+                mappings = ai_analysis["keyword_mappings"]
+                if isinstance(mappings, list):
+                    keyword_mappings.extend(mappings)
+
+            # Handle modular analysis format
+            if "taxonomy_keywords" in ai_analysis:
+                taxonomy_data = ai_analysis["taxonomy_keywords"]
+                if (
+                    isinstance(taxonomy_data, dict)
+                    and "keyword_mappings" in taxonomy_data
+                ):
+                    mappings = taxonomy_data["keyword_mappings"]
+                    if isinstance(mappings, list):
+                        keyword_mappings.extend(mappings)
+
+            # Validate and clean up mappings
+            validated_mappings = []
+            for mapping in keyword_mappings:
+                if (
+                    isinstance(mapping, dict)
+                    and mapping.get("verbatim_term")
+                    and mapping.get("mapped_canonical_term")
+                ):
+                    validated_mappings.append(
+                        {
+                            "verbatim_term": mapping.get("verbatim_term", ""),
+                            "mapped_primary_category": mapping.get(
+                                "mapped_primary_category", ""
+                            ),
+                            "mapped_subcategory": mapping.get("mapped_subcategory", ""),
+                            "mapped_canonical_term": mapping.get(
+                                "mapped_canonical_term", ""
+                            ),
+                            "extraction_confidence": mapping.get(
+                                "extraction_confidence", "medium"
+                            ),
+                        }
+                    )
+
+            logger.info(f"Extracted {len(validated_mappings)} valid keyword mappings")
+            return validated_mappings
+
+        except Exception as e:
+            logger.error(f"Error extracting keyword mappings: {str(e)}")
+            return []
+
     async def _run_processing_pipeline(
         self,
         document_id: int,
@@ -126,7 +181,7 @@ class BackgroundProcessor:
         filename: str,
         analysis_type: str = "unified",
     ) -> bool:
-        """Run the complete document processing pipeline"""
+        """Run the complete document processing pipeline with enhanced keyword mapping"""
         try:
             # Step 1: AI Analysis (10-80% progress)
             logger.info(
@@ -154,16 +209,38 @@ class BackgroundProcessor:
                 document_id, DocumentStatus.PROCESSING, progress=60
             )
 
-            # Step 2: Update document with analysis results (60-80% progress)
-            logger.info(f"Step 2: Updating document content for {document_id}")
+            # Step 2: Enhanced keyword extraction with mappings
+            logger.info(f"Step 2: Enhanced keyword extraction for {document_id}")
 
+            ai_analysis = analysis_result.get("ai_analysis", {})
+
+            # Extract rich keyword mappings
+            keyword_mappings = self._extract_keyword_mappings(ai_analysis)
+
+            # Extract traditional keywords and categories for backward compatibility
+            keywords, categories = self.ai_service._extract_keywords_from_analysis(
+                ai_analysis
+            )
+
+            # Log extraction results
+            logger.info(
+                f"Extracted {len(keyword_mappings)} keyword mappings for document {document_id}"
+            )
+            logger.info(
+                f"Extracted {len(keywords)} keywords and {len(categories)} categories"
+            )
+
+            # Step 3: Update document with enhanced data
             success = await self.document_service.update_document_content(
                 document_id,
                 extracted_text=analysis_result.get("extracted_text"),
-                ai_analysis=analysis_result.get("ai_analysis"),
-                keywords=analysis_result.get("keywords"),
-                categories=analysis_result.get("categories"),
+                ai_analysis=ai_analysis,
+                keywords=keywords,
+                categories=categories,
+                keyword_mappings=keyword_mappings,  # Pass the rich mappings
                 file_type=analysis_result.get("file_type"),
+                analysis_type=analysis_type,
+                mapping_count=len(keyword_mappings),
             )
 
             if not success:
@@ -174,8 +251,8 @@ class BackgroundProcessor:
                 document_id, DocumentStatus.PROCESSING, progress=80
             )
 
-            # Step 3: Generate embeddings if available (80-90% progress)
-            logger.info(f"Step 3: Generating embeddings for document {document_id}")
+            # Step 4: Generate embeddings if available (80-90% progress)
+            logger.info(f"Step 4: Generating embeddings for document {document_id}")
 
             if analysis_result.get("extracted_text"):
                 embeddings = await self.ai_service.generate_embeddings(
@@ -187,14 +264,13 @@ class BackgroundProcessor:
                     document = await self.document_service.get_document(document_id)
                     if document:
                         document.embeddings = embeddings
-                        # Note: In a real implementation, you'd commit this to the database
 
             await self.document_service.update_document_status(
                 document_id, DocumentStatus.PROCESSING, progress=90
             )
 
-            # Step 4: Generate preview URL (90-100% progress)
-            logger.info(f"Step 4: Generating preview for document {document_id}")
+            # Step 5: Generate preview URL (90-100% progress)
+            logger.info(f"Step 5: Generating preview for document {document_id}")
 
             preview_url = await self.storage_service.get_preview_url(file_path)
             if preview_url:
@@ -202,7 +278,6 @@ class BackgroundProcessor:
                 document = await self.document_service.get_document(document_id)
                 if document:
                     document.preview_url = preview_url
-                    # Note: In a real implementation, you'd commit this to the database
 
             await self.document_service.update_document_status(
                 document_id, DocumentStatus.PROCESSING, progress=95
@@ -211,6 +286,8 @@ class BackgroundProcessor:
             logger.info(
                 f"Processing pipeline completed successfully for document {document_id}"
             )
+            logger.info(f"Final mapping count: {len(keyword_mappings)}")
+
             return True
 
         except Exception as e:

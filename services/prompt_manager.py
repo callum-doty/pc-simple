@@ -1,23 +1,23 @@
 # simplified_app/services/prompt_manager.py
 import os
 import json
-from datetime import datetime
+
 from services.taxonomy_service import TaxonomyService
 
 
 class PromptManager:
-    """Manager for document analysis prompts with modular components"""
+    """Manager for document analysis prompts with dynamic taxonomy injection"""
 
-    def __init__(self):
+    def __init__(self, taxonomy_service=None):
         self.model_capabilities = self._get_model_capabilities()
         self.base_system_prompt = """You are an expert document analyzer specializing in political and campaign materials. 
 Provide accurate, objective analysis in the exact JSON format requested."""
+        self.taxonomy_service = taxonomy_service
 
     def _get_model_capabilities(self):
         """Get capabilities based on configured model"""
         model = os.getenv("CLAUDE_MODEL", "claude-3-opus-20240229")
 
-        # Different capabilities based on model
         if "claude-3-opus" in model:
             return {"vision": True, "structure": "high", "detail": "high"}
         elif "claude-3-sonnet" in model:
@@ -25,11 +25,43 @@ Provide accurate, objective analysis in the exact JSON format requested."""
         else:
             return {"vision": True, "structure": "basic", "detail": "basic"}
 
-    def get_unified_analysis_prompt(self, filename):
+    async def _get_canonical_taxonomy(self):
+        """Get canonical taxonomy structure from database"""
+        if not self.taxonomy_service:
+            # Fallback to empty structure if no taxonomy service
+            return {}
+
+        try:
+            # Get the hierarchical taxonomy structure
+            hierarchy = await self.taxonomy_service.get_taxonomy_hierarchy()
+
+            # Convert to the format needed for prompts
+            canonical_structure = {}
+            for primary_category, subcategories in hierarchy.items():
+                canonical_structure[primary_category] = {}
+                for subcategory, terms in subcategories.items():
+                    # Extract just the term names for the prompt
+                    term_names = (
+                        [term["term"] for term in terms]
+                        if isinstance(terms, list)
+                        else []
+                    )
+                    canonical_structure[primary_category][subcategory] = term_names
+
+            return canonical_structure
+        except Exception as e:
+            print(f"Error getting taxonomy: {e}")
+            return {}
+
+    async def get_unified_analysis_prompt(self, filename):
         """
         A single, robust prompt that uses chain-of-thought to improve accuracy
-        and combines metadata and classification.
+        and combines metadata, classification, and keyword extraction.
         """
+        # Get the canonical taxonomy dynamically
+        canonical_taxonomy_structure = await self._get_canonical_taxonomy()
+        taxonomy_for_prompt = json.dumps(canonical_taxonomy_structure, indent=2)
+
         return {
             "system": self.base_system_prompt,
             "user": f"""
@@ -38,14 +70,23 @@ Analyze the document '{filename}' by following these steps precisely.
 **Step 1: Initial Analysis & Evidence Gathering**
 First, write down your reasoning and cite direct evidence from the document.
 - **Summary:** What is the document's core message?
-- **Document Type Evidence:** What visual or text clues indicate the type of document? (e.g., "Contains a mailing address panel", "Formatted as a poster").
-- **Election Year Evidence:** Is there a date or a phrase like 'Vote on November 5th'? Cite it.
-- **Tone Evidence:** Quote words or phrases that establish the tone (e.g., 'failed leader', 'brighter future').
-- **Category Evidence:** What is the main goal? Is it asking for a vote (GOTV), criticizing an opponent (attack), or something else?
+- **Document Type Evidence:** What visual or text clues indicate the type of document?
+- **Election Year Evidence:** Is there a date or a phrase like 'Vote on November 5th'?
+- **Tone Evidence:** Quote words or phrases that establish the tone.
+- **Category Evidence:** What is the main goal?
+- **Keyword Evidence:** Identify 10-15 of the most important and specific keywords or keyphrases mentioned in the document. These should be the exact phrases used.
 
-**Step 2: JSON Output Generation**
-Now, based ONLY on your reasoning in Step 1, provide the final analysis in the exact JSON format below.
-- If you cannot find evidence for a field in Step 1, its value in the JSON MUST be null.
+**Step 2: Map Keywords to Canonical Taxonomy**
+For each verbatim keyphrase you extracted, map it to the single most relevant canonical term from the official taxonomy provided below.
+
+**Official Canonical Taxonomy:**
+```json
+{taxonomy_for_prompt}
+```
+
+**Step 3: JSON Output Generation**
+Now, based ONLY on your reasoning in the previous steps, provide the final analysis in the exact JSON format below.
+- If you cannot find evidence for a field, its value in the JSON MUST be null.
 - For fields with a specific list of choices, you MUST use one of the provided options.
 
 ```json
@@ -66,8 +107,77 @@ Now, based ONLY on your reasoning in Step 1, provide the final analysis in the e
     "client_name": "Full name of the client/candidate. If not mentioned, this value MUST be null.",
     "opponent_name": "Full name of any opponent mentioned. If no opponent is mentioned, this value MUST be null.",
     "creation_date": "The creation or print date shown on the document (YYYY-MM-DD format). If no date is visible, this value MUST be null."
-  }}
+  }},
+  "keyword_mappings": [
+    {{
+      "verbatim_term": "The exact phrase from the document, e.g., 'universal background checks'",
+      "mapped_primary_category": "The primary category from the official taxonomy, e.g., 'Policy Issues & Topics'",
+      "mapped_subcategory": "The subcategory from the official taxonomy, e.g., 'Public Safety & Justice'",
+      "mapped_canonical_term": "The canonical term from the official taxonomy, e.g., 'Guns/Gun Control'"
+    }}
+  ]
 }}
+```
+
+Your response MUST be valid JSON formatted exactly as requested above.
+""",
+        }
+
+    async def get_taxonomy_keyword_prompt(self, filename, metadata=None):
+        """Generate a prompt for hierarchical taxonomy keyword extraction with dynamic taxonomy injection"""
+        context = ""
+        if metadata:
+            context = f"""Based on prior analysis, this is a {metadata.get('document_type', '')} 
+from {metadata.get('election_year', '')} that appears to be {metadata.get('document_tone', '')}.
+"""
+
+        # Get the canonical taxonomy dynamically
+        canonical_taxonomy_structure = await self._get_canonical_taxonomy()
+        taxonomy_for_prompt = json.dumps(canonical_taxonomy_structure, indent=2)
+
+        return {
+            "system": self.base_system_prompt,
+            "user": f"""
+{context}Analyze the document '{filename}' and perform the following three steps:
+
+**Step 1: Extract Verbatim Keyphrases**
+Identify 10-15 of the most important and specific keywords or keyphrases mentioned in the document. These should be the exact phrases used.
+
+**Step 2: Map to Canonical Taxonomy**
+For each verbatim keyphrase you extracted, map it to the single most relevant canonical term from the official taxonomy provided below.
+
+**Official Canonical Taxonomy:**
+```json
+{taxonomy_for_prompt}
+```
+
+**Step 3: Generate JSON Output**
+Provide your response ONLY in the following JSON format. For each verbatim term, provide its mapping to a primary category, subcategory, and the specific canonical term.
+
+```json
+{{
+  "keyword_mappings": [
+    {{
+      "verbatim_term": "The exact phrase from the document, e.g., 'universal background checks'",
+      "mapped_primary_category": "The primary category from the official taxonomy, e.g., 'Policy Issues & Topics'",
+      "mapped_subcategory": "The subcategory from the official taxonomy, e.g., 'Public Safety & Justice'",
+      "mapped_canonical_term": "The canonical term from the official taxonomy, e.g., 'Guns/Gun Control'"
+    }},
+    {{
+      "verbatim_term": "The exact phrase from the document, e.g., 'a 15% flat tax'",
+      "mapped_primary_category": "Policy Issues & Topics",
+      "mapped_subcategory": "Economy & Taxes", 
+      "mapped_canonical_term": "Taxes"
+    }}
+  ]
+}}
+```
+
+**CRITICAL REQUIREMENTS:**
+- You MUST extract 10-15 verbatim terms from the document
+- You MUST only use categories and terms that exist in the provided taxonomy
+- If you cannot find a good match in the taxonomy, use the closest available term
+- Every verbatim_term MUST be an exact phrase from the document
 
 Your response MUST be valid JSON formatted exactly as requested above.
 """,
@@ -203,57 +313,6 @@ Return ONLY the following JSON. If a value is not found, it MUST be null.
 }}
 
 Your response MUST be valid JSON formatted exactly as requested above.
-""",
-        }
-
-    def get_taxonomy_keyword_prompt(self, filename, metadata=None):
-        """Generate a prompt for hierarchical taxonomy keyword extraction"""
-        context = ""
-        if metadata:
-            context = f"""Based on prior analysis, this is a {metadata.get('document_type', '')} 
-from {metadata.get('election_year', '')} that appears to be {metadata.get('document_tone', '')}.
-"""
-
-        canonical_taxonomy_structure = TaxonomyService.get_taxonomy_for_prompt()
-        taxonomy_for_prompt = json.dumps(canonical_taxonomy_structure, indent=2)
-
-        return {
-            "system": self.base_system_prompt,
-            "user": f"""
-Analyze the document '{filename}' and perform the following two steps:
-
-**Step 1: Extract Verbatim Keyphrases**
-Identify 10-15 of the most important and specific keywords or keyphrases mentioned in the document. These should be the exact phrases used.
-
-**Step 2: Map to Canonical Taxonomy**
-For each verbatim keyphrase you extracted, map it to the single most relevant canonical term from the official taxonomy provided below.
-
-**Official Canonical Taxonomy:**
-```json
-{taxonomy_for_prompt}
-```
-
-**Step 3: Generate JSON Output**
-Provide your response ONLY in the following JSON format. For each verbatim term, provide its mapping to a primary category, subcategory, and the specific canonical term.
-
-```json
-{{
-  "keyword_mappings": [
-    {{
-      "verbatim_term": "The exact phrase from the document, e.g., 'universal background checks'",
-      "mapped_primary_category": "The primary category from the official taxonomy, e.g., 'Public Safety & Justice'",
-      "mapped_subcategory": "The subcategory from the official taxonomy, e.g., 'Public Safety & Justice'",
-      "mapped_canonical_term": "The canonical term from the official taxonomy, e.g., 'Guns'"
-    }},
-    {{
-      "verbatim_term": "The exact phrase from the document, e.g., 'a 15% flat tax'",
-      "mapped_primary_category": "Economy & Taxes",
-      "mapped_subcategory": "Economy & Taxes",
-      "mapped_canonical_term": "Taxes"
-    }}
-  ]
-}}
-```
 """,
         }
 

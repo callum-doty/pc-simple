@@ -309,7 +309,9 @@ endblock %} {% block content %}
       const card = $(template);
 
       card.find(".filename").text(doc.filename);
-      card.find(".summary").text(doc.summary || "No summary available");
+      const summary =
+        doc.ai_analysis?.document_analysis?.summary || "No summary available";
+      card.find(".summary").text(summary);
       card
         .find(".upload-date")
         .text(new Date(doc.created_at).toLocaleDateString());
@@ -322,12 +324,16 @@ endblock %} {% block content %}
       }
 
       const keywordsContainer = card.find(".keywords");
-      // Add keywords
-      if (doc.keywords && doc.keywords.length > 0) {
-        doc.keywords.forEach((keyword) => {
-          keywordsContainer.append(`
-                    <span class="badge bg-secondary keyword-badge me-1">${keyword}</span>
-                `);
+      if (
+        doc.ai_analysis?.keyword_mappings &&
+        doc.ai_analysis.keyword_mappings.length > 0
+      ) {
+        doc.ai_analysis.keyword_mappings.forEach((mapping) => {
+          if (mapping.verbatim_term) {
+            keywordsContainer.append(
+              `<span class="badge bg-secondary keyword-badge me-1">${mapping.verbatim_term}</span>`
+            );
+          }
         });
       }
 
@@ -347,15 +353,6 @@ endblock %} {% block content %}
         extraInfoContainer.append(`
             <span class="badge bg-warning me-1">${doc.document_tone}</span>
         `);
-      }
-
-      // Add keywords
-      if (doc.keywords && doc.keywords.length > 0) {
-        doc.keywords.forEach((keyword) => {
-          keywordsContainer.append(`
-                    <span class="badge bg-secondary keyword-badge me-1">${keyword}</span>
-                `);
-        });
       }
 
       // Add categories

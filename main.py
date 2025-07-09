@@ -10,12 +10,11 @@ from fastapi import (
     Depends,
     UploadFile,
     File,
-    Form,
     Request,
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import os
@@ -23,13 +22,12 @@ from typing import List, Optional
 import logging
 
 from config import get_settings
-from database import init_db, get_db
+from database import init_db
 from services.document_service import DocumentService
 from services.ai_service import AIService
 from services.search_service import SearchService
 from services.storage_service import StorageService
 from services.taxonomy_service import TaxonomyService
-from models.document import Document
 from background_processor import BackgroundProcessor
 
 # Configure logging
@@ -95,8 +93,6 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Mount files directory for serving uploaded documents
 if settings.storage_type == "local":
-    from fastapi.responses import FileResponse
-    import os
 
     @app.get("/files/{filename}")
     async def serve_file(filename: str):
@@ -527,3 +523,63 @@ if __name__ == "__main__":
         port=int(os.getenv("PORT", 8000)),
         reload=settings.debug,
     )
+
+
+@app.get("/api/search/canonical/{canonical_term}")
+async def search_by_canonical_term(
+    canonical_term: str,
+    search_service: SearchService = Depends(get_search_service),
+):
+    """Search documents by canonical term"""
+    try:
+        results = await search_service.search_by_canonical_term(canonical_term)
+        return {"success": True, "documents": results}
+    except Exception as e:
+        logger.error(f"Canonical term search error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/search/verbatim/{verbatim_term}")
+async def search_by_verbatim_term(
+    verbatim_term: str,
+    search_service: SearchService = Depends(get_search_service),
+):
+    """Search documents by verbatim term"""
+    try:
+        results = await search_service.search_by_verbatim_term(verbatim_term)
+        return {"success": True, "documents": results}
+    except Exception as e:
+        logger.error(f"Verbatim term search error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/documents/{document_id}/mappings")
+async def get_document_mappings(
+    document_id: int,
+    document_service: DocumentService = Depends(get_document_service),
+):
+    """Get keyword mappings for a document"""
+    try:
+        document = await document_service.get_document(document_id)
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+        mappings = document.get_keyword_mappings()
+        return {"success": True, "mappings": mappings}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Document mappings error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/stats/mappings")
+async def get_mapping_stats(
+    search_service: SearchService = Depends(get_search_service),
+):
+    """Get statistics about keyword mappings"""
+    try:
+        stats = await search_service.get_mapping_statistics()
+        return {"success": True, "stats": stats}
+    except Exception as e:
+        logger.error(f"Mapping stats error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -52,28 +52,6 @@ class Document(Base):
     def __repr__(self):
         return f"<Document(id={self.id}, filename='{self.filename}', status='{self.status}')>"
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert document to dictionary for API responses"""
-        return {
-            "id": self.id,
-            "filename": self.filename,
-            "file_size": self.file_size,
-            "status": self.status,
-            "processing_progress": self.processing_progress,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            "processed_at": (
-                self.processed_at.isoformat() if self.processed_at else None
-            ),
-            "extracted_text": self.extracted_text,
-            "ai_analysis": self.ai_analysis,
-            "keywords": self.keywords,
-            "metadata": self.file_metadata,
-            "preview_url": self.preview_url,
-            "thumbnail_url": self.thumbnail_url,
-            "processing_error": self.processing_error,
-        }
-
     def get_summary(self) -> Optional[str]:
         """Get document summary from AI analysis"""
         if self.ai_analysis and isinstance(self.ai_analysis, dict):
@@ -187,6 +165,68 @@ class Document(Base):
     def can_be_reprocessed(self) -> bool:
         """Check if document can be reprocessed"""
         return self.status in ["FAILED", "PENDING", "PROCESSING"]
+
+    def get_keyword_mappings(self) -> List[Dict[str, str]]:
+        """Get rich keyword mappings from document"""
+        if self.keywords and isinstance(self.keywords, dict):
+            mappings = self.keywords.get("keyword_mappings", [])
+            if isinstance(mappings, list):
+                return mappings
+        return []
+
+    def get_mapping_count(self) -> int:
+        """Get count of keyword mappings"""
+        if self.keywords and isinstance(self.keywords, dict):
+            return self.keywords.get("mapping_count", 0)
+        return 0
+
+    def get_verbatim_terms(self) -> List[str]:
+        """Get list of verbatim terms extracted from document"""
+        mappings = self.get_keyword_mappings()
+        return [
+            mapping.get("verbatim_term", "")
+            for mapping in mappings
+            if mapping.get("verbatim_term")
+        ]
+
+    def get_canonical_terms(self) -> List[str]:
+        """Get list of canonical terms mapped from document"""
+        mappings = self.get_keyword_mappings()
+        return [
+            mapping.get("mapped_canonical_term", "")
+            for mapping in mappings
+            if mapping.get("mapped_canonical_term")
+        ]
+
+    # Enhanced to_dict method to include mapping details:
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert document to dictionary for API responses"""
+        base_dict = {
+            "id": self.id,
+            "filename": self.filename,
+            "file_size": self.file_size,
+            "status": self.status,
+            "processing_progress": self.processing_progress,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "processed_at": (
+                self.processed_at.isoformat() if self.processed_at else None
+            ),
+            "extracted_text": self.extracted_text,
+            "ai_analysis": self.ai_analysis,
+            "keywords": self.keywords,
+            "metadata": self.file_metadata,
+            "preview_url": self.preview_url,
+            "thumbnail_url": self.thumbnail_url,
+            "processing_error": self.processing_error,
+            # Enhanced mapping information
+            "mapping_count": self.get_mapping_count(),
+            "verbatim_terms": self.get_verbatim_terms(),
+            "canonical_terms": self.get_canonical_terms(),
+            "keyword_mappings": self.get_keyword_mappings(),
+        }
+        return base_dict
 
 
 # Status constants

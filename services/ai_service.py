@@ -33,7 +33,7 @@ class AIService:
     def __init__(self):
         self.storage_service = StorageService()
         self.taxonomy_service = TaxonomyService()
-        self.prompt_manager = PromptManager()
+        self.prompt_manager = PromptManager(taxonomy_service=self.taxonomy_service)
 
         # Initialize AI clients with explicit parameter handling
         self.anthropic_client = None
@@ -59,15 +59,7 @@ class AIService:
 
         if settings.openai_api_key:
             try:
-                # Try different initialization approaches for OpenAI
-                try:
-                    self.openai_client = openai.OpenAI(api_key=settings.openai_api_key)
-                except TypeError as te:
-                    # If there's a TypeError, try with minimal parameters
-                    logger.info(
-                        f"Trying alternative OpenAI initialization due to: {te}"
-                    )
-                    self.openai_client = openai.Client(api_key=settings.openai_api_key)
+                self.openai_client = openai.OpenAI(api_key=settings.openai_api_key)
             except Exception as e:
                 logger.warning(f"Failed to initialize OpenAI client: {str(e)}")
                 self.openai_client = None
@@ -170,8 +162,19 @@ class AIService:
     ) -> Dict[str, Any]:
         """Perform unified analysis using the comprehensive prompt"""
         try:
+            # If Anthropic is not available, fall back to modular analysis
+            if not self.anthropic_client:
+                logger.warning(
+                    "Anthropic client not available for unified analysis. Falling back to modular analysis."
+                )
+                return await self._perform_modular_analysis(
+                    extracted_text, file_content, file_type, filename
+                )
+
             # Get the unified analysis prompt
-            prompt_data = self.prompt_manager.get_unified_analysis_prompt(filename)
+            prompt_data = await self.prompt_manager.get_unified_analysis_prompt(
+                filename
+            )
 
             # Prepare image data if it's an image or PDF
             image_data = None
@@ -184,16 +187,9 @@ class AIService:
             )
 
             # Call the AI service
-            if self.anthropic_client:
-                return await self._call_anthropic_api_with_system(
-                    prompt_data["system"], enhanced_prompt, image_data
-                )
-            elif self.ai_provider == "none":
-                return self._get_fallback_analysis(filename, file_type)
-            else:
-                raise ValueError(
-                    f"Anthropic client not available for unified analysis."
-                )
+            return await self._call_anthropic_api_with_system(
+                prompt_data["system"], enhanced_prompt, image_data
+            )
 
         except Exception as e:
             logger.error(f"Error in unified analysis: {str(e)}")
@@ -311,7 +307,9 @@ class AIService:
             elif analysis_type == "design":
                 prompt_data = self.prompt_manager.get_design_elements_prompt(filename)
             elif analysis_type == "keywords":
-                prompt_data = self.prompt_manager.get_taxonomy_keyword_prompt(filename)
+                prompt_data = await self.prompt_manager.get_taxonomy_keyword_prompt(
+                    filename
+                )
             elif analysis_type == "communication":
                 prompt_data = self.prompt_manager.get_communication_focus_prompt(
                     filename
@@ -660,21 +658,51 @@ class AIService:
     def _extract_keywords_from_analysis(
         self, ai_analysis: Dict[str, Any]
     ) -> Tuple[List[str], List[str]]:
-        """Extract keywords and categories from AI analysis"""
+        """Extract keywords and categories from AI analysis with taxonomy validation"""
         keywords = []
         categories = []
 
         if isinstance(ai_analysis, dict):
-            # Handle unified analysis format
-            if "document_analysis" in ai_analysis:
-                doc_analysis = ai_analysis["document_analysis"]
-                if isinstance(doc_analysis, dict):
-                    if "document_type" in doc_analysis:
-                        categories.append(doc_analysis["document_type"])
-                    if "campaign_type" in doc_analysis:
-                        categories.append(doc_analysis["campaign_type"])
-                    if "document_tone" in doc_analysis:
-                        categories.append(doc_analysis["document_tone"])
+            # Handle keyword mappings with taxonomy validation
+            if "keyword_mappings" in ai_analysis:
+                mappings = ai_analysis["keyword_mappings"]
+                if isinstance(mappings, list):
+                    for mapping in mappings:
+                        if isinstance(mapping, dict):
+                            verbatim_term = mapping.get("verbatim_term")
+                            canonical_term = mapping.get("mapped_canonical_term")
+                            primary_category = mapping.get("mapped_primary_category")
+
+                            if verbatim_term:
+                                keywords.append(verbatim_term)
+                            if canonical_term:
+                                keywords.append(canonical_term)
+                            if primary_category:
+                                categories.append(primary_category)
+
+            # Handle modular analysis format
+            if "taxonomy_keywords" in ai_analysis:
+                taxonomy_data = ai_analysis["taxonomy_keywords"]
+                if (
+                    isinstance(taxonomy_data, dict)
+                    and "keyword_mappings" in taxonomy_data
+                ):
+                    mappings = taxonomy_data["keyword_mappings"]
+                    if isinstance(mappings, list):
+                        for mapping in mappings:
+                            if isinstance(mapping, dict):
+                                verbatim_term = mapping.get("verbatim_term")
+                                canonical_term = mapping.get("mapped_canonical_term")
+                                primary_category = mapping.get(
+                                    "mapped_primary_category"
+                                )
+
+                                if verbatim_term:
+                                    keywords.append(verbatim_term)
+                                if canonical_term:
+                                    keywords.append(canonical_term)
+                                if primary_category:
+                                    categories.append(primary_category)
 
             # Handle classification format
             if "classification" in ai_analysis:
@@ -696,25 +724,6 @@ class AIService:
                         keywords.append(entities["client_name"])
                     if "opponent_name" in entities and entities["opponent_name"]:
                         keywords.append(entities["opponent_name"])
-
-            # Handle taxonomy keywords format
-            if "keyword_mappings" in ai_analysis:
-                mappings = ai_analysis["keyword_mappings"]
-                if isinstance(mappings, list):
-                    for mapping in mappings:
-                        if isinstance(mapping, dict):
-                            if "verbatim_term" in mapping and mapping["verbatim_term"]:
-                                keywords.append(mapping["verbatim_term"])
-                            if (
-                                "mapped_canonical_term" in mapping
-                                and mapping["mapped_canonical_term"]
-                            ):
-                                keywords.append(mapping["mapped_canonical_term"])
-                            if (
-                                "mapped_primary_category" in mapping
-                                and mapping["mapped_primary_category"]
-                            ):
-                                categories.append(mapping["mapped_primary_category"])
 
             # Handle modular analysis format
             if "taxonomy_keywords" in ai_analysis:
@@ -772,6 +781,41 @@ class AIService:
         categories = list(set([c for c in categories if c and isinstance(c, str)]))
 
         return keywords, categories
+
+    async def _validate_keyword_mappings(
+        self, keyword_mappings: List[Dict[str, str]]
+    ) -> List[Dict[str, str]]:
+        """Validate keyword mappings against canonical taxonomy"""
+        validated_mappings = []
+
+        for mapping in keyword_mappings:
+            primary_category = mapping.get("mapped_primary_category")
+            subcategory = mapping.get("mapped_subcategory")
+            canonical_term = mapping.get("mapped_canonical_term")
+
+            # Validate against taxonomy database
+            is_valid = await self.taxonomy_service.validate_taxonomy_mapping(
+                primary_category, subcategory, canonical_term
+            )
+
+            if is_valid:
+                validated_mappings.append(mapping)
+            else:
+                # Try to find closest match
+                closest_match = await self.taxonomy_service.find_closest_canonical_term(
+                    canonical_term, primary_category
+                )
+                if closest_match:
+                    corrected_mapping = mapping.copy()
+                    corrected_mapping.update(closest_match)
+                    validated_mappings.append(corrected_mapping)
+                    logger.warning(
+                        f"Corrected taxonomy mapping: {canonical_term} -> {closest_match['canonical_term']}"
+                    )
+                else:
+                    logger.warning(f"Skipped invalid taxonomy mapping: {mapping}")
+
+        return validated_mappings
 
     async def generate_embeddings(self, text: str) -> Optional[List[float]]:
         """Generate embeddings for text (simplified version)"""

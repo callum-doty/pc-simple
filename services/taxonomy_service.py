@@ -247,24 +247,100 @@ class TaxonomyService:
             logger.error(f"Error finding/creating term: {str(e)}")
             return None
 
-    async def get_taxonomy_for_ai_prompt(self) -> Dict[str, Any]:
+    async def get_taxonomy_for_prompt(self) -> Dict[str, Any]:
         """Get taxonomy structure formatted for AI prompts"""
         try:
             hierarchy = await self.get_taxonomy_hierarchy()
 
-            # Flatten for AI prompt
+            # Flatten for AI prompt - create a clean structure
             prompt_structure = {}
             for primary_category, subcategories in hierarchy.items():
                 prompt_structure[primary_category] = {}
                 for subcategory, terms in subcategories.items():
-                    term_list = [term["term"] for term in terms]
+                    # Extract just the term names for the LLM
+                    if isinstance(terms, list):
+                        term_list = [
+                            term["term"] if isinstance(term, dict) else str(term)
+                            for term in terms
+                        ]
+                    else:
+                        term_list = []
                     prompt_structure[primary_category][subcategory] = term_list
 
             return prompt_structure
 
         except Exception as e:
             logger.error(f"Error getting taxonomy for AI prompt: {str(e)}")
-            return {}
+        return {}
+
+    async def validate_taxonomy_mapping(
+        self, primary_category: str, subcategory: str, term: str
+    ) -> bool:
+        """Validate that a taxonomy mapping exists in the database"""
+        try:
+            existing_term = (
+                self.db.query(TaxonomyTerm)
+                .filter(
+                    TaxonomyTerm.primary_category == primary_category,
+                    TaxonomyTerm.subcategory == subcategory,
+                    TaxonomyTerm.term == term,
+                )
+                .first()
+            )
+            return existing_term is not None
+
+        except Exception as e:
+            logger.error(f"Error validating taxonomy mapping: {str(e)}")
+            return False
+
+    async def get_canonical_term_id(
+        self, primary_category: str, subcategory: str, term: str
+    ) -> Optional[int]:
+        """Get the ID of a canonical taxonomy term for database foreign key relationships"""
+        try:
+            canonical_term = (
+                self.db.query(TaxonomyTerm)
+                .filter(
+                    TaxonomyTerm.primary_category == primary_category,
+                    TaxonomyTerm.subcategory == subcategory,
+                    TaxonomyTerm.term == term,
+                )
+                .first()
+            )
+            return canonical_term.id if canonical_term else None
+
+        except Exception as e:
+            logger.error(f"Error getting canonical term ID: {str(e)}")
+            return None
+
+    async def find_closest_canonical_term(
+        self, search_term: str, primary_category: str = None
+    ) -> Optional[Dict[str, str]]:
+        """Find the closest canonical term for a given search term"""
+        try:
+            # Start with exact matches
+            query = self.db.query(TaxonomyTerm).filter(
+                TaxonomyTerm.term.ilike(f"%{search_term}%")
+            )
+
+            if primary_category:
+                query = query.filter(TaxonomyTerm.primary_category == primary_category)
+
+            closest_match = query.first()
+
+            if closest_match:
+                return {
+                    "primary_category": closest_match.primary_category,
+                    "subcategory": closest_match.subcategory,
+                    "canonical_term": closest_match.term,
+                    "term_id": closest_match.id,
+                }
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Error finding closest canonical term: {str(e)}")
+            return None
 
     async def get_statistics(self) -> Dict[str, Any]:
         """Get taxonomy statistics"""
