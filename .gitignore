@@ -9,3 +9,6 @@ __pycache__/
 
 # Development storage
 dev_storage/
+
+# Virtual environment
+venv/

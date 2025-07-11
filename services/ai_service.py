@@ -187,9 +187,20 @@ class AIService:
             )
 
             # Call the AI service
-            return await self._call_anthropic_api_with_system(
+            analysis_result = await self._call_anthropic_api_with_system(
                 prompt_data["system"], enhanced_prompt, image_data
             )
+
+            # Ensure the final output has a consistent structure
+            if "document_analysis" not in analysis_result:
+                analysis_result["document_analysis"] = {
+                    "summary": analysis_result.get("summary", "No summary available"),
+                    "document_type": analysis_result.get("document_type", "unknown"),
+                    "campaign_type": analysis_result.get("campaign_type", "unknown"),
+                    "document_tone": analysis_result.get("document_tone", "neutral"),
+                }
+
+            return analysis_result
 
         except Exception as e:
             logger.error(f"Error in unified analysis: {str(e)}")
@@ -836,22 +847,31 @@ class AIService:
         return validated_mappings
 
     async def generate_embeddings(self, text: str) -> Optional[List[float]]:
-        """Generate embeddings for text (simplified version)"""
+        """Generate embeddings for text using the configured AI provider."""
         try:
             if self.ai_provider == "openai" and self.openai_client:
                 response = self.openai_client.embeddings.create(
-                    model="text-embedding-ada-002",
-                    input=text[:8000],  # Limit text length
+                    model="text-embedding-3-large",
+                    input=text,
                 )
                 return response.data[0].embedding
+            elif self.ai_provider == "gemini" and self.gemini_client:
+                # Use Gemini for embeddings
+                response = genai.embed_content(
+                    model="models/embedding-001",
+                    content=text,
+                    task_type="retrieval_document",
+                )
+                return response["embedding"]
             else:
-                # For now, return None if not using OpenAI
-                # In a full implementation, you could use other embedding services
-                logger.warning("Embeddings only supported with OpenAI provider")
+                logger.warning(
+                    f"Embeddings not supported for the '{self.ai_provider}' provider."
+                )
                 return None
-
         except Exception as e:
-            logger.error(f"Error generating embeddings: {str(e)}")
+            logger.error(
+                f"Error generating embeddings with {self.ai_provider}: {str(e)}"
+            )
             return None
 
     def get_ai_info(self) -> Dict[str, Any]:
@@ -862,7 +882,8 @@ class AIService:
             "openai_available": self.openai_client is not None,
             "gemini_available": self.gemini_client is not None,
             "supports_vision": True,
-            "supports_embeddings": self.openai_client is not None,
+            "supports_embeddings": self.openai_client is not None
+            or self.gemini_client is not None,
             "prompt_manager_enabled": True,
             "available_analysis_types": [
                 "unified",

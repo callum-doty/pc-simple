@@ -7,6 +7,7 @@ from sqlalchemy.sql import func
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 import json
+from pgvector.sqlalchemy import Vector
 
 from database import Base
 
@@ -43,7 +44,7 @@ class Document(Base):
 
     # Search and embeddings
     search_content = Column(Text, nullable=True, index=True)  # Searchable text
-    embeddings = Column(JSON, nullable=True)  # Vector embeddings as JSON
+    search_vector = Column(Vector(3072), nullable=True)  # For text-embedding-3-large
 
     # Preview and display
     preview_url = Column(String(500), nullable=True)
@@ -213,6 +214,7 @@ class Document(Base):
             "processed_at": (
                 self.processed_at.isoformat() if self.processed_at else None
             ),
+            "summary": self.get_summary(),
             "extracted_text": self.extracted_text,
             "ai_analysis": self.ai_analysis,
             "keywords": self.keywords,
@@ -225,6 +227,7 @@ class Document(Base):
             "verbatim_terms": self.get_verbatim_terms(),
             "canonical_terms": self.get_canonical_terms(),
             "keyword_mappings": self.get_keyword_mappings(),
+            "embeddings": self.search_vector is not None,
         }
         return base_dict
 

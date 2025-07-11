@@ -13,6 +13,7 @@ from models.document import Document, DocumentStatus
 from models.taxonomy import TaxonomyTerm
 from config import get_settings
 from services.preview_service import PreviewService
+from services.ai_service import AIService
 import datetime
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ class SearchService:
     def __init__(self):
         self.db = SessionLocal()
         self.preview_service = PreviewService()
+        self.ai_service = AIService()
 
     def _create_pagination_info(
         self, page: int, per_page: int, total_count: int
@@ -513,19 +515,37 @@ class SearchService:
                 Document.status == DocumentStatus.COMPLETED
             )
 
-            # Apply text search
+            # Hybrid Search: Vector + Text
             if query.strip():
+                # Vector Search
+                query_embedding = await self.ai_service.generate_embeddings(query)
+                vector_search_results = (
+                    base_query.order_by(
+                        Document.search_vector.l2_distance(query_embedding)
+                    )
+                    .limit(100)
+                    .all()
+                )
+
+                # Text Search
                 search_term = f"%{query.strip()}%"
-                base_query = base_query.filter(
+                text_search_results = base_query.filter(
                     or_(
                         Document.filename.ilike(search_term),
                         Document.search_content.ilike(search_term),
                         Document.extracted_text.ilike(search_term),
                     )
-                )
+                ).all()
 
-            # Get all documents first, then filter by mappings if needed
-            all_documents = base_query.all()
+                # Combine and de-duplicate results
+                combined_results = {doc.id: doc for doc in vector_search_results}
+                for doc in text_search_results:
+                    if doc.id not in combined_results:
+                        combined_results[doc.id] = doc
+
+                all_documents = list(combined_results.values())
+            else:
+                all_documents = base_query.all()
 
             # Filter by canonical term if specified
             if canonical_term:
@@ -570,51 +590,25 @@ class SearchService:
             # Format documents for response with enhanced mapping info
             formatted_docs = []
             for doc in documents:
-                preview_url = self.preview_service.get_preview_url(doc.file_path)
+                # Use the to_dict() method for a consistent base
+                formatted_doc = doc.to_dict()
 
-                formatted_doc = {
-                    "id": doc.id,
-                    "filename": doc.filename,
-                    "file_size": doc.file_size,
-                    "status": doc.status,
-                    "created_at": (
-                        doc.created_at.isoformat() if doc.created_at else None
-                    ),
-                    "summary": doc.get_summary(),
-                    "categories": doc.get_categories(),
-                    "keywords": doc.get_keyword_list(),
-                    "preview_url": preview_url,
-                    "file_type": doc.get_metadata("file_type", "unknown"),
-                    # Enhanced mapping information
-                    "mapping_count": doc.get_mapping_count(),
-                    "verbatim_terms": doc.get_verbatim_terms()[:5],  # Show first 5
-                    "canonical_terms": doc.get_canonical_terms()[:5],  # Show first 5
-                    "keyword_mappings": doc.get_keyword_mappings()[
-                        :3
-                    ],  # Show first 3 for preview
-                    # Legacy fields for backward compatibility
-                    "document_type": (
-                        doc.ai_analysis.get("document_analysis", {}).get(
-                            "document_type"
-                        )
-                        if doc.ai_analysis
-                        else None
-                    ),
-                    "campaign_type": (
-                        doc.ai_analysis.get("document_analysis", {}).get(
-                            "campaign_type"
-                        )
-                        if doc.ai_analysis
-                        else None
-                    ),
-                    "document_tone": (
-                        doc.ai_analysis.get("document_analysis", {}).get(
-                            "document_tone"
-                        )
-                        if doc.ai_analysis
-                        else None
-                    ),
-                }
+                # Add view-specific fields that are not part of the core model dict
+                formatted_doc["preview_url"] = self.preview_service.get_preview_url(
+                    doc.file_path
+                )
+
+                # Limit verbose fields for the search preview
+                formatted_doc["verbatim_terms"] = formatted_doc.get(
+                    "verbatim_terms", []
+                )[:5]
+                formatted_doc["canonical_terms"] = formatted_doc.get(
+                    "canonical_terms", []
+                )[:5]
+                formatted_doc["keyword_mappings"] = formatted_doc.get(
+                    "keyword_mappings", []
+                )[:3]
+
                 formatted_docs.append(formatted_doc)
 
             # Generate pagination info

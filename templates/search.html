@@ -75,6 +75,14 @@ endblock %} {% block content %}
           </select>
         </div>
         <div class="mb-3">
+          <label for="canonicalTermFilter" class="form-label"
+            >Canonical Term</label
+          >
+          <select class="form-select" id="canonicalTermFilter">
+            <option value="">All Canonical Terms</option>
+          </select>
+        </div>
+        <div class="mb-3">
           <label for="sortBy" class="form-label">Sort By</label>
           <select class="form-select" id="sortBy">
             <option value="created_at">Upload Date</option>
@@ -146,6 +154,8 @@ endblock %} {% block content %}
           <p class="card-text summary text-muted"></p>
           <div class="extra-info mb-2"></div>
           <div class="keywords mb-2"></div>
+          <div class="metadata-info mb-2"></div>
+          <div class="all-data-info mb-2"></div>
           <div class="d-flex justify-content-between align-items-center">
             <small class="text-muted">
               <i class="fas fa-calendar me-1"></i>
@@ -182,7 +192,7 @@ endblock %} {% block content %}
 
     // Filter changes
     $(
-      "#primaryCategoryFilter, #subcategoryFilter, #categoryFilter, #sortBy, #sortDirection"
+      "#primaryCategoryFilter, #subcategoryFilter, #categoryFilter, #sortBy, #sortDirection, #canonicalTermFilter"
     ).on("change", function () {
       currentPage = 1;
       performSearch();
@@ -231,6 +241,7 @@ endblock %} {% block content %}
       $("#primaryCategoryFilter").val("");
       $("#subcategoryFilter").val("").prop("disabled", true);
       $("#categoryFilter").val("");
+      $("#canonicalTermFilter").val("");
       $("#sortBy").val("created_at");
       $("#sortDirection").val("desc");
       currentPage = 1;
@@ -241,6 +252,7 @@ endblock %} {% block content %}
     function performSearch() {
       const query = $("#searchQuery").val();
       const category = $("#categoryFilter").val();
+      const canonical_term = $("#canonicalTermFilter").val();
       const sortBy = $("#sortBy").val();
       const sortDirection = $("#sortDirection").val();
 
@@ -257,6 +269,10 @@ endblock %} {% block content %}
 
       if (category) {
         params.append("category", category);
+      }
+
+      if (canonical_term) {
+        params.append("canonical_term", canonical_term);
       }
 
       fetch(`/api/documents/search?${params}`)
@@ -309,8 +325,7 @@ endblock %} {% block content %}
       const card = $(template);
 
       card.find(".filename").text(doc.filename);
-      const summary =
-        doc.ai_analysis?.document_analysis?.summary || "No summary available";
+      const summary = doc.summary || "No summary available";
       card.find(".summary").text(summary);
       card
         .find(".upload-date")
@@ -329,9 +344,13 @@ endblock %} {% block content %}
         doc.ai_analysis.keyword_mappings.length > 0
       ) {
         doc.ai_analysis.keyword_mappings.forEach((mapping) => {
-          if (mapping.verbatim_term) {
+          if (mapping.verbatim_term && mapping.mapped_canonical_term) {
             keywordsContainer.append(
-              `<span class="badge bg-secondary keyword-badge me-1">${mapping.verbatim_term}</span>`
+              `<span class="badge bg-secondary keyword-badge me-1 mb-1">${mapping.verbatim_term} <i class="fas fa-long-arrow-alt-right mx-1"></i> ${mapping.mapped_canonical_term}</span>`
+            );
+          } else if (mapping.verbatim_term) {
+            keywordsContainer.append(
+              `<span class="badge bg-light text-dark keyword-badge me-1 mb-1">${mapping.verbatim_term}</span>`
             );
           }
         });
@@ -354,6 +373,53 @@ endblock %} {% block content %}
             <span class="badge bg-warning me-1">${doc.document_tone}</span>
         `);
       }
+
+      // Display all other document fields
+      const allDataContainer = card.find(".all-data-info");
+      let allDataHtml = "";
+
+      for (const [key, value] of Object.entries(doc)) {
+        if (
+          value &&
+          typeof value !== "object" &&
+          typeof value !== "undefined"
+        ) {
+          allDataHtml += `<span class="badge bg-light text-dark me-1 mb-1">${key}: ${value}</span>`;
+        }
+      }
+      allDataContainer.html(allDataHtml);
+
+      const metadataContainer = card.find(".metadata-info");
+      let metadataHtml = "";
+
+      if (doc.status) {
+        let statusClass = "secondary";
+        if (doc.status === "COMPLETED") statusClass = "success";
+        if (doc.status === "FAILED") statusClass = "danger";
+        if (doc.status === "PROCESSING") statusClass = "primary";
+        metadataHtml += `<span class="badge bg-${statusClass} me-1">Status: ${doc.status}</span>`;
+      }
+
+      if (doc.file_size) {
+        const sizeInKb = (doc.file_size / 1024).toFixed(2);
+        metadataHtml += `<span class="badge bg-light text-dark me-1">${sizeInKb} KB</span>`;
+      }
+
+      if (doc.mapping_count > 0) {
+        metadataHtml += `<span class="badge bg-info me-1">Mappings: ${doc.mapping_count}</span>`;
+      }
+
+      if (doc.embeddings) {
+        metadataHtml += `<span class="badge bg-success me-1"><i class="fas fa-check me-1"></i>Embeddings</span>`;
+      } else {
+        metadataHtml += `<span class="badge bg-danger me-1"><i class="fas fa-times me-1"></i>Embeddings</span>`;
+      }
+
+      if (doc.processing_error) {
+        metadataHtml += `<div class="text-danger small mt-1" title="${doc.processing_error}"><i class="fas fa-exclamation-triangle me-1"></i>Processing Error</div>`;
+      }
+
+      metadataContainer.html(metadataHtml);
 
       // Add categories
       if (doc.categories && doc.categories.length > 0) {
@@ -380,8 +446,10 @@ endblock %} {% block content %}
     function updateFilters(facets) {
       const categorySelect = $("#categoryFilter");
       const primaryCategorySelect = $("#primaryCategoryFilter");
+      const canonicalTermSelect = $("#canonicalTermFilter");
       const currentCategoryValue = categorySelect.val();
       const currentPrimaryValue = primaryCategorySelect.val();
+      const currentCanonicalTermValue = canonicalTermSelect.val();
 
       // Update specific categories
       categorySelect.find("option:not(:first)").remove();
@@ -404,6 +472,17 @@ endblock %} {% block content %}
         });
       }
       primaryCategorySelect.val(currentPrimaryValue);
+
+      // Update canonical terms
+      canonicalTermSelect.find("option:not(:first)").remove();
+      if (facets && facets.canonical_terms) {
+        facets.canonical_terms.forEach((term) => {
+          canonicalTermSelect.append(`
+                    <option value="${term.name}">${term.name} (${term.count})</option>
+                `);
+        });
+      }
+      canonicalTermSelect.val(currentCanonicalTermValue);
     }
 
     // View document

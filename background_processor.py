@@ -13,7 +13,7 @@ from datetime import datetime
 from services.document_service import DocumentService
 from services.ai_service import AIService
 from services.storage_service import StorageService
-from models.document import DocumentStatus
+from models.document import Document, DocumentStatus
 from config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -254,16 +254,18 @@ class BackgroundProcessor:
             # Step 4: Generate embeddings if available (80-90% progress)
             logger.info(f"Step 4: Generating embeddings for document {document_id}")
 
-            if analysis_result.get("extracted_text"):
-                embeddings = await self.ai_service.generate_embeddings(
-                    analysis_result["extracted_text"][:8000]  # Limit text length
+            document = await self.document_service.get_document(document_id)
+            if document:
+                synthesized_text = self._create_synthesized_document(
+                    document, analysis_result
                 )
+
+                embeddings = await self.ai_service.generate_embeddings(synthesized_text)
 
                 if embeddings:
                     # Store embeddings in document
-                    document = await self.document_service.get_document(document_id)
-                    if document:
-                        document.embeddings = embeddings
+                    document.search_vector = embeddings
+                    self.document_service.db.commit()
 
             await self.document_service.update_document_status(
                 document_id, DocumentStatus.PROCESSING, progress=90
@@ -295,6 +297,53 @@ class BackgroundProcessor:
                 f"Error in processing pipeline for document {document_id}: {str(e)}"
             )
             return False
+
+    def _create_synthesized_document(
+        self, document: Document, analysis_result: Dict[str, Any]
+    ) -> str:
+        """Create a synthesized document for embedding"""
+        parts = []
+
+        # 1. Filename
+        parts.append(document.filename)
+
+        # 2. Summary
+        if document.ai_analysis and document.ai_analysis.get("summary"):
+            parts.append(document.ai_analysis.get("summary"))
+
+        # 3. Communication Focus
+        if document.ai_analysis and document.ai_analysis.get("communication_focus"):
+            comm_focus = document.ai_analysis.get("communication_focus")
+            if comm_focus.get("primary_issue"):
+                parts.append(comm_focus.get("primary_issue"))
+            if comm_focus.get("messaging_strategy"):
+                parts.append(comm_focus.get("messaging_strategy"))
+
+        # 4. Document Type and Election Year
+        if document.ai_analysis:
+            doc_type = document.ai_analysis.get("document_type", "")
+            election_year = document.ai_analysis.get("election_year", "")
+            parts.append(f"{doc_type} {election_year}")
+
+        # 5. Keywords
+        if document.keywords and document.keywords.get("keywords"):
+            parts.append(", ".join(document.keywords.get("keywords")))
+
+        # 6. Entities
+        if document.ai_analysis and document.ai_analysis.get("entities"):
+            entities = document.ai_analysis.get("entities")
+            entity_parts = []
+            for entity_type, entity_list in entities.items():
+                if isinstance(entity_list, list) and entity_list:
+                    entity_parts.append(f"{entity_type}: {', '.join(entity_list)}")
+            if entity_parts:
+                parts.append(" ".join(entity_parts))
+
+        # 7. Extracted Text
+        if document.extracted_text:
+            parts.append(document.extracted_text)
+
+        return "\n".join(parts)
 
     def _run_ai_analysis_sync(
         self, file_path: str, filename: str, analysis_type: str = "unified"
