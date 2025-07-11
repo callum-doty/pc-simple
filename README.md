@@ -2,7 +2,7 @@
 
 A streamlined FastAPI-based document processing system that leverages AI for text extraction and analysis. This is a simplified rebuild of the original complex Flask application, designed to be easier to understand, deploy, and maintain while preserving all core functionality.
 
-## 🎯 Key Improvements
+## Key Improvements
 
 ### Architecture Simplification
 
@@ -19,7 +19,7 @@ A streamlined FastAPI-based document processing system that leverages AI for tex
 - **Lower Memory Usage**: No Redis, MinIO, or multiple workers
 - **Simpler Monitoring**: Fewer services to track and debug
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
@@ -32,7 +32,7 @@ A streamlined FastAPI-based document processing system that leverages AI for tex
 └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
-## 🚀 Features
+## Features
 
 - **Document Upload**: Drag & drop interface with progress tracking
 - **AI Analysis**: Automatic text extraction and content analysis using Claude/GPT
@@ -42,7 +42,7 @@ A streamlined FastAPI-based document processing system that leverages AI for tex
 - **Admin Dashboard**: Processing status and statistics
 - **Responsive UI**: Modern Bootstrap-based interface
 
-## 📋 Requirements
+## Requirements
 
 - Python 3.11+
 - PostgreSQL (or SQLite for development)
@@ -119,7 +119,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - File storage uses Render's persistent disk
 - Application is ready to use
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 simplified_app/
@@ -144,7 +144,7 @@ simplified_app/
     └── upload.html         # Upload interface
 ```
 
-## 🔧 Configuration
+## Configuration
 
 ### Environment Settings
 
@@ -178,7 +178,7 @@ simplified_app/
    - Compatible with AWS S3, Cloudflare R2, etc.
    - Requires additional S3 configuration variables
 
-## 🔄 Processing Pipeline
+## Processing Pipeline
 
 1. **Upload**: Files uploaded via web interface or API
 2. **Storage**: Files saved to configured storage backend
@@ -190,7 +190,7 @@ simplified_app/
    - Search index update
 4. **Completion**: Document available for search and viewing
 
-## 🔍 API Endpoints
+## API Endpoints
 
 ### Document Management
 
@@ -263,7 +263,7 @@ black .
 3. **Database Changes**: Modify `models/document.py`
 4. **UI Changes**: Update templates in `templates/`
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
@@ -296,7 +296,7 @@ black .
 - Health check endpoint: `/health`
 - Statistics endpoint: `/api/stats`
 
-## 🔄 Migration from Original
+## Migration from Original
 
 To migrate from the original complex application:
 
@@ -306,7 +306,7 @@ To migrate from the original complex application:
 4. **Deploy Simplified App**: Use this simplified version
 5. **Import Data**: Load transformed data into new system
 
-## 📈 Performance
+## Performance
 
 ### Benchmarks
 
@@ -321,7 +321,7 @@ To migrate from the original complex application:
 - **Horizontal**: Add worker service for heavy processing loads
 - **Storage**: Use S3 for unlimited file storage
 
-## 🤝 Contributing
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch
@@ -329,11 +329,11 @@ To migrate from the original complex application:
 4. Add tests if applicable
 5. Submit a pull request
 
-## 📄 License
+## License
 
 [Your License Here]
 
-## 🆘 Support
+## Support
 
 For issues and questions:
 
