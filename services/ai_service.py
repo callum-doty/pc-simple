@@ -274,6 +274,24 @@ class AIService:
             )
             results["communication_focus"] = communication_result
 
+            # Consolidate into a unified document_analysis structure
+            if "metadata" in results and "classification" in results:
+                # Extract summary and other details from the 'document_analysis' block within the 'metadata' result
+                doc_analysis_data = results.get("metadata", {}).get(
+                    "document_analysis", {}
+                )
+                summary_text = doc_analysis_data.get("summary", "No summary available")
+                document_type = doc_analysis_data.get("document_type", "unknown")
+                campaign_type = doc_analysis_data.get("campaign_type", "unknown")
+                document_tone = doc_analysis_data.get("document_tone", "neutral")
+
+                results["document_analysis"] = {
+                    "summary": summary_text,
+                    "document_type": document_type,
+                    "campaign_type": campaign_type,
+                    "document_tone": document_tone,
+                }
+
             return results
 
         except Exception as e:
