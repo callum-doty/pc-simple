@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     openai_api_key: str = ""
     gemini_api_key: str = ""
-    default_ai_provider: str = "gemini"  # anthropic, openai, gemini
+    default_ai_provider: str = "openai"  # anthropic, openai, gemini
 
     # Search settings
     search_results_per_page: int = 20

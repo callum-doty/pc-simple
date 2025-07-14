@@ -597,6 +597,7 @@ class SearchService:
                 formatted_doc["preview_url"] = self.preview_service.get_preview_url(
                     doc.file_path
                 )
+                formatted_doc["embeddings"] = doc.search_vector is not None
 
                 # Limit verbose fields for the search preview
                 formatted_doc["verbatim_terms"] = formatted_doc.get(

@@ -227,7 +227,6 @@ class Document(Base):
             "verbatim_terms": self.get_verbatim_terms(),
             "canonical_terms": self.get_canonical_terms(),
             "keyword_mappings": self.get_keyword_mappings(),
-            "embeddings": self.search_vector is not None,
         }
         return base_dict
 
