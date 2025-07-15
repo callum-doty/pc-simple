@@ -437,15 +437,21 @@ class SearchService:
 
             # Hybrid Search: Vector + Text
             if query.strip():
-                # Vector Search
-                query_embedding = await self.ai_service.generate_embeddings(query)
-                vector_search_results = (
-                    base_query.order_by(
-                        Document.search_vector.l2_distance(query_embedding)
-                    )
-                    .limit(100)
-                    .all()
-                )
+                vector_search_results = []
+                # Vector Search - only on documents with embeddings
+                try:
+                    query_embedding = await self.ai_service.generate_embeddings(query)
+                    if query_embedding is not None:
+                        vector_search_results = (
+                            base_query.filter(Document.search_vector.isnot(None))
+                            .order_by(
+                                Document.search_vector.l2_distance(query_embedding)
+                            )
+                            .limit(100)
+                            .all()
+                        )
+                except Exception as e:
+                    logger.error(f"Vector search failed: {str(e)}")
 
                 # Text Search
                 search_term = f"%{query.strip()}%"
