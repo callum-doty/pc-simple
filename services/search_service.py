@@ -229,40 +229,23 @@ class SearchService:
             return []
 
     async def search_by_category(
-        self, category: str, limit: int = 20
+        self, category: str, query: str = "", limit: int = 20
     ) -> List[Dict[str, Any]]:
-        """Search documents by specific category"""
+        """Search documents by specific category with hybrid search"""
         try:
-            # Find documents with the specified category
-            documents = []
+            # Use the main search function to get hybrid search results
+            search_results = await self.search(
+                query=query, per_page=limit * 2
+            )  # Fetch more to filter
+            all_documents = search_results.get("documents", [])
 
-            docs_with_keywords = (
-                self.db.query(Document)
-                .filter(
-                    Document.status == DocumentStatus.COMPLETED,
-                    Document.keywords.isnot(None),
-                )
-                .all()
-            )
+            # Filter results by category
+            categorized_documents = []
+            for doc in all_documents:
+                if category in doc.get("categories", []):
+                    categorized_documents.append(doc)
 
-            for doc in docs_with_keywords:
-                if category in doc.get_categories():
-                    documents.append(
-                        {
-                            "id": doc.id,
-                            "filename": doc.filename,
-                            "created_at": (
-                                doc.created_at.isoformat() if doc.created_at else None
-                            ),
-                            "summary": doc.get_summary(),
-                            "categories": doc.get_categories(),
-                            "keywords": doc.get_keyword_list(),
-                        }
-                    )
-
-            # Sort by creation date and limit
-            documents.sort(key=lambda x: x["created_at"] or "", reverse=True)
-            return documents[:limit]
+            return categorized_documents[:limit]
 
         except Exception as e:
             logger.error(f"Error searching by category {category}: {str(e)}")
@@ -327,54 +310,15 @@ class SearchService:
             return []
 
     async def search_by_canonical_term(
-        self, canonical_term: str, limit: int = 20
+        self, canonical_term: str, query: str = "", limit: int = 20
     ) -> List[Dict[str, Any]]:
-        """Search documents by canonical taxonomy term"""
+        """Search documents by canonical term with hybrid search"""
         try:
-            documents = []
-
-            docs_with_keywords = (
-                self.db.query(Document)
-                .filter(
-                    Document.status == DocumentStatus.COMPLETED,
-                    Document.keywords.isnot(None),
-                )
-                .all()
+            # Use the main search function to get hybrid search results
+            search_results = await self.search(
+                query=query, canonical_term=canonical_term, per_page=limit
             )
-
-            for doc in docs_with_keywords:
-                keyword_mappings = doc.get_keyword_mappings()
-
-                # Check if any mapping contains the canonical term
-                for mapping in keyword_mappings:
-                    if (
-                        mapping.get("mapped_canonical_term", "").lower()
-                        == canonical_term.lower()
-                    ):
-                        documents.append(
-                            {
-                                "id": doc.id,
-                                "filename": doc.filename,
-                                "created_at": (
-                                    doc.created_at.isoformat()
-                                    if doc.created_at
-                                    else None
-                                ),
-                                "summary": doc.get_summary(),
-                                "categories": doc.get_categories(),
-                                "keywords": doc.get_keyword_list(),
-                                "mapping_count": doc.get_mapping_count(),
-                                "matched_mapping": mapping,  # Include the specific mapping that matched
-                                "preview_url": self.preview_service.get_preview_url(
-                                    doc.file_path
-                                ),
-                            }
-                        )
-                        break  # Only add document once even if multiple mappings match
-
-            # Sort by creation date and limit
-            documents.sort(key=lambda x: x["created_at"] or "", reverse=True)
-            return documents[:limit]
+            return search_results.get("documents", [])
 
         except Exception as e:
             logger.error(
@@ -383,53 +327,29 @@ class SearchService:
             return []
 
     async def search_by_verbatim_term(
-        self, verbatim_term: str, limit: int = 20
+        self, verbatim_term: str, query: str = "", limit: int = 20
     ) -> List[Dict[str, Any]]:
-        """Search documents by verbatim term extracted from documents"""
+        """Search documents by verbatim term with hybrid search"""
         try:
-            documents = []
+            # Use the main search function to get hybrid search results
+            search_results = await self.search(
+                query=query, per_page=limit * 2
+            )  # Fetch more to filter
+            all_documents = search_results.get("documents", [])
 
-            docs_with_keywords = (
-                self.db.query(Document)
-                .filter(
-                    Document.status == DocumentStatus.COMPLETED,
-                    Document.keywords.isnot(None),
-                )
-                .all()
-            )
-
-            for doc in docs_with_keywords:
-                keyword_mappings = doc.get_keyword_mappings()
-
-                # Check if any mapping contains the verbatim term
-                for mapping in keyword_mappings:
+            # Filter results by verbatim term
+            verbatim_documents = []
+            for doc in all_documents:
+                mappings = doc.get("keyword_mappings", [])
+                for mapping in mappings:
                     if (
                         verbatim_term.lower()
                         in mapping.get("verbatim_term", "").lower()
                     ):
-                        documents.append(
-                            {
-                                "id": doc.id,
-                                "filename": doc.filename,
-                                "created_at": (
-                                    doc.created_at.isoformat()
-                                    if doc.created_at
-                                    else None
-                                ),
-                                "summary": doc.get_summary(),
-                                "categories": doc.get_categories(),
-                                "keywords": doc.get_keyword_list(),
-                                "mapping_count": doc.get_mapping_count(),
-                                "matched_mapping": mapping,
-                                "preview_url": self.preview_service.get_preview_url(
-                                    doc.file_path
-                                ),
-                            }
-                        )
-                        break
+                        verbatim_documents.append(doc)
+                        break  # Add once per document
 
-            documents.sort(key=lambda x: x["created_at"] or "", reverse=True)
-            return documents[:limit]
+            return verbatim_documents[:limit]
 
         except Exception as e:
             logger.error(f"Error searching by verbatim term {verbatim_term}: {str(e)}")

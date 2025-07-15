@@ -339,7 +339,11 @@ class BackgroundProcessor:
             if entity_parts:
                 parts.append(" ".join(entity_parts))
 
-        # 7. Extracted Text
+        # 7. Search Content (for keyword alignment)
+        if document.search_content:
+            parts.append(document.search_content)
+
+        # 8. Extracted Text (full content)
         if document.extracted_text:
             parts.append(document.extracted_text)
 

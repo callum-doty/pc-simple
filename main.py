@@ -34,6 +34,9 @@ from background_processor import BackgroundProcessor
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Set sqlalchemy engine logger to WARNING to reduce verbosity
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+
 settings = get_settings()
 
 
@@ -516,6 +519,10 @@ async def get_statistics(
 
 if __name__ == "__main__":
     import uvicorn
+    import multiprocessing
+
+    # Set the start method for multiprocessing
+    multiprocessing.set_start_method("fork", force=True)
 
     uvicorn.run(
         "main:app",
@@ -528,11 +535,12 @@ if __name__ == "__main__":
 @app.get("/api/search/canonical/{canonical_term}")
 async def search_by_canonical_term(
     canonical_term: str,
+    q: str = "",
     search_service: SearchService = Depends(get_search_service),
 ):
-    """Search documents by canonical term"""
+    """Search documents by canonical term with optional query"""
     try:
-        results = await search_service.search_by_canonical_term(canonical_term)
+        results = await search_service.search_by_canonical_term(canonical_term, query=q)
         return {"success": True, "documents": results}
     except Exception as e:
         logger.error(f"Canonical term search error: {str(e)}")
@@ -542,11 +550,12 @@ async def search_by_canonical_term(
 @app.get("/api/search/verbatim/{verbatim_term}")
 async def search_by_verbatim_term(
     verbatim_term: str,
+    q: str = "",
     search_service: SearchService = Depends(get_search_service),
 ):
-    """Search documents by verbatim term"""
+    """Search documents by verbatim term with optional query"""
     try:
-        results = await search_service.search_by_verbatim_term(verbatim_term)
+        results = await search_service.search_by_verbatim_term(verbatim_term, query=q)
         return {"success": True, "documents": results}
     except Exception as e:
         logger.error(f"Verbatim term search error: {str(e)}")

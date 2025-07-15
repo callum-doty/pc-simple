@@ -147,6 +147,41 @@ class DocumentService:
             if metadata:
                 document.set_metadata(**metadata)
 
+            # Synthesize search_content
+            search_parts = [document.filename]
+            if ai_analysis:
+                # Add summary if available
+                if ai_analysis.get("summary"):
+                    search_parts.append(ai_analysis.get("summary"))
+                # Add content analysis if available
+                if ai_analysis.get("content_analysis"):
+                    search_parts.append(ai_analysis.get("content_analysis"))
+                # Add title if available
+                if ai_analysis.get("title"):
+                    search_parts.append(ai_analysis.get("title"))
+
+            # Add keywords and categories
+            if keywords:
+                search_parts.extend(keywords)
+            if categories:
+                search_parts.extend(categories)
+
+            # Add verbatim terms from mappings
+            if keyword_mappings:
+                verbatim_terms = [
+                    m["verbatim_term"] for m in keyword_mappings if "verbatim_term" in m
+                ]
+                search_parts.extend(verbatim_terms)
+
+            # Add raw extracted text
+            if extracted_text:
+                search_parts.append(extracted_text)
+
+            # Join all parts, ensuring they are strings and removing duplicates
+            document.search_content = " ".join(
+                sorted(list(set(str(p) for p in search_parts if p)))
+            )
+
             self.db.commit()
             logger.info(
                 f"Updated document {document_id} content with {len(keyword_mappings or [])} keyword mappings"

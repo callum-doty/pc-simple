@@ -12,7 +12,6 @@ import base64
 from pathlib import Path
 import io
 from PIL import Image
-import pytesseract
 import fitz  # PyMuPDF
 import anthropic
 import openai
@@ -469,45 +468,60 @@ class AIService:
             return ""
 
     async def _extract_text_from_pdf(self, file_content: bytes) -> str:
-        """Extract text from PDF using PyMuPDF"""
+        """
+        Extract text from PDF using the configured AI provider for OCR.
+        This ensures that even image-based PDFs are processed correctly.
+        """
         try:
             doc = fitz.open(stream=file_content, filetype="pdf")
-            text_parts = []
+            if doc.page_count == 0:
+                logger.warning("PDF has no pages, returning empty text.")
+                return ""
 
-            for page_num in range(doc.page_count):
-                page = doc[page_num]
-                text = page.get_text()
-                if text.strip():
-                    text_parts.append(f"--- Page {page_num + 1} ---\n{text}")
-                else:
-                    # If no text found, try OCR on page image
-                    pix = page.get_pixmap()
+            text_parts = []
+            for page_num in range(len(doc)):
+                try:
+                    page = doc.load_page(page_num)
+
+                    # Force OCR on every page for maximum reliability
+                    logger.info(f"Performing AI-based OCR on page {page_num + 1}.")
+                    pix = page.get_pixmap(dpi=300)  # Higher DPI for better OCR
                     img_data = pix.tobytes("png")
                     ocr_text = await self._extract_text_from_image(img_data)
+
                     if ocr_text.strip():
-                        text_parts.append(
-                            f"--- Page {page_num + 1} (OCR) ---\n{ocr_text}"
-                        )
+                        text_parts.append(f"--- Page {page_num + 1} ---\n{ocr_text}")
+                except Exception as page_error:
+                    logger.error(
+                        f"Error processing page {page_num + 1}: {str(page_error)}"
+                    )
+                    continue  # Continue to the next page
 
             doc.close()
             return "\n\n".join(text_parts)
 
         except Exception as e:
-            logger.error(f"Error extracting text from PDF: {str(e)}")
+            logger.error(f"Error extracting text from PDF with AI OCR: {str(e)}")
             return ""
 
     async def _extract_text_from_image(self, file_content: bytes) -> str:
-        """Extract text from image using OCR"""
+        """Extract text from image using the configured AI provider."""
         try:
-            # Convert bytes to PIL Image
-            image = Image.open(io.BytesIO(file_content))
+            if self.ai_provider == "none":
+                logger.warning("No AI provider configured for OCR.")
+                return ""
 
-            # Perform OCR
-            text = pytesseract.image_to_string(image)
-            return text.strip()
+            image_data = base64.b64encode(file_content).decode("utf-8")
+
+            system_prompt = "You are an expert OCR engine. Your task is to extract any and all text from the given image, accurately. Preserve the original formatting as much as possible. Only return the extracted text, with no additional comments, introductions, or summaries."
+            user_prompt = "Please extract all text from this image."
+
+            return await self._call_ai_for_raw_text(
+                system_prompt, user_prompt, image_data
+            )
 
         except Exception as e:
-            logger.error(f"Error extracting text from image: {str(e)}")
+            logger.error(f"Error extracting text from image with AI: {str(e)}")
             return ""
 
     async def _extract_text_from_document(self, file_content: bytes) -> str:
@@ -542,6 +556,94 @@ class AIService:
         except Exception as e:
             logger.error(f"Error preparing image data: {str(e)}")
             return None
+
+    async def _call_ai_for_raw_text(
+        self, system_prompt: str, user_prompt: str, image_data: Optional[str] = None
+    ) -> str:
+        """Call the configured AI provider and return the raw text response."""
+        try:
+            model_map = {
+                "anthropic": "claude-3-sonnet-20240229",
+                "openai": "gpt-4-turbo",
+                "gemini": "gemini-pro-vision",
+            }
+            model = model_map.get(self.ai_provider)
+
+            if not model:
+                logger.warning(
+                    f"OCR not supported for the '{self.ai_provider}' provider."
+                )
+                return ""
+
+            if self.ai_provider == "anthropic" and self.anthropic_client:
+                messages = [
+                    {
+                        "role": "user",
+                        "content": (
+                            [
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": "image/png",
+                                        "data": image_data,
+                                    },
+                                },
+                                {"type": "text", "text": user_prompt},
+                            ]
+                            if image_data
+                            else user_prompt
+                        ),
+                    }
+                ]
+                response = self.anthropic_client.messages.create(
+                    model=model,
+                    max_tokens=4000,
+                    system=system_prompt,
+                    messages=messages,
+                )
+                return response.content[0].text.strip()
+
+            elif self.ai_provider == "openai" and self.openai_client:
+                content = [{"type": "text", "text": user_prompt}]
+                if image_data:
+                    content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{image_data}"},
+                        }
+                    )
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": content},
+                ]
+                response = self.openai_client.chat.completions.create(
+                    model=model, messages=messages, max_tokens=4000
+                )
+                return response.choices[0].message.content.strip()
+
+            elif self.ai_provider == "gemini" and self.gemini_client:
+                prompt_parts = []
+                if image_data:
+                    image_bytes = base64.b64decode(image_data)
+                    img = Image.open(io.BytesIO(image_bytes))
+                    prompt_parts.append(img)
+
+                # Gemini doesn't have a system prompt, so prepend it.
+                full_prompt = (
+                    f"System Prompt: {system_prompt}\n\nUser Prompt: {user_prompt}"
+                )
+                prompt_parts.append(full_prompt)
+
+                response = self.gemini_client.generate_content(prompt_parts)
+                return response.text.strip()
+
+            else:
+                return ""
+
+        except Exception as e:
+            logger.error(f"Error calling AI for raw text OCR: {str(e)}")
+            return ""
 
     async def _call_anthropic_api_with_system(
         self, system_prompt: str, user_prompt: str, image_data: Optional[str] = None
@@ -640,7 +742,7 @@ class AIService:
                 messages.append({"role": "user", "content": user_prompt})
 
             response = self.openai_client.chat.completions.create(
-                model="gpt-4-vision-preview" if image_data else "gpt-4",
+                model="gpt-4-turbo" if image_data else "gpt-4",
                 messages=messages,
                 max_tokens=3000,  # Increased for more detailed responses
             )

@@ -25,8 +25,8 @@ httpx<0.25.0  # Pin httpx version for compatibility with AI libraries
 
 # Document processing
 PyMuPDF==1.23.8
-pytesseract==0.3.10
 Pillow==10.1.0
+numpy==1.26.4
 
 # Optional dependencies for development
 pytest==7.4.3
