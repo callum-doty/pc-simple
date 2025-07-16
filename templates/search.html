@@ -53,26 +53,16 @@ endblock %} {% block content %}
       </div>
       <div class="card-body">
         <div class="mb-3">
-          <label for="primaryCategoryFilter" class="form-label"
-            >Primary Category</label
-          >
-          <select class="form-select" id="primaryCategoryFilter">
-            <option value="">All Primary Categories</option>
-          </select>
-        </div>
-        <div class="mb-3">
-          <label for="subcategoryFilter" class="form-label">Subcategory</label>
-          <select class="form-select" id="subcategoryFilter" disabled>
-            <option value="">All Subcategories</option>
-          </select>
-        </div>
-        <div class="mb-3">
-          <label for="canonicalTermFilter" class="form-label"
-            >Canonical Term</label
-          >
-          <select class="form-select" id="canonicalTermFilter" disabled>
-            <option value="">All Terms</option>
-          </select>
+          <label for="filterSearch" class="form-label">Filter by Term</label>
+          <input
+            type="text"
+            id="filterSearch"
+            class="form-control mb-2"
+            placeholder="Search filters..."
+          />
+          <div class="accordion" id="canonicalTermAccordion">
+            <!-- Accordion items will be dynamically inserted here -->
+          </div>
         </div>
         <div class="mb-3">
           <label for="sortBy" class="form-label">Sort By</label>
@@ -171,87 +161,101 @@ endblock %} {% block content %}
 <script>
   $(document).ready(function () {
     let currentPage = 1;
-    let taxonomyData = {};
+    let activeCanonicalTerm = "";
 
-    // Fetch taxonomy data on page load
-    function loadTaxonomyData() {
-      fetch("/api/taxonomy/filter-data")
+    // Fetch canonical terms for filter accordion
+    function loadCanonicalTermFilters() {
+      fetch("/api/taxonomy/canonical-terms")
         .then((response) => response.json())
         .then((data) => {
-          if (data.success) {
-            taxonomyData = data.data;
-            populatePrimaryCategories();
+          if (data.success && data.terms) {
+            const accordion = $("#canonicalTermAccordion");
+            accordion.empty();
+            const sanitizeForId = (text) => text.replace(/[^a-zA-Z0-9]/g, "-");
+
+            for (const [category, terms] of Object.entries(data.terms)) {
+              const categoryId = sanitizeForId(category);
+              const accordionItem = $(`
+                <div class="accordion-item">
+                  <h2 class="accordion-header" id="heading-${categoryId}">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-${categoryId}" aria-expanded="false" aria-controls="collapse-${categoryId}">
+                      ${category}
+                    </button>
+                  </h2>
+                  <div id="collapse-${categoryId}" class="accordion-collapse collapse" aria-labelledby="heading-${categoryId}" data-bs-parent="#canonicalTermAccordion">
+                    <div class="accordion-body d-flex flex-wrap gap-2">
+                      ${terms
+                        .map(
+                          (term) =>
+                            `<button type="button" class="btn btn-outline-secondary btn-sm" data-term="${term}">${term}</button>`
+                        )
+                        .join("")}
+                    </div>
+                  </div>
+                </div>
+              `);
+              accordion.append(accordionItem);
+            }
           }
         })
-        .catch((error) => console.error("Error loading taxonomy:", error));
-    }
-
-    function populatePrimaryCategories() {
-      const primarySelect = $("#primaryCategoryFilter");
-      primarySelect
-        .empty()
-        .append('<option value="">All Primary Categories</option>');
-      for (const primaryCategory in taxonomyData) {
-        primarySelect.append(
-          `<option value="${primaryCategory}">${primaryCategory}</option>`
+        .catch((error) =>
+          console.error("Error loading canonical terms:", error)
         );
-      }
     }
 
-    $("#primaryCategoryFilter").on("change", function () {
-      const primaryCategory = $(this).val();
-      const subcategorySelect = $("#subcategoryFilter");
-      const termSelect = $("#canonicalTermFilter");
+    // Handle click on canonical term filter buttons
+    $("#canonicalTermAccordion").on("click", "button.btn", function () {
+      const term = $(this).data("term");
 
-      subcategorySelect
-        .empty()
-        .append('<option value="">All Subcategories</option>');
-      termSelect
-        .empty()
-        .append('<option value="">All Terms</option>')
-        .prop("disabled", true);
+      if ($(this).hasClass("active")) {
+        // Deactivate filter
+        $(this)
+          .removeClass("active btn-primary")
+          .addClass("btn-outline-secondary");
+        activeCanonicalTerm = "";
+      } else {
+        // Deactivate other buttons
+        $("#canonicalTermAccordion button.btn")
+          .removeClass("active btn-primary")
+          .addClass("btn-outline-secondary");
+        // Activate this button
+        $(this)
+          .addClass("active btn-primary")
+          .removeClass("btn-outline-secondary");
+        activeCanonicalTerm = term;
+      }
 
-      if (primaryCategory && taxonomyData[primaryCategory]) {
-        subcategorySelect.prop("disabled", false);
-        for (const subcategory in taxonomyData[primaryCategory]) {
-          subcategorySelect.append(
-            `<option value="${subcategory}">${subcategory}</option>`
-          );
+      performSearch();
+    });
+
+    // Handle search input for filters
+    $("#filterSearch").on("keyup", function () {
+      const searchText = $(this).val().toLowerCase();
+      $("#canonicalTermAccordion .accordion-item").each(function () {
+        let categoryVisible = false;
+        $(this)
+          .find(".btn")
+          .each(function () {
+            const term = $(this).data("term").toLowerCase();
+            if (term.includes(searchText)) {
+              $(this).show();
+              categoryVisible = true;
+            } else {
+              $(this).hide();
+            }
+          });
+
+        if (categoryVisible) {
+          $(this).show();
+        } else {
+          $(this).hide();
         }
-      } else {
-        subcategorySelect.prop("disabled", true);
-      }
-      performSearch();
+      });
     });
 
-    $("#subcategoryFilter").on("change", function () {
-      const primaryCategory = $("#primaryCategoryFilter").val();
-      const subcategory = $(this).val();
-      const termSelect = $("#canonicalTermFilter");
-
-      termSelect.empty().append('<option value="">All Terms</option>');
-
-      if (
-        primaryCategory &&
-        subcategory &&
-        taxonomyData[primaryCategory][subcategory]
-      ) {
-        termSelect.prop("disabled", false);
-        taxonomyData[primaryCategory][subcategory].forEach((term) => {
-          termSelect.append(`<option value="${term}">${term}</option>`);
-        });
-      } else {
-        termSelect.prop("disabled", true);
-      }
+    $("#sortBy, #sortDirection").on("change", function () {
       performSearch();
     });
-
-    $("#canonicalTermFilter, #sortBy, #sortDirection").on(
-      "change",
-      function () {
-        performSearch();
-      }
-    );
 
     $("#searchForm").on("submit", function (e) {
       e.preventDefault();
@@ -260,9 +264,14 @@ endblock %} {% block content %}
 
     $("#clearFilters").on("click", function () {
       $("#searchQuery").val("");
-      $("#primaryCategoryFilter").val("");
-      $("#subcategoryFilter").val("").prop("disabled", true);
-      $("#canonicalTermFilter").val("").prop("disabled", true);
+      $("#filterSearch").val("");
+      $("#canonicalTermAccordion button.btn")
+        .removeClass("active btn-primary")
+        .addClass("btn-outline-secondary");
+      $(
+        "#canonicalTermAccordion .accordion-item, #canonicalTermAccordion .btn"
+      ).show();
+      activeCanonicalTerm = "";
       $("#sortBy").val("created_at");
       $("#sortDirection").val("desc");
       performSearch();
@@ -270,9 +279,6 @@ endblock %} {% block content %}
 
     function performSearch() {
       const query = $("#searchQuery").val();
-      const primary_category = $("#primaryCategoryFilter").val();
-      const subcategory = $("#subcategoryFilter").val();
-      const canonical_term = $("#canonicalTermFilter").val();
       const sort_by = $("#sortBy").val();
       const sort_direction = $("#sortDirection").val();
 
@@ -287,9 +293,9 @@ endblock %} {% block content %}
         sort_direction: sort_direction,
       });
 
-      if (primary_category) params.append("primary_category", primary_category);
-      if (subcategory) params.append("subcategory", subcategory);
-      if (canonical_term) params.append("canonical_term", canonical_term);
+      if (activeCanonicalTerm) {
+        params.append("canonical_term", activeCanonicalTerm);
+      }
 
       fetch(`/api/documents/search?${params}`)
         .then((response) => response.json())
@@ -526,8 +532,8 @@ endblock %} {% block content %}
     // Perform initial search to show recent documents
     performSearch();
 
-    // Load initial taxonomy data
-    loadTaxonomyData();
+    // Load canonical term filters
+    loadCanonicalTermFilters();
   });
 </script>
 {% endblock %}

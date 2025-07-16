@@ -434,6 +434,19 @@ async def get_filter_taxonomy(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/taxonomy/canonical-terms")
+async def get_canonical_terms(
+    taxonomy_service: TaxonomyService = Depends(get_taxonomy_service),
+):
+    """Get a flat list of all canonical terms"""
+    try:
+        terms = await taxonomy_service.get_all_canonical_terms()
+        return {"success": True, "terms": terms}
+    except Exception as e:
+        logger.error(f"Error getting canonical terms: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+
 @app.get("/api/taxonomy/search")
 async def search_taxonomy_terms(
     q: str,

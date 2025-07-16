@@ -439,6 +439,26 @@ class TaxonomyService:
             logger.error(f"Error validating categories: {str(e)}")
             return []
 
+    async def get_all_canonical_terms(self) -> Dict[str, List[str]]:
+        """Get a dictionary of canonical terms grouped by primary category."""
+        try:
+            terms = (
+                self.db.query(TaxonomyTerm.primary_category, TaxonomyTerm.term)
+                .order_by(TaxonomyTerm.primary_category, TaxonomyTerm.term)
+                .all()
+            )
+
+            grouped_terms = {}
+            for primary_category, term in terms:
+                if primary_category not in grouped_terms:
+                    grouped_terms[primary_category] = []
+                grouped_terms[primary_category].append(term)
+
+            return grouped_terms
+        except Exception as e:
+            logger.error(f"Error getting all canonical terms: {str(e)}")
+            return {}
+
     def __del__(self):
         """Cleanup database connection"""
         if hasattr(self, "db"):
