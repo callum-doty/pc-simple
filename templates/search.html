@@ -67,19 +67,11 @@ endblock %} {% block content %}
           </select>
         </div>
         <div class="mb-3">
-          <label for="categoryFilter" class="form-label"
-            >Specific Category</label
-          >
-          <select class="form-select" id="categoryFilter">
-            <option value="">All Categories</option>
-          </select>
-        </div>
-        <div class="mb-3">
           <label for="canonicalTermFilter" class="form-label"
             >Canonical Term</label
           >
-          <select class="form-select" id="canonicalTermFilter">
-            <option value="">All Canonical Terms</option>
+          <select class="form-select" id="canonicalTermFilter" disabled>
+            <option value="">All Terms</option>
           </select>
         </div>
         <div class="mb-3">
@@ -179,82 +171,110 @@ endblock %} {% block content %}
 <script>
   $(document).ready(function () {
     let currentPage = 1;
-    let currentQuery = "";
-    let currentFilters = {};
+    let taxonomyData = {};
 
-    // Search form submission
-    $("#searchForm").on("submit", function (e) {
-      e.preventDefault();
-      currentQuery = $("#searchQuery").val();
-      currentPage = 1;
-      performSearch();
-    });
+    // Fetch taxonomy data on page load
+    function loadTaxonomyData() {
+      fetch("/api/taxonomy/filter-data")
+        .then((response) => response.json())
+        .then((data) => {
+          if (data.success) {
+            taxonomyData = data.data;
+            populatePrimaryCategories();
+          }
+        })
+        .catch((error) => console.error("Error loading taxonomy:", error));
+    }
 
-    // Filter changes
-    $(
-      "#primaryCategoryFilter, #subcategoryFilter, #categoryFilter, #sortBy, #sortDirection, #canonicalTermFilter"
-    ).on("change", function () {
-      currentPage = 1;
-      performSearch();
-    });
+    function populatePrimaryCategories() {
+      const primarySelect = $("#primaryCategoryFilter");
+      primarySelect
+        .empty()
+        .append('<option value="">All Primary Categories</option>');
+      for (const primaryCategory in taxonomyData) {
+        primarySelect.append(
+          `<option value="${primaryCategory}">${primaryCategory}</option>`
+        );
+      }
+    }
 
-    // Primary category change - load subcategories
     $("#primaryCategoryFilter").on("change", function () {
       const primaryCategory = $(this).val();
       const subcategorySelect = $("#subcategoryFilter");
+      const termSelect = $("#canonicalTermFilter");
 
       subcategorySelect
         .empty()
         .append('<option value="">All Subcategories</option>');
+      termSelect
+        .empty()
+        .append('<option value="">All Terms</option>')
+        .prop("disabled", true);
 
-      if (primaryCategory) {
+      if (primaryCategory && taxonomyData[primaryCategory]) {
         subcategorySelect.prop("disabled", false);
-        // Load subcategories for the selected primary category
-        fetch(
-          `/api/taxonomy/categories/${encodeURIComponent(
-            primaryCategory
-          )}/subcategories`
-        )
-          .then((response) => response.json())
-          .then((data) => {
-            if (data.success && data.subcategories) {
-              data.subcategories.forEach((subcategory) => {
-                subcategorySelect.append(
-                  `<option value="${subcategory.name}">${subcategory.name} (${subcategory.count})</option>`
-                );
-              });
-            }
-          })
-          .catch((error) =>
-            console.error("Error loading subcategories:", error)
+        for (const subcategory in taxonomyData[primaryCategory]) {
+          subcategorySelect.append(
+            `<option value="${subcategory}">${subcategory}</option>`
           );
+        }
       } else {
         subcategorySelect.prop("disabled", true);
       }
-
-      currentPage = 1;
       performSearch();
     });
 
-    // Clear filters
+    $("#subcategoryFilter").on("change", function () {
+      const primaryCategory = $("#primaryCategoryFilter").val();
+      const subcategory = $(this).val();
+      const termSelect = $("#canonicalTermFilter");
+
+      termSelect.empty().append('<option value="">All Terms</option>');
+
+      if (
+        primaryCategory &&
+        subcategory &&
+        taxonomyData[primaryCategory][subcategory]
+      ) {
+        termSelect.prop("disabled", false);
+        taxonomyData[primaryCategory][subcategory].forEach((term) => {
+          termSelect.append(`<option value="${term}">${term}</option>`);
+        });
+      } else {
+        termSelect.prop("disabled", true);
+      }
+      performSearch();
+    });
+
+    $("#canonicalTermFilter, #sortBy, #sortDirection").on(
+      "change",
+      function () {
+        performSearch();
+      }
+    );
+
+    $("#searchForm").on("submit", function (e) {
+      e.preventDefault();
+      performSearch();
+    });
+
     $("#clearFilters").on("click", function () {
+      $("#searchQuery").val("");
       $("#primaryCategoryFilter").val("");
       $("#subcategoryFilter").val("").prop("disabled", true);
-      $("#categoryFilter").val("");
-      $("#canonicalTermFilter").val("");
+      $("#canonicalTermFilter").val("").prop("disabled", true);
       $("#sortBy").val("created_at");
       $("#sortDirection").val("desc");
-      currentPage = 1;
       performSearch();
     });
 
-    // Perform search
     function performSearch() {
       const query = $("#searchQuery").val();
-      const category = $("#categoryFilter").val();
+      const primary_category = $("#primaryCategoryFilter").val();
+      const subcategory = $("#subcategoryFilter").val();
       const canonical_term = $("#canonicalTermFilter").val();
-      const sortBy = $("#sortBy").val();
-      const sortDirection = $("#sortDirection").val();
+      const sort_by = $("#sortBy").val();
+      const sort_direction = $("#sortDirection").val();
 
       $("#loadingSpinner").show();
       $("#searchResults").hide();
@@ -263,24 +283,19 @@ endblock %} {% block content %}
         q: query,
         page: currentPage,
         per_page: 20,
-        sort_by: sortBy,
-        sort_direction: sortDirection,
+        sort_by: sort_by,
+        sort_direction: sort_direction,
       });
 
-      if (category) {
-        params.append("category", category);
-      }
-
-      if (canonical_term) {
-        params.append("canonical_term", canonical_term);
-      }
+      if (primary_category) params.append("primary_category", primary_category);
+      if (subcategory) params.append("subcategory", subcategory);
+      if (canonical_term) params.append("canonical_term", canonical_term);
 
       fetch(`/api/documents/search?${params}`)
         .then((response) => response.json())
         .then((data) => {
           displaySearchResults(data);
           updateStats(data);
-          updateFilters(data.facets);
         })
         .catch((error) => {
           console.error("Search error:", error);
@@ -310,13 +325,48 @@ endblock %} {% block content %}
         }
       } else {
         container.html(`
-                <div class="text-center py-5">
-                    <i class="fas fa-search fa-3x text-muted mb-3"></i>
-                    <h5 class="text-muted">No documents found</h5>
-                    <p class="text-muted">Try adjusting your search terms or filters.</p>
-                </div>
-            `);
+                  <div class="text-center py-5">
+                      <i class="fas fa-search fa-3x text-muted mb-3"></i>
+                      <h5 class="text-muted">No documents found</h5>
+                      <p class="text-muted">Try adjusting your search terms or filters.</p>
+                  </div>
+              `);
       }
+    }
+
+    function createPagination(pagination) {
+      if (!pagination || pagination.pages <= 1) {
+        return "";
+      }
+
+      let paginationHtml =
+        '<nav><ul class="pagination justify-content-center">';
+      // Previous page
+      paginationHtml += `<li class="page-item ${
+        pagination.has_prev ? "" : "disabled"
+      }">
+        <a class="page-link" href="#" data-page="${
+          pagination.prev_page
+        }">Previous</a></li>`;
+
+      // Page numbers
+      for (let i = 1; i <= pagination.pages; i++) {
+        paginationHtml += `<li class="page-item ${
+          i === pagination.page ? "active" : ""
+        }">
+          <a class="page-link" href="#" data-page="${i}">${i}</a></li>`;
+      }
+
+      // Next page
+      paginationHtml += `<li class="page-item ${
+        pagination.has_next ? "" : "disabled"
+      }">
+        <a class="page-link" href="#" data-page="${
+          pagination.next_page
+        }">Next</a></li>`;
+      paginationHtml += "</ul></nav>";
+
+      return paginationHtml;
     }
 
     // Create document card
@@ -360,18 +410,18 @@ endblock %} {% block content %}
       const extraInfoContainer = card.find(".extra-info");
       if (doc.document_type) {
         extraInfoContainer.append(`
-            <span class="badge bg-primary me-1">${doc.document_type}</span>
-        `);
+              <span class="badge bg-primary me-1">${doc.document_type}</span>
+          `);
       }
       if (doc.campaign_type) {
         extraInfoContainer.append(`
-            <span class="badge bg-success me-1">${doc.campaign_type}</span>
-        `);
+              <span class="badge bg-success me-1">${doc.campaign_type}</span>
+          `);
       }
       if (doc.document_tone) {
         extraInfoContainer.append(`
-            <span class="badge bg-warning me-1">${doc.document_tone}</span>
-        `);
+              <span class="badge bg-warning me-1">${doc.document_tone}</span>
+          `);
       }
 
       // Display all other document fields
@@ -425,8 +475,8 @@ endblock %} {% block content %}
       if (doc.categories && doc.categories.length > 0) {
         doc.categories.forEach((category) => {
           keywordsContainer.append(`
-                    <span class="badge bg-info keyword-badge me-1">${category}</span>
-                `);
+                      <span class="badge bg-info keyword-badge me-1">${category}</span>
+                  `);
         });
       }
 
@@ -442,49 +492,6 @@ endblock %} {% block content %}
       $("#searchCount").text(data.total_count || 0);
     }
 
-    // Update filters
-    function updateFilters(facets) {
-      const categorySelect = $("#categoryFilter");
-      const primaryCategorySelect = $("#primaryCategoryFilter");
-      const canonicalTermSelect = $("#canonicalTermFilter");
-      const currentCategoryValue = categorySelect.val();
-      const currentPrimaryValue = primaryCategorySelect.val();
-      const currentCanonicalTermValue = canonicalTermSelect.val();
-
-      // Update specific categories
-      categorySelect.find("option:not(:first)").remove();
-      if (facets && facets.categories) {
-        facets.categories.forEach((category) => {
-          categorySelect.append(`
-                    <option value="${category.name}">${category.name} (${category.count})</option>
-                `);
-        });
-      }
-      categorySelect.val(currentCategoryValue);
-
-      // Update primary categories
-      primaryCategorySelect.find("option:not(:first)").remove();
-      if (facets && facets.primary_categories) {
-        facets.primary_categories.forEach((category) => {
-          primaryCategorySelect.append(`
-                    <option value="${category.name}">${category.name} (${category.count})</option>
-                `);
-        });
-      }
-      primaryCategorySelect.val(currentPrimaryValue);
-
-      // Update canonical terms
-      canonicalTermSelect.find("option:not(:first)").remove();
-      if (facets && facets.canonical_terms) {
-        facets.canonical_terms.forEach((term) => {
-          canonicalTermSelect.append(`
-                    <option value="${term.name}">${term.name} (${term.count})</option>
-                `);
-        });
-      }
-      canonicalTermSelect.val(currentCanonicalTermValue);
-    }
-
     // View document
     function viewDocument(docId) {
       window.open(`/api/documents/${docId}/preview`, "_blank");
@@ -498,11 +505,11 @@ endblock %} {% block content %}
     // Show error message
     function showError(message) {
       $("#searchResults").html(`
-            <div class="alert alert-danger">
-                <i class="fas fa-exclamation-triangle me-2"></i>
-                ${message}
-            </div>
-        `);
+              <div class="alert alert-danger">
+                  <i class="fas fa-exclamation-triangle me-2"></i>
+                  ${message}
+              </div>
+          `);
     }
 
     // Load initial stats
@@ -518,6 +525,9 @@ endblock %} {% block content %}
 
     // Perform initial search to show recent documents
     performSearch();
+
+    // Load initial taxonomy data
+    loadTaxonomyData();
   });
 </script>
 {% endblock %}

@@ -421,13 +421,14 @@ class SearchService:
         query: str = "",
         page: int = 1,
         per_page: int = 20,
-        category: Optional[str] = None,
-        canonical_term: Optional[str] = None,  # New parameter
+        primary_category: Optional[str] = None,
+        subcategory: Optional[str] = None,
+        canonical_term: Optional[str] = None,
         sort_by: str = "created_at",
         sort_direction: str = "desc",
     ) -> Dict[str, Any]:
         """
-        Enhanced search with canonical term filtering
+        Enhanced search with hierarchical taxonomy filtering
         """
         try:
             # Build base query
@@ -473,26 +474,31 @@ class SearchService:
             else:
                 all_documents = base_query.all()
 
-            # Filter by canonical term if specified
-            if canonical_term:
+            # Apply hierarchical taxonomy filters
+            if primary_category or subcategory or canonical_term:
                 filtered_documents = []
                 for doc in all_documents:
                     mappings = doc.get_keyword_mappings()
                     for mapping in mappings:
-                        if (
-                            mapping.get("mapped_canonical_term", "").lower()
+                        primary_match = (
+                            not primary_category
+                            or mapping.get("mapped_primary_category", "").lower()
+                            == primary_category.lower()
+                        )
+                        sub_match = (
+                            not subcategory
+                            or mapping.get("mapped_subcategory", "").lower()
+                            == subcategory.lower()
+                        )
+                        term_match = (
+                            not canonical_term
+                            or mapping.get("mapped_canonical_term", "").lower()
                             == canonical_term.lower()
-                        ):
-                            filtered_documents.append(doc)
-                            break
-                all_documents = filtered_documents
+                        )
 
-            # Apply legacy category filter for backward compatibility
-            if category and not canonical_term:
-                filtered_documents = []
-                for doc in all_documents:
-                    if category in doc.get_categories():
-                        filtered_documents.append(doc)
+                        if primary_match and sub_match and term_match:
+                            filtered_documents.append(doc)
+                            break  # Move to the next document
                 all_documents = filtered_documents
 
             total_count = len(all_documents)

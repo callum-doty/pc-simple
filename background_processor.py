@@ -217,6 +217,11 @@ class BackgroundProcessor:
             # Extract rich keyword mappings
             keyword_mappings = self._extract_keyword_mappings(ai_analysis)
 
+            # Validate and enrich mappings using the taxonomy
+            validated_mappings = await self.ai_service._validate_keyword_mappings(
+                keyword_mappings
+            )
+
             # Extract traditional keywords and categories for backward compatibility
             keywords, categories = self.ai_service._extract_keywords_from_analysis(
                 ai_analysis
@@ -224,7 +229,7 @@ class BackgroundProcessor:
 
             # Log extraction results
             logger.info(
-                f"Extracted {len(keyword_mappings)} keyword mappings for document {document_id}"
+                f"Extracted {len(validated_mappings)} keyword mappings for document {document_id}"
             )
             logger.info(
                 f"Extracted {len(keywords)} keywords and {len(categories)} categories"
@@ -237,10 +242,10 @@ class BackgroundProcessor:
                 ai_analysis=ai_analysis,
                 keywords=keywords,
                 categories=categories,
-                keyword_mappings=keyword_mappings,  # Pass the rich mappings
+                keyword_mappings=validated_mappings,  # Pass the rich mappings
                 file_type=analysis_result.get("file_type"),
                 analysis_type=analysis_type,
-                mapping_count=len(keyword_mappings),
+                mapping_count=len(validated_mappings),
             )
 
             if not success:
@@ -288,7 +293,7 @@ class BackgroundProcessor:
             logger.info(
                 f"Processing pipeline completed successfully for document {document_id}"
             )
-            logger.info(f"Final mapping count: {len(keyword_mappings)}")
+            logger.info(f"Final mapping count: {len(validated_mappings)}")
 
             return True
 

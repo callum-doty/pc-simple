@@ -213,13 +213,24 @@ async def search_documents(
     q: str = "",
     page: int = 1,
     per_page: int = 20,
-    category: Optional[str] = None,
+    primary_category: Optional[str] = None,
+    subcategory: Optional[str] = None,
+    canonical_term: Optional[str] = None,
+    sort_by: str = "created_at",
+    sort_direction: str = "desc",
     search_service: SearchService = Depends(get_search_service),
 ):
     """Search documents"""
     try:
         results = await search_service.search(
-            query=q, page=page, per_page=per_page, category=category
+            query=q,
+            page=page,
+            per_page=per_page,
+            primary_category=primary_category,
+            subcategory=subcategory,
+            canonical_term=canonical_term,
+            sort_by=sort_by,
+            sort_direction=sort_direction,
         )
 
         return {
@@ -407,6 +418,19 @@ async def get_taxonomy_hierarchy(
 
     except Exception as e:
         logger.error(f"Taxonomy hierarchy error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/taxonomy/filter-data")
+async def get_filter_taxonomy(
+    taxonomy_service: TaxonomyService = Depends(get_taxonomy_service),
+):
+    """Get taxonomy data structured for UI filters"""
+    try:
+        filter_data = await taxonomy_service.get_filter_taxonomy_data()
+        return {"success": True, "data": filter_data}
+    except Exception as e:
+        logger.error(f"Filter taxonomy data error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

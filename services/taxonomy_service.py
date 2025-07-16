@@ -43,7 +43,7 @@ class TaxonomyService:
                 for row in reader:
                     try:
                         primary_category = row.get("primary_category", "").strip()
-                        subcategory = row.get("subcategory", "").strip()
+                        subcategory = row.get("subcategory", "").strip() or None
                         term = row.get("term", "").strip()
 
                         if not primary_category or not term:
@@ -132,6 +132,39 @@ class TaxonomyService:
 
         except Exception as e:
             logger.error(f"Error getting taxonomy hierarchy: {str(e)}")
+            return {}
+
+    async def get_filter_taxonomy_data(self) -> Dict[str, Any]:
+        """
+        Get the complete taxonomy hierarchy for filtering purposes.
+        Returns a nested dictionary: {primary_category: {subcategory: [terms]}}
+        """
+        try:
+            terms = (
+                self.db.query(TaxonomyTerm)
+                .order_by(
+                    TaxonomyTerm.primary_category,
+                    TaxonomyTerm.subcategory,
+                    TaxonomyTerm.term,
+                )
+                .all()
+            )
+
+            hierarchy = {}
+            for term in terms:
+                if term.primary_category not in hierarchy:
+                    hierarchy[term.primary_category] = {}
+
+                subcategory = term.subcategory or "General"
+                if subcategory not in hierarchy[term.primary_category]:
+                    hierarchy[term.primary_category][subcategory] = []
+
+                hierarchy[term.primary_category][subcategory].append(term.term)
+
+            return hierarchy
+
+        except Exception as e:
+            logger.error(f"Error getting filter taxonomy data: {str(e)}")
             return {}
 
     async def get_primary_categories(self) -> List[Dict[str, Any]]:
@@ -272,6 +305,23 @@ class TaxonomyService:
         except Exception as e:
             logger.error(f"Error getting taxonomy for AI prompt: {str(e)}")
         return {}
+
+    async def get_term_hierarchy(self, term: str) -> Optional[Dict[str, str]]:
+        """Get the full hierarchy for a given canonical term"""
+        try:
+            taxonomy_term = (
+                self.db.query(TaxonomyTerm).filter(TaxonomyTerm.term == term).first()
+            )
+            if taxonomy_term:
+                return {
+                    "primary_category": taxonomy_term.primary_category,
+                    "subcategory": taxonomy_term.subcategory,
+                    "term": taxonomy_term.term,
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error getting term hierarchy for '{term}': {str(e)}")
+            return None
 
     async def validate_taxonomy_mapping(
         self, primary_category: str, subcategory: str, term: str

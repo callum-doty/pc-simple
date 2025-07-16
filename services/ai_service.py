@@ -792,7 +792,6 @@ class AIService:
         """Extract keywords and categories from AI analysis with taxonomy validation"""
         keywords = []
         categories = []
-
         if isinstance(ai_analysis, dict):
             # Handle keyword mappings with taxonomy validation
             if "keyword_mappings" in ai_analysis:
@@ -803,14 +802,12 @@ class AIService:
                             verbatim_term = mapping.get("verbatim_term")
                             canonical_term = mapping.get("mapped_canonical_term")
                             primary_category = mapping.get("mapped_primary_category")
-
                             if verbatim_term:
                                 keywords.append(verbatim_term)
                             if canonical_term:
                                 keywords.append(canonical_term)
                             if primary_category:
                                 categories.append(primary_category)
-
             # Handle modular analysis format
             if "taxonomy_keywords" in ai_analysis:
                 taxonomy_data = ai_analysis["taxonomy_keywords"]
@@ -916,36 +913,26 @@ class AIService:
     async def _validate_keyword_mappings(
         self, keyword_mappings: List[Dict[str, str]]
     ) -> List[Dict[str, str]]:
-        """Validate keyword mappings against canonical taxonomy"""
+        """Validate and enrich keyword mappings against canonical taxonomy"""
         validated_mappings = []
-
         for mapping in keyword_mappings:
-            primary_category = mapping.get("mapped_primary_category")
-            subcategory = mapping.get("mapped_subcategory")
             canonical_term = mapping.get("mapped_canonical_term")
-
-            # Validate against taxonomy database
-            is_valid = await self.taxonomy_service.validate_taxonomy_mapping(
-                primary_category, subcategory, canonical_term
-            )
-
-            if is_valid:
-                validated_mappings.append(mapping)
+            if not canonical_term:
+                continue
+            # Get the full hierarchy for the canonical term
+            hierarchy = await self.taxonomy_service.get_term_hierarchy(canonical_term)
+            if hierarchy:
+                enriched_mapping = {
+                    "verbatim_term": mapping.get("verbatim_term"),
+                    "mapped_canonical_term": hierarchy["term"],
+                    "mapped_primary_category": hierarchy["primary_category"],
+                    "mapped_subcategory": hierarchy["subcategory"],
+                }
+                validated_mappings.append(enriched_mapping)
             else:
-                # Try to find closest match
-                closest_match = await self.taxonomy_service.find_closest_canonical_term(
-                    canonical_term, primary_category
+                logger.warning(
+                    f"Skipped invalid taxonomy mapping for term: {canonical_term}"
                 )
-                if closest_match:
-                    corrected_mapping = mapping.copy()
-                    corrected_mapping.update(closest_match)
-                    validated_mappings.append(corrected_mapping)
-                    logger.warning(
-                        f"Corrected taxonomy mapping: {canonical_term} -> {closest_match['canonical_term']}"
-                    )
-                else:
-                    logger.warning(f"Skipped invalid taxonomy mapping: {mapping}")
-
         return validated_mappings
 
     async def generate_embeddings(self, text: str) -> Optional[List[float]]:
