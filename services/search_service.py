@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from database import SessionLocal
 from models.document import Document, DocumentStatus
 from models.taxonomy import TaxonomyTerm
+from models.search_query import SearchQuery
 from config import get_settings
 from services.preview_service import PreviewService
 from services.ai_service import AIService
@@ -431,6 +432,9 @@ class SearchService:
         Enhanced search with hierarchical taxonomy filtering
         """
         try:
+            # Log the search query
+            if query.strip():
+                await self.log_search_query(query)
             # Build base query
             base_query = self.db.query(Document).filter(
                 Document.status == DocumentStatus.COMPLETED
@@ -455,14 +459,31 @@ class SearchService:
                     logger.error(f"Vector search failed: {str(e)}")
 
                 # Text Search
-                search_term = f"%{query.strip()}%"
-                text_search_results = base_query.filter(
-                    or_(
-                        Document.filename.ilike(search_term),
-                        Document.search_content.ilike(search_term),
-                        Document.extracted_text.ilike(search_term),
-                    )
-                ).all()
+                keywords = self._get_search_keywords(query)
+                if keywords:
+                    text_search_clauses = []
+                    for keyword in keywords:
+                        search_term = f"%{keyword}%"
+                        text_search_clauses.append(
+                            or_(
+                                Document.filename.ilike(search_term),
+                                Document.search_content.ilike(search_term),
+                                Document.extracted_text.ilike(search_term),
+                            )
+                        )
+                    text_search_results = base_query.filter(
+                        and_(*text_search_clauses)
+                    ).all()
+                else:
+                    # Fallback to original behavior if no keywords are extracted
+                    search_term = f"%{query.strip()}%"
+                    text_search_results = base_query.filter(
+                        or_(
+                            Document.filename.ilike(search_term),
+                            Document.search_content.ilike(search_term),
+                            Document.extracted_text.ilike(search_term),
+                        )
+                    ).all()
 
                 # Combine and de-duplicate results
                 combined_results = {doc.id: doc for doc in vector_search_results}
@@ -613,6 +634,58 @@ class SearchService:
         except Exception as e:
             logger.error(f"Error generating enhanced facets: {str(e)}")
             return {"categories": [], "canonical_terms": []}
+
+    def _get_search_keywords(self, query: str) -> List[str]:
+        """Extracts keywords from a search query, filtering out stop words."""
+        stop_words = set(
+            [
+                "a",
+                "an",
+                "and",
+                "the",
+                "in",
+                "on",
+                "of",
+                "for",
+                "with",
+                "is",
+                "are",
+                "was",
+                "were",
+            ]
+        )
+        return [
+            keyword
+            for keyword in query.lower().split()
+            if keyword.strip() and keyword not in stop_words
+        ]
+
+    async def log_search_query(self, query: str, user_id: Optional[str] = None):
+        """Logs a search query to the database."""
+        try:
+            search_query = SearchQuery(query=query.strip(), user_id=user_id)
+            self.db.add(search_query)
+            self.db.commit()
+        except Exception as e:
+            logger.error(f"Error logging search query: {str(e)}")
+            self.db.rollback()
+
+    async def get_top_queries(self, limit: int = 8) -> List[Dict[str, Any]]:
+        """Gets the most frequent search queries."""
+        try:
+            top_queries = (
+                self.db.query(
+                    SearchQuery.query, func.count(SearchQuery.query).label("count")
+                )
+                .group_by(SearchQuery.query)
+                .order_by(desc("count"))
+                .limit(limit)
+                .all()
+            )
+            return [{"query": q, "count": c} for q, c in top_queries]
+        except Exception as e:
+            logger.error(f"Error getting top queries: {str(e)}")
+            return []
 
     def __del__(self):
         """Cleanup database connection"""

@@ -29,6 +29,7 @@ from services.search_service import SearchService
 from services.storage_service import StorageService
 from services.taxonomy_service import TaxonomyService
 from background_processor import BackgroundProcessor
+from models.search_query import SearchQuery
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -628,4 +629,17 @@ async def get_mapping_stats(
         return {"success": True, "stats": stats}
     except Exception as e:
         logger.error(f"Mapping stats error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/search/top-queries")
+async def get_top_queries(
+    search_service: SearchService = Depends(get_search_service),
+):
+    """Get top 8 search queries"""
+    try:
+        queries = await search_service.get_top_queries(limit=8)
+        return {"success": True, "queries": queries}
+    except Exception as e:
+        logger.error(f"Top queries error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

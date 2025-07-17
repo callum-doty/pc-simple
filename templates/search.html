@@ -46,6 +46,16 @@ endblock %} {% block content %}
   </div>
 
   <div class="col-md-4">
+    <!-- Top Queries -->
+    <div class="card mb-4">
+      <div class="card-header">
+        <h6 class="mb-0"><i class="fas fa-fire me-2"></i>Top Queries</h6>
+      </div>
+      <div class="card-body" id="topQueries">
+        <!-- Top queries will be dynamically inserted here -->
+      </div>
+    </div>
+
     <!-- Filters -->
     <div class="card mb-4">
       <div class="card-header">
@@ -112,70 +122,98 @@ endblock %} {% block content %}
       </div>
     </div>
   </div>
-</div>
 
-<!-- Document Card Template -->
-<template id="documentCardTemplate">
-  <div class="card document-card mb-3">
-    <div class="row g-0">
-      <div class="col-md-3">
-        <div class="preview-container p-3">
-          <img
-            src=""
-            class="img-fluid preview-image rounded"
-            alt="Document preview"
-          />
-        </div>
-      </div>
-      <div class="col-md-9">
-        <div class="card-body">
-          <h6 class="card-title">
-            <i class="fas fa-file-alt me-2"></i>
-            <span class="filename"></span>
-          </h6>
-          <p class="card-text summary text-muted"></p>
-          <div class="extra-info mb-2"></div>
-          <div class="keywords mb-2"></div>
-          <div class="metadata-info mb-2"></div>
-          <div class="all-data-info mb-2"></div>
-          <div class="d-flex justify-content-between align-items-center">
-            <small class="text-muted">
-              <i class="fas fa-calendar me-1"></i>
-              <span class="upload-date"></span>
-            </small>
-            <div class="btn-group btn-group-sm">
-              <button type="button" class="btn btn-outline-primary view-btn">
-                <i class="fas fa-eye"></i>
-              </button>
-              <button type="button" class="btn btn-outline-info download-btn">
-                <i class="fas fa-download"></i>
-              </button>
+  <!-- Document Card Template -->
+  <template id="documentCardTemplate">
+    <div class="col">
+      <div class="card h-100 document-card">
+        <img src="" class="card-img-top preview-image" alt="Document preview" />
+        <div class="card-body d-flex flex-column">
+          <h6 class="card-title filename"></h6>
+          <p class="card-text summary text-muted small flex-grow-1"></p>
+          <div class="mt-auto">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <small class="text-muted">
+                <i class="fas fa-calendar me-1"></i>
+                <span class="upload-date"></span>
+              </small>
+              <div class="btn-group btn-group-sm">
+                <button type="button" class="btn btn-outline-primary view-btn">
+                  <i class="fas fa-eye"></i>
+                </button>
+                <button type="button" class="btn btn-outline-info download-btn">
+                  <i class="fas fa-download"></i>
+                </button>
+              </div>
             </div>
+            <button
+              class="btn btn-sm btn-outline-secondary w-100"
+              type="button"
+              data-bs-toggle="collapse"
+              data-bs-target="#collapseDetails"
+              aria-expanded="false"
+              aria-controls="collapseDetails"
+            >
+              More Info
+            </button>
+          </div>
+        </div>
+        <div class="collapse" id="collapseDetails">
+          <div class="card-footer">
+            <div class="extra-info mb-2"></div>
+            <div class="keywords mb-2"></div>
+            <div class="metadata-info mb-2"></div>
+            <div class="all-data-info mb-2"></div>
           </div>
         </div>
       </div>
     </div>
-  </div>
-</template>
-{% endblock %} {% block scripts %}
-<script>
-  $(document).ready(function () {
-    let currentPage = 1;
-    let activeCanonicalTerm = "";
+  </template>
+  {% endblock %} {% block scripts %}
+  <script>
+    $(document).ready(function () {
+      let currentPage = 1;
+      let activeCanonicalTerm = "";
+      let isLoading = false;
+      let hasMore = true;
 
-    // Fetch canonical terms for filter accordion
-    function loadCanonicalTermFilters() {
-      fetch("/api/taxonomy/canonical-terms")
-        .then((response) => response.json())
-        .then((data) => {
-          if (data.success && data.terms) {
-            const accordion = $("#canonicalTermAccordion");
-            accordion.empty();
-            const sanitizeForId = (text) => text.replace(/[^a-zA-Z0-9]/g, "-");
+      // Fetch and display top queries
+      function loadTopQueries() {
+        fetch("/api/search/top-queries")
+          .then((response) => response.json())
+          .then((data) => {
+            if (data.success && data.queries) {
+              const container = $("#topQueries");
+              container.empty();
+              data.queries.forEach((item) => {
+                const queryElement = $(
+                  `<button type="button" class="btn btn-outline-secondary btn-sm me-1 mb-1">${item.query}</button>`
+                );
+                queryElement.on("click", function () {
+                  $("#searchQuery").val(item.query);
+                  performSearch(true);
+                });
+                container.append(queryElement);
+              });
+            }
+          })
+          .catch((error) => console.error("Error loading top queries:", error));
+      }
 
-            for (const [category, terms] of Object.entries(data.terms)) {
-              const categoryId = sanitizeForId(category);
-              const accordionItem = $(`
+      // Fetch canonical terms for filter accordion
+      function loadCanonicalTermFilters() {
+        fetch("/api/taxonomy/canonical-terms")
+          .then((response) => response.json())
+          .then((data) => {
+            if (data.success && data.terms) {
+              const accordion = $("#canonicalTermAccordion");
+              accordion.empty();
+              const sanitizeForId = (text) =>
+                text.replace(/[^a-zA-Z0-9]/g, "-");
+
+              for (const [category, terms] of Object.entries(data.terms)) {
+                const categoryId = sanitizeForId(category);
+                const accordionItem = $(`
                 <div class="accordion-item">
                   <h2 class="accordion-header" id="heading-${categoryId}">
                     <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-${categoryId}" aria-expanded="false" aria-controls="collapse-${categoryId}">
@@ -194,346 +232,360 @@ endblock %} {% block content %}
                   </div>
                 </div>
               `);
-              accordion.append(accordionItem);
+                accordion.append(accordionItem);
+              }
             }
+          })
+          .catch((error) =>
+            console.error("Error loading canonical terms:", error)
+          );
+      }
+
+      // Handle click on canonical term filter buttons
+      $("#canonicalTermAccordion").on("click", "button.btn", function () {
+        const term = $(this).data("term");
+
+        if ($(this).hasClass("active")) {
+          // Deactivate filter
+          $(this)
+            .removeClass("active btn-primary")
+            .addClass("btn-outline-secondary");
+          activeCanonicalTerm = "";
+        } else {
+          // Deactivate other buttons
+          $("#canonicalTermAccordion button.btn")
+            .removeClass("active btn-primary")
+            .addClass("btn-outline-secondary");
+          // Activate this button
+          $(this)
+            .addClass("active btn-primary")
+            .removeClass("btn-outline-secondary");
+          activeCanonicalTerm = term;
+        }
+
+        performSearch(true);
+      });
+
+      // Handle search input for filters
+      $("#filterSearch").on("keyup", function () {
+        const searchText = $(this).val().toLowerCase();
+        $("#canonicalTermAccordion .accordion-item").each(function () {
+          let categoryVisible = false;
+          $(this)
+            .find(".btn")
+            .each(function () {
+              const term = $(this).data("term").toLowerCase();
+              if (term.includes(searchText)) {
+                $(this).show();
+                categoryVisible = true;
+              } else {
+                $(this).hide();
+              }
+            });
+
+          if (categoryVisible) {
+            $(this).show();
+          } else {
+            $(this).hide();
           }
-        })
-        .catch((error) =>
-          console.error("Error loading canonical terms:", error)
-        );
-    }
+        });
+      });
 
-    // Handle click on canonical term filter buttons
-    $("#canonicalTermAccordion").on("click", "button.btn", function () {
-      const term = $(this).data("term");
+      $("#sortBy, #sortDirection").on("change", function () {
+        performSearch(true);
+      });
 
-      if ($(this).hasClass("active")) {
-        // Deactivate filter
-        $(this)
-          .removeClass("active btn-primary")
-          .addClass("btn-outline-secondary");
-        activeCanonicalTerm = "";
-      } else {
-        // Deactivate other buttons
+      $("#searchForm").on("submit", function (e) {
+        e.preventDefault();
+        performSearch(true);
+      });
+
+      $("#clearFilters").on("click", function () {
+        $("#searchQuery").val("");
+        $("#filterSearch").val("");
         $("#canonicalTermAccordion button.btn")
           .removeClass("active btn-primary")
           .addClass("btn-outline-secondary");
-        // Activate this button
-        $(this)
-          .addClass("active btn-primary")
-          .removeClass("btn-outline-secondary");
-        activeCanonicalTerm = term;
+        $(
+          "#canonicalTermAccordion .accordion-item, #canonicalTermAccordion .btn"
+        ).show();
+        activeCanonicalTerm = "";
+        $("#sortBy").val("created_at");
+        $("#sortDirection").val("desc");
+        performSearch(true);
+      });
+
+      function performSearch(isNewSearch = false) {
+        const query = $("#searchQuery").val();
+        const sort_by = $("#sortBy").val();
+        const sort_direction = $("#sortDirection").val();
+
+        if (isNewSearch) {
+          currentPage = 1;
+          hasMore = true;
+          $("#searchResults").empty();
+        }
+
+        if (isLoading || !hasMore) {
+          return;
+        }
+
+        isLoading = true;
+        $("#loadingSpinner").show();
+
+        const params = new URLSearchParams({
+          q: query,
+          page: currentPage,
+          per_page: 8, // Fetch 8 documents per page
+          sort_by: sort_by,
+          sort_direction: sort_direction,
+        });
+
+        if (activeCanonicalTerm) {
+          params.append("canonical_term", activeCanonicalTerm);
+        }
+
+        fetch(`/api/documents/search?${params}`)
+          .then((response) => response.json())
+          .then((data) => {
+            displaySearchResults(data, isNewSearch);
+            updateStats(data);
+            hasMore = data.pagination.has_next;
+            if (hasMore) {
+              currentPage++;
+            }
+          })
+          .catch((error) => {
+            console.error("Search error:", error);
+            showError("An error occurred while searching. Please try again.");
+          })
+          .finally(() => {
+            isLoading = false;
+            $("#loadingSpinner").hide();
+          });
       }
 
-      performSearch();
-    });
+      // Display search results
+      function displaySearchResults(data, isNewSearch) {
+        const container = $("#searchResults");
 
-    // Handle search input for filters
-    $("#filterSearch").on("keyup", function () {
-      const searchText = $(this).val().toLowerCase();
-      $("#canonicalTermAccordion .accordion-item").each(function () {
-        let categoryVisible = false;
-        $(this)
-          .find(".btn")
-          .each(function () {
-            const term = $(this).data("term").toLowerCase();
-            if (term.includes(searchText)) {
-              $(this).show();
-              categoryVisible = true;
-            } else {
-              $(this).hide();
+        if (isNewSearch) {
+          container.empty();
+        }
+
+        if (data.documents && data.documents.length > 0) {
+          data.documents.forEach((doc) => {
+            const card = createDocumentCard(doc);
+            container.append(card);
+          });
+        } else if (isNewSearch) {
+          container.html(`
+                <div class="text-center py-5">
+                    <i class="fas fa-search fa-3x text-muted mb-3"></i>
+                    <h5 class="text-muted">No documents found</h5>
+                    <p class="text-muted">Try adjusting your search terms or filters.</p>
+                </div>
+            `);
+        }
+      }
+
+      // Create document card
+      function createDocumentCard(doc) {
+        const template = $("#documentCardTemplate").html();
+        const card = $(template);
+
+        const collapseId = `collapseDetails-${doc.id}`;
+        card.find(".collapse").attr("id", collapseId);
+        card
+          .find('[data-bs-toggle="collapse"]')
+          .attr("data-bs-target", `#${collapseId}`)
+          .attr("aria-controls", collapseId);
+
+        card.find(".filename").text(doc.filename);
+        const summary = doc.summary || "No summary available";
+        card.find(".summary").text(summary);
+        card
+          .find(".upload-date")
+          .text(new Date(doc.created_at).toLocaleDateString());
+
+        // Set preview image
+        if (doc.preview_url) {
+          card.find(".preview-image").attr("src", doc.preview_url);
+        } else {
+          card.find(".preview-image").attr("src", "/static/placeholder.svg");
+        }
+
+        const keywordsContainer = card.find(".keywords");
+        if (
+          doc.ai_analysis?.keyword_mappings &&
+          doc.ai_analysis.keyword_mappings.length > 0
+        ) {
+          doc.ai_analysis.keyword_mappings.forEach((mapping) => {
+            if (mapping.verbatim_term && mapping.mapped_canonical_term) {
+              keywordsContainer.append(
+                `<span class="badge bg-secondary keyword-badge me-1 mb-1">${mapping.verbatim_term} <i class="fas fa-long-arrow-alt-right mx-1"></i> ${mapping.mapped_canonical_term}</span>`
+              );
+            } else if (mapping.verbatim_term) {
+              keywordsContainer.append(
+                `<span class="badge bg-light text-dark keyword-badge me-1 mb-1">${mapping.verbatim_term}</span>`
+              );
             }
           });
-
-        if (categoryVisible) {
-          $(this).show();
-        } else {
-          $(this).hide();
         }
-      });
-    });
 
-    $("#sortBy, #sortDirection").on("change", function () {
-      performSearch();
-    });
-
-    $("#searchForm").on("submit", function (e) {
-      e.preventDefault();
-      performSearch();
-    });
-
-    $("#clearFilters").on("click", function () {
-      $("#searchQuery").val("");
-      $("#filterSearch").val("");
-      $("#canonicalTermAccordion button.btn")
-        .removeClass("active btn-primary")
-        .addClass("btn-outline-secondary");
-      $(
-        "#canonicalTermAccordion .accordion-item, #canonicalTermAccordion .btn"
-      ).show();
-      activeCanonicalTerm = "";
-      $("#sortBy").val("created_at");
-      $("#sortDirection").val("desc");
-      performSearch();
-    });
-
-    function performSearch() {
-      const query = $("#searchQuery").val();
-      const sort_by = $("#sortBy").val();
-      const sort_direction = $("#sortDirection").val();
-
-      $("#loadingSpinner").show();
-      $("#searchResults").hide();
-
-      const params = new URLSearchParams({
-        q: query,
-        page: currentPage,
-        per_page: 20,
-        sort_by: sort_by,
-        sort_direction: sort_direction,
-      });
-
-      if (activeCanonicalTerm) {
-        params.append("canonical_term", activeCanonicalTerm);
-      }
-
-      fetch(`/api/documents/search?${params}`)
-        .then((response) => response.json())
-        .then((data) => {
-          displaySearchResults(data);
-          updateStats(data);
-        })
-        .catch((error) => {
-          console.error("Search error:", error);
-          showError("An error occurred while searching. Please try again.");
-        })
-        .finally(() => {
-          $("#loadingSpinner").hide();
-          $("#searchResults").show();
-        });
-    }
-
-    // Display search results
-    function displaySearchResults(data) {
-      const container = $("#searchResults");
-      container.empty();
-
-      if (data.documents && data.documents.length > 0) {
-        data.documents.forEach((doc) => {
-          const card = createDocumentCard(doc);
-          container.append(card);
-        });
-
-        // Add pagination if needed
-        if (data.pagination && data.pagination.pages > 1) {
-          const pagination = createPagination(data.pagination);
-          container.append(pagination);
-        }
-      } else {
-        container.html(`
-                  <div class="text-center py-5">
-                      <i class="fas fa-search fa-3x text-muted mb-3"></i>
-                      <h5 class="text-muted">No documents found</h5>
-                      <p class="text-muted">Try adjusting your search terms or filters.</p>
-                  </div>
-              `);
-      }
-    }
-
-    function createPagination(pagination) {
-      if (!pagination || pagination.pages <= 1) {
-        return "";
-      }
-
-      let paginationHtml =
-        '<nav><ul class="pagination justify-content-center">';
-      // Previous page
-      paginationHtml += `<li class="page-item ${
-        pagination.has_prev ? "" : "disabled"
-      }">
-        <a class="page-link" href="#" data-page="${
-          pagination.prev_page
-        }">Previous</a></li>`;
-
-      // Page numbers
-      for (let i = 1; i <= pagination.pages; i++) {
-        paginationHtml += `<li class="page-item ${
-          i === pagination.page ? "active" : ""
-        }">
-          <a class="page-link" href="#" data-page="${i}">${i}</a></li>`;
-      }
-
-      // Next page
-      paginationHtml += `<li class="page-item ${
-        pagination.has_next ? "" : "disabled"
-      }">
-        <a class="page-link" href="#" data-page="${
-          pagination.next_page
-        }">Next</a></li>`;
-      paginationHtml += "</ul></nav>";
-
-      return paginationHtml;
-    }
-
-    // Create document card
-    function createDocumentCard(doc) {
-      const template = $("#documentCardTemplate").html();
-      const card = $(template);
-
-      card.find(".filename").text(doc.filename);
-      const summary = doc.summary || "No summary available";
-      card.find(".summary").text(summary);
-      card
-        .find(".upload-date")
-        .text(new Date(doc.created_at).toLocaleDateString());
-
-      // Set preview image
-      if (doc.preview_url) {
-        card.find(".preview-image").attr("src", doc.preview_url);
-      } else {
-        card.find(".preview-image").attr("src", "/static/placeholder.svg");
-      }
-
-      const keywordsContainer = card.find(".keywords");
-      if (
-        doc.ai_analysis?.keyword_mappings &&
-        doc.ai_analysis.keyword_mappings.length > 0
-      ) {
-        doc.ai_analysis.keyword_mappings.forEach((mapping) => {
-          if (mapping.verbatim_term && mapping.mapped_canonical_term) {
-            keywordsContainer.append(
-              `<span class="badge bg-secondary keyword-badge me-1 mb-1">${mapping.verbatim_term} <i class="fas fa-long-arrow-alt-right mx-1"></i> ${mapping.mapped_canonical_term}</span>`
-            );
-          } else if (mapping.verbatim_term) {
-            keywordsContainer.append(
-              `<span class="badge bg-light text-dark keyword-badge me-1 mb-1">${mapping.verbatim_term}</span>`
-            );
-          }
-        });
-      }
-
-      // Add extra info
-      const extraInfoContainer = card.find(".extra-info");
-      if (doc.document_type) {
-        extraInfoContainer.append(`
+        // Add extra info
+        const extraInfoContainer = card.find(".extra-info");
+        if (doc.document_type) {
+          extraInfoContainer.append(`
               <span class="badge bg-primary me-1">${doc.document_type}</span>
           `);
-      }
-      if (doc.campaign_type) {
-        extraInfoContainer.append(`
+        }
+        if (doc.campaign_type) {
+          extraInfoContainer.append(`
               <span class="badge bg-success me-1">${doc.campaign_type}</span>
           `);
-      }
-      if (doc.document_tone) {
-        extraInfoContainer.append(`
+        }
+        if (doc.document_tone) {
+          extraInfoContainer.append(`
               <span class="badge bg-warning me-1">${doc.document_tone}</span>
           `);
-      }
-
-      // Display all other document fields
-      const allDataContainer = card.find(".all-data-info");
-      let allDataHtml = "";
-
-      for (const [key, value] of Object.entries(doc)) {
-        if (
-          value &&
-          typeof value !== "object" &&
-          typeof value !== "undefined"
-        ) {
-          allDataHtml += `<span class="badge bg-light text-dark me-1 mb-1">${key}: ${value}</span>`;
         }
-      }
-      allDataContainer.html(allDataHtml);
 
-      const metadataContainer = card.find(".metadata-info");
-      let metadataHtml = "";
+        // Display all other document fields
+        const allDataContainer = card.find(".all-data-info");
+        let allDataHtml = "";
 
-      if (doc.status) {
-        let statusClass = "secondary";
-        if (doc.status === "COMPLETED") statusClass = "success";
-        if (doc.status === "FAILED") statusClass = "danger";
-        if (doc.status === "PROCESSING") statusClass = "primary";
-        metadataHtml += `<span class="badge bg-${statusClass} me-1">Status: ${doc.status}</span>`;
-      }
+        for (const [key, value] of Object.entries(doc)) {
+          if (
+            value &&
+            typeof value !== "object" &&
+            typeof value !== "undefined"
+          ) {
+            if (key === "extracted_text") {
+              allDataHtml += `<div class="text-wrap" style="white-space: pre-wrap; word-wrap: break-word;"><strong>${key}:</strong> ${value}</div>`;
+            } else {
+              allDataHtml += `<span class="badge bg-light text-dark me-1 mb-1">${key}: ${value}</span>`;
+            }
+          }
+        }
+        allDataContainer.html(allDataHtml);
 
-      if (doc.file_size) {
-        const sizeInKb = (doc.file_size / 1024).toFixed(2);
-        metadataHtml += `<span class="badge bg-light text-dark me-1">${sizeInKb} KB</span>`;
-      }
+        const metadataContainer = card.find(".metadata-info");
+        let metadataHtml = "";
 
-      if (doc.mapping_count > 0) {
-        metadataHtml += `<span class="badge bg-info me-1">Mappings: ${doc.mapping_count}</span>`;
-      }
+        if (doc.status) {
+          let statusClass = "secondary";
+          if (doc.status === "COMPLETED") statusClass = "success";
+          if (doc.status === "FAILED") statusClass = "danger";
+          if (doc.status === "PROCESSING") statusClass = "primary";
+          metadataHtml += `<span class="badge bg-${statusClass} me-1">Status: ${doc.status}</span>`;
+        }
 
-      if (doc.embeddings) {
-        metadataHtml += `<span class="badge bg-success me-1"><i class="fas fa-check me-1"></i>Embeddings</span>`;
-      } else {
-        metadataHtml += `<span class="badge bg-danger me-1"><i class="fas fa-times me-1"></i>Embeddings</span>`;
-      }
+        if (doc.file_size) {
+          const sizeInKb = (doc.file_size / 1024).toFixed(2);
+          metadataHtml += `<span class="badge bg-light text-dark me-1">${sizeInKb} KB</span>`;
+        }
 
-      if (doc.processing_error) {
-        metadataHtml += `<div class="text-danger small mt-1" title="${doc.processing_error}"><i class="fas fa-exclamation-triangle me-1"></i>Processing Error</div>`;
-      }
+        if (doc.mapping_count > 0) {
+          metadataHtml += `<span class="badge bg-info me-1">Mappings: ${doc.mapping_count}</span>`;
+        }
 
-      metadataContainer.html(metadataHtml);
+        if (doc.embeddings) {
+          metadataHtml += `<span class="badge bg-success me-1"><i class="fas fa-check me-1"></i>Embeddings</span>`;
+        } else {
+          metadataHtml += `<span class="badge bg-danger me-1"><i class="fas fa-times me-1"></i>Embeddings</span>`;
+        }
 
-      // Add categories
-      if (doc.categories && doc.categories.length > 0) {
-        doc.categories.forEach((category) => {
-          keywordsContainer.append(`
+        if (doc.processing_error) {
+          metadataHtml += `<div class="text-danger small mt-1" title="${doc.processing_error}"><i class="fas fa-exclamation-triangle me-1"></i>Processing Error</div>`;
+        }
+
+        metadataContainer.html(metadataHtml);
+
+        // Add categories
+        if (doc.categories && doc.categories.length > 0) {
+          doc.categories.forEach((category) => {
+            keywordsContainer.append(`
                       <span class="badge bg-info keyword-badge me-1">${category}</span>
                   `);
-        });
+          });
+        }
+
+        // Add event handlers
+        card.find(".view-btn").on("click", () => viewDocument(doc.id));
+        card.find(".download-btn").on("click", () => downloadDocument(doc.id));
+
+        return card;
       }
 
-      // Add event handlers
-      card.find(".view-btn").on("click", () => viewDocument(doc.id));
-      card.find(".download-btn").on("click", () => downloadDocument(doc.id));
+      // Update stats
+      function updateStats(data) {
+        $("#searchCount").text(data.total_count || 0);
+      }
 
-      return card;
-    }
+      // View document
+      function viewDocument(docId) {
+        window.open(`/api/documents/${docId}/preview`, "_blank");
+      }
 
-    // Update stats
-    function updateStats(data) {
-      $("#searchCount").text(data.total_count || 0);
-    }
+      // Download document
+      function downloadDocument(docId) {
+        window.location.href = `/api/documents/${docId}/download`;
+      }
 
-    // View document
-    function viewDocument(docId) {
-      window.open(`/api/documents/${docId}/preview`, "_blank");
-    }
-
-    // Download document
-    function downloadDocument(docId) {
-      window.location.href = `/api/documents/${docId}/download`;
-    }
-
-    // Show error message
-    function showError(message) {
-      $("#searchResults").html(`
+      // Show error message
+      function showError(message) {
+        $("#searchResults").html(`
               <div class="alert alert-danger">
                   <i class="fas fa-exclamation-triangle me-2"></i>
                   ${message}
               </div>
           `);
-    }
+      }
 
-    // Load initial stats
-    fetch("/api/stats")
-      .then((response) => response.json())
-      .then((data) => {
-        if (data.success) {
-          $("#totalDocs").text(data.stats.total_documents || 0);
-          $("#totalCategories").text(data.stats.status_counts?.completed || 0);
-        }
-      })
-      .catch((error) => console.error("Stats error:", error));
+      // Load initial stats
+      fetch("/api/stats")
+        .then((response) => response.json())
+        .then((data) => {
+          if (data.success) {
+            $("#totalDocs").text(data.stats.total_documents || 0);
+            $("#totalCategories").text(
+              data.stats.status_counts?.completed || 0
+            );
+          }
+        })
+        .catch((error) => console.error("Stats error:", error));
 
-    // Perform initial search to show recent documents
-    performSearch();
+      // Infinite scroll
+      $(window).on(
+        "scroll",
+        debounce(function () {
+          if (
+            $(window).scrollTop() + $(window).height() >=
+            $(document).height() - 200
+          ) {
+            performSearch(false);
+          }
+        }, 200)
+      );
 
-    // Load canonical term filters
-    loadCanonicalTermFilters();
-  });
-</script>
-{% endblock %}
+      function debounce(func, delay) {
+        let timeout;
+        return function (...args) {
+          const context = this;
+          clearTimeout(timeout);
+          timeout = setTimeout(() => func.apply(context, args), delay);
+        };
+      }
+
+      // Perform initial search to show recent documents
+      performSearch(true);
+
+      // Load canonical term filters
+      loadCanonicalTermFilters();
+      // Load top queries
+      loadTopQueries();
+    });
+  </script>
+  {% endblock %}
+</div>
