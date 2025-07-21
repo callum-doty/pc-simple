@@ -15,6 +15,7 @@ services:
   - type: web
     name: document-catalog-app
     env: python
+    pythonVersion: "3.11"
     region: oregon
     plan: starter
     buildCommand: |
@@ -51,6 +52,7 @@ services:
   - type: worker
     name: celery-worker
     env: python
+    pythonVersion: "3.11"
     region: oregon
     plan: starter
     buildCommand: |
