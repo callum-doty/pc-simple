@@ -28,7 +28,8 @@ from services.ai_service import AIService
 from services.search_service import SearchService
 from services.storage_service import StorageService
 from services.taxonomy_service import TaxonomyService
-from background_processor import BackgroundProcessor
+from worker import process_document_task
+from celery.result import AsyncResult
 from models.search_query import SearchQuery
 
 # Configure logging
@@ -54,7 +55,6 @@ async def lifespan(app: FastAPI):
     app.state.search_service = SearchService()
     app.state.storage_service = StorageService()
     app.state.taxonomy_service = TaxonomyService()
-    app.state.background_processor = BackgroundProcessor()
 
     # Initialize taxonomy from CSV if it exists
     taxonomy_csv_path = "taxonomy.csv"
@@ -136,10 +136,6 @@ def get_storage_service() -> StorageService:
     return app.state.storage_service
 
 
-def get_background_processor() -> BackgroundProcessor:
-    return app.state.background_processor
-
-
 def get_taxonomy_service() -> TaxonomyService:
     return app.state.taxonomy_service
 
@@ -162,15 +158,13 @@ async def health_check():
 # Document Upload
 @app.post("/api/documents/upload")
 async def upload_documents(
-    background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...),
     document_service: DocumentService = Depends(get_document_service),
     storage_service: StorageService = Depends(get_storage_service),
-    background_processor: BackgroundProcessor = Depends(get_background_processor),
 ):
     """Upload one or more documents"""
     try:
-        uploaded_docs = []
+        tasks = []
 
         for file in files:
             if not file.filename:
@@ -184,23 +178,20 @@ async def upload_documents(
                 filename=file.filename, file_path=file_path, file_size=file.size or 0
             )
 
-            # Queue for background processing
-            background_tasks.add_task(
-                background_processor.process_document, document.id
-            )
-
-            uploaded_docs.append(
+            # Queue for background processing with Celery
+            task = process_document_task.delay(document.id)
+            tasks.append(
                 {
-                    "id": document.id,
+                    "task_id": task.id,
+                    "document_id": document.id,
                     "filename": document.filename,
-                    "status": document.status,
                 }
             )
 
         return {
             "success": True,
-            "message": f"Uploaded {len(uploaded_docs)} documents",
-            "documents": uploaded_docs,
+            "message": f"Queued {len(tasks)} documents for processing",
+            "tasks": tasks,
         }
 
     except Exception as e:
@@ -323,10 +314,8 @@ async def get_processing_status(
 @app.post("/api/documents/{document_id}/reprocess")
 async def reprocess_document(
     document_id: int,
-    background_tasks: BackgroundTasks,
     analysis_type: str = "unified",
     document_service: DocumentService = Depends(get_document_service),
-    background_processor: BackgroundProcessor = Depends(get_background_processor),
 ):
     """Reprocess a document with optional analysis type"""
     try:
@@ -337,17 +326,13 @@ async def reprocess_document(
         # Reset status
         await document_service.update_document_status(document_id, "PENDING")
 
-        # Queue for reprocessing with specified analysis type
-        background_tasks.add_task(
-            background_processor.process_document_with_analysis_type,
-            document_id,
-            analysis_type,
-        )
+        # Queue for reprocessing with Celery
+        task = process_document_task.delay(document.id, analysis_type)
 
         return {
             "success": True,
             "message": f"Document {document.filename} queued for reprocessing with {analysis_type} analysis",
-            "analysis_type": analysis_type,
+            "task_id": task.id,
         }
 
     except HTTPException:
@@ -541,6 +526,18 @@ async def analyze_document_with_type(
 
 
 # Statistics API
+@app.get("/api/tasks/{task_id}/status")
+async def get_task_status(task_id: str):
+    """Get the status of a Celery task"""
+    task_result = AsyncResult(task_id)
+    result = {
+        "task_id": task_id,
+        "status": task_result.status,
+        "result": task_result.result,
+    }
+    return {"success": True, "task": result}
+
+
 @app.get("/api/stats")
 async def get_statistics(
     document_service: DocumentService = Depends(get_document_service),

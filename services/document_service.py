@@ -316,6 +316,181 @@ class DocumentService:
             logger.error(f"Error searching documents: {str(e)}")
             return []
 
+    def get_document_sync(self, document_id: int) -> Optional[Document]:
+        """Get document by ID (synchronous)"""
+        try:
+            return self.db.query(Document).filter(Document.id == document_id).first()
+        except Exception as e:
+            logger.error(f"Error getting document {document_id}: {str(e)}")
+            return None
+
+    def update_document_status_sync(
+        self, document_id: int, status: str, progress: int = None, error: str = None
+    ) -> bool:
+        """Update document processing status (synchronous)"""
+        try:
+            document = self.get_document_sync(document_id)
+            if not document:
+                return False
+
+            document.update_processing_status(status, progress, error)
+            self.db.commit()
+
+            logger.info(f"Updated document {document_id} status to {status}")
+            return True
+
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Error updating document {document_id} status: {str(e)}")
+            return False
+
+    def update_document_content_sync(
+        self,
+        document_id: int,
+        extracted_text: str = None,
+        ai_analysis: Dict[str, Any] = None,
+        keywords: List[str] = None,
+        categories: List[str] = None,
+        keyword_mappings: List[Dict[str, str]] = None,
+        **metadata,
+    ) -> bool:
+        """Update document content and analysis with rich keyword mappings (synchronous)"""
+        try:
+            document = self.get_document_sync(document_id)
+            if not document:
+                return False
+
+            if extracted_text:
+                document.extracted_text = extracted_text
+            if ai_analysis:
+                document.set_ai_analysis(ai_analysis)
+            if keywords or categories or keyword_mappings:
+                enhanced_keywords = {
+                    "keywords": keywords or [],
+                    "categories": categories or [],
+                    "keyword_mappings": keyword_mappings or [],
+                    "mapping_count": len(keyword_mappings) if keyword_mappings else 0,
+                    "extraction_timestamp": datetime.utcnow().isoformat(),
+                }
+                document.keywords = enhanced_keywords
+            if metadata:
+                document.set_metadata(**metadata)
+
+            search_parts = [document.filename]
+            if ai_analysis:
+                if ai_analysis.get("summary"):
+                    search_parts.append(ai_analysis.get("summary"))
+                if ai_analysis.get("content_analysis"):
+                    search_parts.append(ai_analysis.get("content_analysis"))
+                if ai_analysis.get("title"):
+                    search_parts.append(ai_analysis.get("title"))
+            if keywords:
+                search_parts.extend(keywords)
+            if categories:
+                search_parts.extend(categories)
+            if keyword_mappings:
+                verbatim_terms = [
+                    m["verbatim_term"] for m in keyword_mappings if "verbatim_term" in m
+                ]
+                search_parts.extend(verbatim_terms)
+            if extracted_text:
+                search_parts.append(extracted_text)
+
+            document.search_content = " ".join(
+                sorted(list(set(str(p) for p in search_parts if p)))
+            )
+
+            self.db.commit()
+            logger.info(
+                f"Updated document {document_id} content with {len(keyword_mappings or [])} keyword mappings"
+            )
+            return True
+
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Error updating document {document_id} content: {str(e)}")
+            return False
+
+    async def update_document_embeddings(
+        self, document_id: int, embeddings: List[float]
+    ) -> bool:
+        """Update document search vector (embeddings)"""
+        try:
+            document = await self.get_document(document_id)
+            if not document:
+                return False
+
+            document.search_vector = embeddings
+            self.db.commit()
+            logger.info(f"Updated embeddings for document {document_id}")
+            return True
+        except Exception as e:
+            self.db.rollback()
+            logger.error(
+                f"Error updating embeddings for document {document_id}: {str(e)}"
+            )
+            return False
+
+    def update_document_embeddings_sync(
+        self, document_id: int, embeddings: List[float]
+    ) -> bool:
+        """Update document search vector (embeddings) (synchronous)"""
+        try:
+            document = self.get_document_sync(document_id)
+            if not document:
+                return False
+
+            document.search_vector = embeddings
+            self.db.commit()
+            logger.info(f"Updated embeddings for document {document_id}")
+            return True
+        except Exception as e:
+            self.db.rollback()
+            logger.error(
+                f"Error updating embeddings for document {document_id}: {str(e)}"
+            )
+            return False
+
+    async def update_document_preview_url(
+        self, document_id: int, preview_url: str
+    ) -> bool:
+        """Update document preview URL"""
+        try:
+            document = await self.get_document(document_id)
+            if not document:
+                return False
+
+            document.preview_url = preview_url
+            self.db.commit()
+            logger.info(f"Updated preview URL for document {document_id}")
+            return True
+        except Exception as e:
+            self.db.rollback()
+            logger.error(
+                f"Error updating preview URL for document {document_id}: {str(e)}"
+            )
+            return False
+
+    def update_document_preview_url_sync(
+        self, document_id: int, preview_url: str
+    ) -> bool:
+        """Update document preview URL (synchronous)"""
+        try:
+            document = self.get_document_sync(document_id)
+            if not document:
+                return False
+
+            document.preview_url = preview_url
+            self.db.commit()
+            logger.info(f"Updated preview URL for document {document_id}")
+            return True
+        except Exception as e:
+            self.db.rollback()
+            logger.error(
+                f"Error updating preview URL for document {document_id}: {str(e)}"
+            )
+            return False
+
     def __del__(self):
         """Cleanup database connection"""
         if hasattr(self, "db"):

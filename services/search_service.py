@@ -5,7 +5,7 @@ Simplified search implementation with text-based and category filtering
 
 import logging
 from typing import Dict, Any, List, Optional
-from sqlalchemy import or_, and_, func, desc
+from sqlalchemy import or_, and_, func, desc, asc
 from sqlalchemy.orm import Session
 
 from database import SessionLocal
@@ -429,39 +429,32 @@ class SearchService:
         sort_direction: str = "desc",
     ) -> Dict[str, Any]:
         """
-        Enhanced search with hierarchical taxonomy filtering
+        Optimized search with hierarchical taxonomy filtering, pushing all operations to the database.
         """
         try:
-            # Log the search query
             if query.strip():
                 await self.log_search_query(query)
-            # Build base query
+
             base_query = self.db.query(Document).filter(
                 Document.status == DocumentStatus.COMPLETED
             )
 
-            # Hybrid Search: Vector + Text
+            # Apply text and vector search
             if query.strip():
-                vector_search_results = []
-                # Vector Search - only on documents with embeddings
-                try:
-                    query_embedding = await self.ai_service.generate_embeddings(query)
-                    if query_embedding is not None:
-                        vector_search_results = (
-                            base_query.filter(Document.search_vector.isnot(None))
-                            .order_by(
-                                Document.search_vector.l2_distance(query_embedding)
-                            )
-                            .limit(100)
-                            .all()
-                        )
-                except Exception as e:
-                    logger.error(f"Vector search failed: {str(e)}")
+                query_embedding = await self.ai_service.generate_embeddings(query)
+                vector_subquery = None
+                if query_embedding is not None:
+                    vector_subquery = (
+                        self.db.query(Document.id)
+                        .filter(Document.search_vector.isnot(None))
+                        .order_by(Document.search_vector.l2_distance(query_embedding))
+                        .limit(100)
+                        .subquery()
+                    )
 
-                # Text Search
                 keywords = self._get_search_keywords(query)
+                text_search_clauses = []
                 if keywords:
-                    text_search_clauses = []
                     for keyword in keywords:
                         search_term = f"%{keyword}%"
                         text_search_clauses.append(
@@ -471,104 +464,64 @@ class SearchService:
                                 Document.extracted_text.ilike(search_term),
                             )
                         )
-                    text_search_results = base_query.filter(
-                        and_(*text_search_clauses)
-                    ).all()
-                else:
-                    # Fallback to original behavior if no keywords are extracted
-                    search_term = f"%{query.strip()}%"
-                    text_search_results = base_query.filter(
+
+                text_subquery = (
+                    self.db.query(Document.id)
+                    .filter(and_(*text_search_clauses))
+                    .subquery()
+                )
+
+                # Combine text and vector search results
+                if vector_subquery is not None:
+                    base_query = base_query.filter(
                         or_(
-                            Document.filename.ilike(search_term),
-                            Document.search_content.ilike(search_term),
-                            Document.extracted_text.ilike(search_term),
+                            Document.id.in_(self.db.query(vector_subquery.c.id)),
+                            Document.id.in_(self.db.query(text_subquery.c.id)),
                         )
-                    ).all()
-
-                # Combine and de-duplicate results
-                combined_results = {doc.id: doc for doc in vector_search_results}
-                for doc in text_search_results:
-                    if doc.id not in combined_results:
-                        combined_results[doc.id] = doc
-
-                all_documents = list(combined_results.values())
-            else:
-                all_documents = base_query.all()
+                    )
+                else:
+                    base_query = base_query.filter(
+                        Document.id.in_(self.db.query(text_subquery.c.id))
+                    )
 
             # Apply hierarchical taxonomy filters
-            if primary_category or subcategory or canonical_term:
-                filtered_documents = []
-                for doc in all_documents:
-                    mappings = doc.get_keyword_mappings()
-                    for mapping in mappings:
-                        primary_match = (
-                            not primary_category
-                            or mapping.get("mapped_primary_category", "").lower()
-                            == primary_category.lower()
-                        )
-                        sub_match = (
-                            not subcategory
-                            or mapping.get("mapped_subcategory", "").lower()
-                            == subcategory.lower()
-                        )
-                        term_match = (
-                            not canonical_term
-                            or mapping.get("mapped_canonical_term", "").lower()
-                            == canonical_term.lower()
-                        )
+            if primary_category:
+                base_query = base_query.filter(
+                    Document.keywords["keyword_mappings"].astext.ilike(
+                        f'%"{primary_category}"%'
+                    )
+                )
+            if subcategory:
+                base_query = base_query.filter(
+                    Document.keywords["keyword_mappings"].astext.ilike(
+                        f'%"{subcategory}"%'
+                    )
+                )
+            if canonical_term:
+                base_query = base_query.filter(
+                    Document.keywords["keyword_mappings"].astext.ilike(
+                        f'%"{canonical_term}"%'
+                    )
+                )
 
-                        if primary_match and sub_match and term_match:
-                            filtered_documents.append(doc)
-                            break  # Move to the next document
-                all_documents = filtered_documents
-
-            total_count = len(all_documents)
+            # Get total count before pagination
+            total_count = base_query.count()
 
             # Apply sorting
-            if sort_by == "created_at":
-                all_documents.sort(
-                    key=lambda x: x.created_at or datetime.min,
-                    reverse=(sort_direction.lower() == "desc"),
-                )
-            elif sort_by == "mapping_count":
-                all_documents.sort(
-                    key=lambda x: x.get_mapping_count(),
-                    reverse=(sort_direction.lower() == "desc"),
-                )
+            sort_column = getattr(Document, sort_by, Document.created_at)
+            if sort_direction.lower() == "desc":
+                base_query = base_query.order_by(desc(sort_column))
+            else:
+                base_query = base_query.order_by(asc(sort_column))
 
             # Apply pagination
             offset = (page - 1) * per_page
-            documents = all_documents[offset : offset + per_page]
+            documents = base_query.offset(offset).limit(per_page).all()
 
-            # Format documents for response with enhanced mapping info
-            formatted_docs = []
-            for doc in documents:
-                # Use the to_dict() method for a consistent base
-                formatted_doc = doc.to_dict()
+            # Format documents for response
+            formatted_docs = [doc.to_dict() for doc in documents]
 
-                # Add view-specific fields that are not part of the core model dict
-                formatted_doc["preview_url"] = self.preview_service.get_preview_url(
-                    doc.file_path
-                )
-                formatted_doc["embeddings"] = doc.search_vector is not None
-
-                # Limit verbose fields for the search preview
-                formatted_doc["verbatim_terms"] = formatted_doc.get(
-                    "verbatim_terms", []
-                )[:5]
-                formatted_doc["canonical_terms"] = formatted_doc.get(
-                    "canonical_terms", []
-                )[:5]
-                formatted_doc["keyword_mappings"] = formatted_doc.get(
-                    "keyword_mappings", []
-                )[:3]
-
-                formatted_docs.append(formatted_doc)
-
-            # Generate pagination info
             pagination = self._create_pagination_info(page, per_page, total_count)
-
-            # Enhanced facets with canonical terms
             facets = await self._generate_enhanced_facets()
 
             return {
@@ -577,11 +530,10 @@ class SearchService:
                 "facets": facets,
                 "total_count": total_count,
                 "query": query,
-                "canonical_term_filter": canonical_term,
             }
 
         except Exception as e:
-            logger.error(f"Error in enhanced search: {str(e)}")
+            logger.error(f"Error in optimized search: {str(e)}")
             return {
                 "documents": [],
                 "pagination": {"page": 1, "per_page": per_page, "total": 0, "pages": 0},
@@ -592,41 +544,30 @@ class SearchService:
             }
 
     async def _generate_enhanced_facets(self) -> Dict[str, Any]:
-        """Generate enhanced facets including canonical terms"""
+        """Generate enhanced facets including canonical terms using efficient queries."""
         try:
-            # Get existing taxonomy-based categories
             facets = await self._generate_facets()
 
-            # Add canonical terms facet
-            canonical_term_counts = {}
-
-            docs_with_keywords = (
-                self.db.query(Document)
+            # Efficiently count canonical terms
+            canonical_term_counts = (
+                self.db.query(
+                    func.jsonb_array_elements_text(
+                        Document.keywords["keyword_mappings"]
+                    ).label("canonical_term"),
+                    func.count().label("count"),
+                )
                 .filter(
                     Document.status == DocumentStatus.COMPLETED,
                     Document.keywords.isnot(None),
                 )
+                .group_by("canonical_term")
+                .order_by(desc("count"))
+                .limit(20)
                 .all()
             )
 
-            for doc in docs_with_keywords:
-                mappings = doc.get_keyword_mappings()
-                for mapping in mappings:
-                    canonical_term = mapping.get("mapped_canonical_term", "")
-                    if canonical_term:
-                        canonical_term_counts[canonical_term] = (
-                            canonical_term_counts.get(canonical_term, 0) + 1
-                        )
-
-            # Sort canonical terms by frequency
-            sorted_canonical_terms = sorted(
-                canonical_term_counts.items(), key=lambda x: x[1], reverse=True
-            )[
-                :20
-            ]  # Top 20 most frequent
-
             facets["canonical_terms"] = [
-                {"name": term, "count": count} for term, count in sorted_canonical_terms
+                {"name": term, "count": count} for term, count in canonical_term_counts
             ]
 
             return facets

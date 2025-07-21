@@ -1000,3 +1000,13 @@ class AIService:
             "keywords",  # Taxonomy keywords only
             "communication",  # Communication focus only
         ]
+
+    def analyze_document_sync(
+        self, file_path: str, filename: str, analysis_type: str = "unified"
+    ) -> Dict[str, Any]:
+        """Synchronous version of analyze_document"""
+        return asyncio.run(self.analyze_document(file_path, filename, analysis_type))
+
+    def generate_embeddings_sync(self, text: str) -> Optional[List[float]]:
+        """Synchronous version of generate_embeddings"""
+        return asyncio.run(self.generate_embeddings(text))

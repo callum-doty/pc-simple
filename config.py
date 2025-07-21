@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     # Database settings
     database_url: str = "sqlite:///./documents.db"
 
+    # Celery and Redis
+    redis_url: str = "redis://localhost:6379/0"
+
     # Storage settings
     storage_type: str = "local"  # local, s3, render_disk
     storage_path: str = "./storage"
@@ -115,6 +118,11 @@ class RenderSettings(ProductionSettings):
         render_db_url = os.getenv("DATABASE_URL")
         if render_db_url:
             self.database_url = render_db_url
+
+        # Use Render's provided REDIS_URL if available
+        render_redis_url = os.getenv("REDIS_URL")
+        if render_redis_url:
+            self.redis_url = render_redis_url
 
 
 @lru_cache()
