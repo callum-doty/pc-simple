@@ -6,7 +6,7 @@ Now integrated with PromptManager for sophisticated analysis
 
 import asyncio
 import logging
-from typing import Dict, Any, List, Optional, Tuple, AsyncGenerator
+from typing import Dict, Any, List, Optional, Tuple, AsyncGenerator, Generator
 import json
 import base64
 from pathlib import Path
