@@ -28,7 +28,7 @@ google-generativeai==0.4.0
 httpx<0.25.0  # Pin httpx version for compatibility with AI libraries
 
 # Document processing
-PyMuPDF==1.23.7
+PyMuPDF==1.23.6
 Pillow==10.1.0
 numpy==1.26.4
 
