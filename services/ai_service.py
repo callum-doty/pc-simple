@@ -6,7 +6,7 @@ Now integrated with PromptManager for sophisticated analysis
 
 import asyncio
 import logging
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, AsyncGenerator
 import json
 import base64
 from pathlib import Path
@@ -467,42 +467,48 @@ class AIService:
             logger.error(f"Error extracting text from {filename}: {str(e)}")
             return ""
 
+    async def _extract_text_from_pdf_generator(
+        self, file_content: bytes
+    ) -> AsyncGenerator[Tuple[int, str], None]:
+        """
+        Extract text from PDF page by page using AI-based OCR.
+        Yields a tuple of (page_number, extracted_text).
+        """
+        try:
+            doc = fitz.open(stream=file_content, filetype="pdf")
+            if doc.page_count == 0:
+                logger.warning("PDF has no pages.")
+                return
+
+            for page_num in range(len(doc)):
+                try:
+                    page = doc.load_page(page_num)
+                    logger.info(f"Performing AI-based OCR on page {page_num + 1}.")
+                    pix = page.get_pixmap(dpi=200)  # Lower DPI to save memory
+                    img_data = pix.tobytes("png")
+                    ocr_text = await self._extract_text_from_image(img_data)
+                    if ocr_text.strip():
+                        yield (page_num + 1, ocr_text)
+                except Exception as page_error:
+                    logger.error(
+                        f"Error processing page {page_num + 1}: {str(page_error)}"
+                    )
+                    continue
+            doc.close()
+        except Exception as e:
+            logger.error(f"Error extracting text from PDF with AI OCR: {str(e)}")
+
     async def _extract_text_from_pdf(self, file_content: bytes) -> str:
         """
         Extract text from PDF using the configured AI provider for OCR.
         This ensures that even image-based PDFs are processed correctly.
         """
-        try:
-            doc = fitz.open(stream=file_content, filetype="pdf")
-            if doc.page_count == 0:
-                logger.warning("PDF has no pages, returning empty text.")
-                return ""
-
-            text_parts = []
-            for page_num in range(len(doc)):
-                try:
-                    page = doc.load_page(page_num)
-
-                    # Force OCR on every page for maximum reliability
-                    logger.info(f"Performing AI-based OCR on page {page_num + 1}.")
-                    pix = page.get_pixmap(dpi=300)  # Higher DPI for better OCR
-                    img_data = pix.tobytes("png")
-                    ocr_text = await self._extract_text_from_image(img_data)
-
-                    if ocr_text.strip():
-                        text_parts.append(f"--- Page {page_num + 1} ---\n{ocr_text}")
-                except Exception as page_error:
-                    logger.error(
-                        f"Error processing page {page_num + 1}: {str(page_error)}"
-                    )
-                    continue  # Continue to the next page
-
-            doc.close()
-            return "\n\n".join(text_parts)
-
-        except Exception as e:
-            logger.error(f"Error extracting text from PDF with AI OCR: {str(e)}")
-            return ""
+        all_text = []
+        async for page_num, ocr_text in self._extract_text_from_pdf_generator(
+            file_content
+        ):
+            all_text.append(f"--- Page {page_num} ---\n{ocr_text}")
+        return "\n\n".join(all_text)
 
     async def _extract_text_from_image(self, file_content: bytes) -> str:
         """Extract text from image using the configured AI provider."""
@@ -1001,6 +1007,36 @@ class AIService:
             "communication",  # Communication focus only
         ]
 
+    async def analyze_text_chunk(
+        self, text_chunk: str, filename: str, analysis_type: str = "unified"
+    ) -> Dict[str, Any]:
+        """
+        Run AI analysis on a chunk of text.
+        This is a lightweight version of the main analysis pipeline.
+        """
+        try:
+            if analysis_type == "unified":
+                prompt_data = await self.prompt_manager.get_unified_analysis_prompt(
+                    filename
+                )
+                enhanced_prompt = self._enhance_prompt_with_text(
+                    prompt_data["user"], text_chunk
+                )
+                analysis_result = await self._call_anthropic_api_with_system(
+                    prompt_data["system"], enhanced_prompt
+                )
+            else:
+                # For simplicity, this example only implements the 'unified' chunk analysis
+                logger.warning(
+                    f"Analysis type '{analysis_type}' not fully supported for chunked processing. Using fallback."
+                )
+                analysis_result = {"summary": text_chunk[:100]}  # Basic fallback
+
+            return analysis_result
+        except Exception as e:
+            logger.error(f"Error analyzing text chunk for {filename}: {str(e)}")
+            return {"error": str(e)}
+
     def analyze_document_sync(
         self, file_path: str, filename: str, analysis_type: str = "unified"
     ) -> Dict[str, Any]:
@@ -1010,3 +1046,21 @@ class AIService:
     def generate_embeddings_sync(self, text: str) -> Optional[List[float]]:
         """Synchronous version of generate_embeddings"""
         return asyncio.run(self.generate_embeddings(text))
+
+    def extract_text_from_pdf_sync_generator(
+        self, file_content: bytes
+    ) -> Generator[Tuple[int, str], None, None]:
+        """Synchronous generator for extracting text from PDF pages."""
+        loop = asyncio.get_event_loop()
+        async_gen = self._extract_text_from_pdf_generator(file_content)
+        try:
+            while True:
+                yield loop.run_until_complete(async_gen.__anext__())
+        except StopAsyncIteration:
+            pass
+
+    def analyze_text_chunk_sync(
+        self, text_chunk: str, filename: str, analysis_type: str = "unified"
+    ) -> Dict[str, Any]:
+        """Synchronous version of analyze_text_chunk."""
+        return asyncio.run(self.analyze_text_chunk(text_chunk, filename, analysis_type))

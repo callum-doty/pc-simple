@@ -6,6 +6,8 @@ from services.ai_service import AIService
 from services.storage_service import StorageService
 from models.document import DocumentStatus
 import logging
+from typing import Generator, Tuple, List, Dict, Any
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +28,127 @@ celery_app.conf.update(
 )
 
 
+def _process_pdf_document_by_page(
+    document_id: int,
+    document,
+    document_service: DocumentService,
+    ai_service: AIService,
+    storage_service: StorageService,
+    analysis_type: str,
+):
+    """Helper function to process PDF documents page by page."""
+    logger.info(f"Processing PDF document {document_id} page by page.")
+    file_content = storage_service.get_file_sync(document.file_path)
+    if not file_content:
+        raise ValueError(f"Could not retrieve file content for {document.filename}")
+
+    text_generator = ai_service.extract_text_from_pdf_sync_generator(file_content)
+
+    aggregated_results: Dict[str, Any] = defaultdict(list)
+    full_extracted_text = []
+    page_summaries = []
+    total_pages = 0  # We don't know total pages beforehand with a generator
+
+    for page_num, page_text in text_generator:
+        total_pages = page_num  # Keep track of the latest page number
+        logger.info(f"Analyzing page {page_num} for document {document_id}")
+        full_extracted_text.append(f"--- Page {page_num} ---\n{page_text}")
+
+        # Analyze chunk
+        chunk_analysis = ai_service.analyze_text_chunk_sync(
+            page_text, document.filename, analysis_type
+        )
+
+        # Aggregate results
+        keywords, categories = ai_service._extract_keywords_from_analysis(
+            chunk_analysis
+        )
+        aggregated_results["keywords"].extend(keywords)
+        aggregated_results["categories"].extend(categories)
+        if chunk_analysis.get("summary"):
+            page_summaries.append(chunk_analysis.get("summary"))
+
+        # Update progress (estimate)
+        # This is tricky with a generator. We can't know the total number of pages.
+        # For now, we'll just show it's working. A better approach might be to
+        # get page count first, but that adds an extra read operation.
+        document_service.update_document_status_sync(
+            document_id, DocumentStatus.PROCESSING, progress=50
+        )
+
+    # Consolidate results
+    final_keywords = list(set(aggregated_results["keywords"]))
+    final_categories = list(set(aggregated_results["categories"]))
+    final_summary = "\n".join(page_summaries)
+    final_extracted_text = "\n\n".join(full_extracted_text)
+
+    final_ai_analysis = {
+        "summary": final_summary,
+        "page_count": total_pages,
+        "analysis_type": "chunked_unified",
+    }
+
+    # Update document with aggregated data
+    document_service.update_document_content_sync(
+        document_id,
+        extracted_text=final_extracted_text,
+        ai_analysis=final_ai_analysis,
+        keywords=final_keywords,
+        categories=final_categories,
+        file_type="pdf",
+    )
+
+    # Generate embeddings from the consolidated summary
+    if final_summary:
+        logger.info(f"Generating embeddings from summary for document {document_id}")
+        embeddings = ai_service.generate_embeddings_sync(final_summary)
+        if embeddings:
+            document_service.update_document_embeddings_sync(document_id, embeddings)
+
+
+def _process_document_holistically(
+    document_id: int,
+    document,
+    document_service: DocumentService,
+    ai_service: AIService,
+    analysis_type: str,
+):
+    """Helper function for original, non-chunked processing."""
+    logger.info(f"Processing document {document_id} holistically.")
+    analysis_result = ai_service.analyze_document_sync(
+        document.file_path, document.filename, analysis_type
+    )
+
+    if not analysis_result:
+        raise ValueError("AI analysis failed")
+
+    keywords, categories = ai_service._extract_keywords_from_analysis(
+        analysis_result.get("ai_analysis", {})
+    )
+
+    document_service.update_document_content_sync(
+        document_id,
+        extracted_text=analysis_result.get("extracted_text"),
+        ai_analysis=analysis_result.get("ai_analysis", {}),
+        keywords=keywords,
+        categories=categories,
+        file_type=analysis_result.get("file_type"),
+    )
+
+    synthesized_text = " ".join(
+        filter(None, [document.filename, analysis_result.get("extracted_text")])
+    )
+    if synthesized_text:
+        embeddings = ai_service.generate_embeddings_sync(synthesized_text)
+        if embeddings:
+            document_service.update_document_embeddings_sync(document_id, embeddings)
+
+
 @celery_app.task(name="process_document_task")
 def process_document_task(document_id: int, analysis_type: str = "unified"):
     """
     Celery task to process a single document.
+    Delegates to chunked processing for PDFs and holistic for others.
     """
     document_service = DocumentService()
     ai_service = AIService()
@@ -40,58 +159,33 @@ def process_document_task(document_id: int, analysis_type: str = "unified"):
             f"Starting Celery processing for document {document_id} with {analysis_type} analysis"
         )
 
-        # Get document
         document = document_service.get_document_sync(document_id)
         if not document:
             logger.error(f"Document {document_id} not found")
             return False
 
         document_service.update_document_status_sync(
-            document_id, DocumentStatus.PROCESSING, progress=0
+            document_id, DocumentStatus.PROCESSING, progress=10
         )
 
-        # Run processing pipeline
-        # This is a simplified version of the original pipeline
-        # In a real application, this would be more robust
+        # Determine file type and processing strategy
+        file_type = ai_service._get_file_type(document.filename)
 
-        # Step 1: AI Analysis
-        analysis_result = ai_service.analyze_document_sync(
-            document.file_path, document.filename, analysis_type
-        )
-
-        if not analysis_result:
-            logger.error(f"AI analysis failed for document {document_id}")
-            document_service.update_document_status_sync(
+        if file_type == "pdf":
+            _process_pdf_document_by_page(
                 document_id,
-                DocumentStatus.FAILED,
-                progress=0,
-                error="AI analysis failed",
+                document,
+                document_service,
+                ai_service,
+                storage_service,
+                analysis_type,
             )
-            return False
+        else:
+            _process_document_holistically(
+                document_id, document, document_service, ai_service, analysis_type
+            )
 
-        # Step 2: Update document with extracted data
-        keywords, categories = ai_service._extract_keywords_from_analysis(
-            analysis_result.get("ai_analysis", {})
-        )
-
-        document_service.update_document_content_sync(
-            document_id,
-            extracted_text=analysis_result.get("extracted_text"),
-            ai_analysis=analysis_result.get("ai_analysis", {}),
-            keywords=keywords,
-            categories=categories,
-            file_type=analysis_result.get("file_type"),
-        )
-
-        # Step 3: Generate embeddings
-        synthesized_text = " ".join(
-            filter(None, [document.filename, analysis_result.get("extracted_text")])
-        )
-        embeddings = ai_service.generate_embeddings_sync(synthesized_text)
-        if embeddings:
-            document_service.update_document_embeddings_sync(document_id, embeddings)
-
-        # Step 4: Generate preview URL
+        # Final steps for all types
         preview_url = storage_service.get_preview_url_sync(document.file_path)
         if preview_url:
             document_service.update_document_preview_url_sync(document_id, preview_url)
