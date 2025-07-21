@@ -15,7 +15,6 @@ services:
   - type: web
     name: document-catalog-app
     env: python
-    pythonVersion: "3.11"
     region: oregon
     plan: starter
     buildCommand: |
@@ -24,6 +23,8 @@ services:
     startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
     healthCheckPath: "/health"
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
       - key: ENVIRONMENT
         value: "production"
       - key: DATABASE_URL
@@ -52,7 +53,6 @@ services:
   - type: worker
     name: celery-worker
     env: python
-    pythonVersion: "3.11"
     region: oregon
     plan: starter
     buildCommand: |
@@ -60,6 +60,8 @@ services:
       pip install -r requirements.txt
     startCommand: "celery -A worker.celery_app worker --loglevel=info"
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
       - key: ENVIRONMENT
         value: "production"
       - key: DATABASE_URL
