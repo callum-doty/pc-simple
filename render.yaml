@@ -9,6 +9,7 @@ services:
     name: redis
     region: oregon
     plan: free
+    ipAllowList: []
 
   # Main FastAPI Application
   - type: web
