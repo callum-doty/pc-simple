@@ -1,8 +1,7 @@
 """
-Preview service - generates image previews from documents
+Preview service - generates image previews from documents and stores them in the configured storage backend.
 """
 
-import os
 import logging
 from pathlib import Path
 from typing import Optional
@@ -11,129 +10,110 @@ from PIL import Image
 import io
 
 from config import get_settings
+from services.storage_service import StorageService
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
 class PreviewService:
-    """Service for generating document previews"""
+    """Service for generating and managing document previews"""
 
-    def __init__(self):
-        self.preview_dir = Path(settings.storage_path) / "previews"
-        self.preview_dir.mkdir(exist_ok=True)
+    def __init__(self, storage_service: StorageService):
+        self.storage = storage_service
+        self.preview_prefix = "previews"
 
-    def generate_pdf_preview(self, pdf_path: str, output_path: str) -> bool:
-        """Generate a preview image from a PDF file"""
+    async def _generate_pdf_preview_bytes(self, pdf_content: bytes) -> Optional[bytes]:
+        """Generate a preview image from PDF content and return as bytes"""
         try:
-            # Open the PDF
-            doc = fitz.open(pdf_path)
-
-            # Get the first page
+            doc = fitz.open(stream=pdf_content, filetype="pdf")
             page = doc[0]
-
-            # Render page to a pixmap (image)
-            mat = fitz.Matrix(2.0, 2.0)  # 2x zoom for better quality
+            mat = fitz.Matrix(2.0, 2.0)
             pix = page.get_pixmap(matrix=mat)
-
-            # Convert to PIL Image
             img_data = pix.tobytes("png")
             img = Image.open(io.BytesIO(img_data))
-
-            # Resize to thumbnail size (max 300x400, maintain aspect ratio)
             img.thumbnail((300, 400), Image.Resampling.LANCZOS)
 
-            # Save as PNG
-            img.save(output_path, "PNG", optimize=True)
-
+            img_byte_arr = io.BytesIO()
+            img.save(img_byte_arr, format="PNG", optimize=True)
             doc.close()
-            logger.info(f"Generated preview for PDF: {pdf_path}")
-            return True
-
+            return img_byte_arr.getvalue()
         except Exception as e:
-            logger.error(f"Error generating PDF preview for {pdf_path}: {str(e)}")
-            return False
-
-    def generate_image_preview(self, image_path: str, output_path: str) -> bool:
-        """Generate a preview from an image file"""
-        try:
-            with Image.open(image_path) as img:
-                # Convert to RGB if necessary
-                if img.mode in ("RGBA", "LA", "P"):
-                    img = img.convert("RGB")
-
-                # Resize to thumbnail size
-                img.thumbnail((300, 400), Image.Resampling.LANCZOS)
-
-                # Save as PNG
-                img.save(output_path, "PNG", optimize=True)
-
-            logger.info(f"Generated preview for image: {image_path}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error generating image preview for {image_path}: {str(e)}")
-            return False
-
-    def get_preview_path(self, file_path: str) -> str:
-        """Get the preview file path for a given document"""
-        file_name = Path(file_path).stem
-        preview_filename = f"{file_name}_preview.png"
-        return str(self.preview_dir / preview_filename)
-
-    def generate_preview(self, file_path: str) -> Optional[str]:
-        """Generate a preview for any supported file type"""
-        if not os.path.exists(file_path):
-            logger.warning(f"File not found: {file_path}")
+            logger.error(f"Error generating PDF preview bytes: {str(e)}")
             return None
 
-        preview_path = self.get_preview_path(file_path)
+    async def _generate_image_preview_bytes(
+        self, image_content: bytes
+    ) -> Optional[bytes]:
+        """Generate a preview from image content and return as bytes"""
+        try:
+            img = Image.open(io.BytesIO(image_content))
+            if img.mode in ("RGBA", "LA", "P"):
+                img = img.convert("RGB")
+            img.thumbnail((300, 400), Image.Resampling.LANCZOS)
 
-        # Check if preview already exists
-        if os.path.exists(preview_path):
+            img_byte_arr = io.BytesIO()
+            img.save(img_byte_arr, format="PNG", optimize=True)
+            return img_byte_arr.getvalue()
+        except Exception as e:
+            logger.error(f"Error generating image preview bytes: {str(e)}")
+            return None
+
+    def get_preview_path(self, original_file_path: str) -> str:
+        """Get the preview file path for a given document in storage"""
+        file_name = Path(original_file_path).stem
+        preview_filename = f"{file_name}_preview.png"
+        return f"{self.preview_prefix}/{preview_filename}"
+
+    async def generate_preview(self, original_file_path: str) -> Optional[str]:
+        """
+        Generate a preview for a file in storage and save it back to storage.
+        Returns the path of the preview file in storage.
+        """
+        preview_path = self.get_preview_path(original_file_path)
+
+        # Check if preview already exists in storage
+        if await self.storage.check_file_exists(preview_path):
             return preview_path
 
-        # Determine file type and generate preview
-        file_ext = Path(file_path).suffix.lower()
+        # Get the original file content from storage
+        file_content = await self.storage.get_file(original_file_path)
+        if not file_content:
+            logger.warning(
+                f"Could not retrieve file from storage: {original_file_path}"
+            )
+            return None
 
-        success = False
+        file_ext = Path(original_file_path).suffix.lower()
+        preview_bytes = None
+
         if file_ext == ".pdf":
-            success = self.generate_pdf_preview(file_path, preview_path)
+            preview_bytes = await self._generate_pdf_preview_bytes(file_content)
         elif file_ext in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff"]:
-            success = self.generate_image_preview(file_path, preview_path)
+            preview_bytes = await self._generate_image_preview_bytes(file_content)
         else:
             logger.warning(f"Unsupported file type for preview: {file_ext}")
             return None
 
-        if success and os.path.exists(preview_path):
+        if preview_bytes:
+            # Save the preview to storage
+            await self.storage.save_file_bytes(preview_bytes, preview_path, "image/png")
             return preview_path
-        else:
-            return None
-
-    def get_preview_url(self, file_path: str) -> Optional[str]:
-        """Get the URL for a document preview"""
-        preview_path = self.generate_preview(file_path)
-
-        if preview_path:
-            # Convert absolute path to relative URL
-            preview_filename = Path(preview_path).name
-            return f"/previews/{preview_filename}"
 
         return None
 
-    def cleanup_old_previews(self, max_age_days: int = 30):
-        """Clean up old preview files"""
-        try:
-            import time
+    async def get_preview_url(
+        self, original_file_path: str, expires_in: int = 3600
+    ) -> Optional[str]:
+        """
+        Get a URL for a document preview. Generates the preview if it doesn't exist.
+        """
+        preview_path = await self.generate_preview(original_file_path)
+        if preview_path:
+            return await self.storage.get_file_url(preview_path, expires_in)
+        return None
 
-            current_time = time.time()
-            max_age_seconds = max_age_days * 24 * 60 * 60
-
-            for preview_file in self.preview_dir.glob("*.png"):
-                file_age = current_time - preview_file.stat().st_mtime
-                if file_age > max_age_seconds:
-                    preview_file.unlink()
-                    logger.info(f"Deleted old preview: {preview_file}")
-
-        except Exception as e:
-            logger.error(f"Error cleaning up previews: {str(e)}")
+    async def delete_preview(self, original_file_path: str) -> bool:
+        """Delete a preview file from storage."""
+        preview_path = self.get_preview_path(original_file_path)
+        return await self.storage.delete_file(preview_path)

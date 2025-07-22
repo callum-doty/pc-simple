@@ -106,20 +106,29 @@ class StorageService:
         """Save file to S3 storage"""
         try:
             content = await file.read()
-
-            self.s3_client.put_object(
-                Bucket=settings.s3_bucket,
-                Key=filename,
-                Body=content,
-                ContentType=file.content_type or "application/octet-stream",
-            )
-
+            await self.save_file_bytes(content, filename, file.content_type)
             logger.info(f"Saved file to S3: {filename}")
             return filename  # Return S3 key
 
         except Exception as e:
             logger.error(f"Error saving file to S3: {str(e)}")
             raise
+
+    async def save_file_bytes(
+        self, content: bytes, filename: str, content_type: Optional[str]
+    ) -> None:
+        """Save bytes to a file in storage."""
+        if self.storage_type == "s3":
+            self.s3_client.put_object(
+                Bucket=settings.s3_bucket,
+                Key=filename,
+                Body=content,
+                ContentType=content_type or "application/octet-stream",
+            )
+        else:
+            file_path = Path(self.storage_path) / filename
+            async with aiofiles.open(file_path, "wb") as f:
+                await f.write(content)
 
     async def get_file(self, file_path: str) -> Optional[bytes]:
         """Get file content as bytes"""

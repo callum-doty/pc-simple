@@ -24,9 +24,9 @@ settings = get_settings()
 class SearchService:
     """Service for searching and filtering documents"""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, preview_service: PreviewService):
         self.db = db
-        self.preview_service = PreviewService()
+        self.preview_service = preview_service
         self.ai_service = AIService(db=self.db)
 
     def _create_pagination_info(

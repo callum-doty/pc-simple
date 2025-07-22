@@ -29,6 +29,7 @@ from services.ai_service import AIService
 from services.search_service import SearchService
 from services.storage_service import StorageService
 from services.taxonomy_service import TaxonomyService
+from services.preview_service import PreviewService
 from worker import process_document_task
 from celery.result import AsyncResult
 from models.search_query import SearchQuery
@@ -116,6 +117,16 @@ templates = Jinja2Templates(directory="templates")
 
 
 # Dependency to get services
+def get_storage_service() -> StorageService:
+    return StorageService()
+
+
+def get_preview_service(
+    storage_service: StorageService = Depends(get_storage_service),
+) -> PreviewService:
+    return PreviewService(storage_service)
+
+
 def get_document_service(db: Session = Depends(get_db)) -> DocumentService:
     return DocumentService(db)
 
@@ -124,12 +135,11 @@ def get_ai_service(db: Session = Depends(get_db)) -> AIService:
     return AIService(db)
 
 
-def get_search_service(db: Session = Depends(get_db)) -> SearchService:
-    return SearchService(db)
-
-
-def get_storage_service() -> StorageService:
-    return StorageService()
+def get_search_service(
+    db: Session = Depends(get_db),
+    preview_service: PreviewService = Depends(get_preview_service),
+) -> SearchService:
+    return SearchService(db, preview_service)
 
 
 def get_taxonomy_service(db: Session = Depends(get_db)) -> TaxonomyService:
@@ -271,7 +281,7 @@ async def get_document(
 async def get_document_preview(
     document_id: int,
     document_service: DocumentService = Depends(get_document_service),
-    storage_service: StorageService = Depends(get_storage_service),
+    preview_service: PreviewService = Depends(get_preview_service),
 ):
     """Get document preview"""
     try:
@@ -279,7 +289,7 @@ async def get_document_preview(
         if not document:
             raise HTTPException(status_code=404, detail="Document not found")
 
-        preview_url = await storage_service.get_preview_url(document.file_path)
+        preview_url = await preview_service.get_preview_url(document.file_path)
 
         return {
             "success": True,
