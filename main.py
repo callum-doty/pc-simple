@@ -161,6 +161,7 @@ async def upload_documents(
     files: List[UploadFile] = File(...),
     document_service: DocumentService = Depends(get_document_service),
     storage_service: StorageService = Depends(get_storage_service),
+    background_tasks: BackgroundTasks = None,
 ):
     """Upload one or more documents"""
     try:
@@ -178,11 +179,22 @@ async def upload_documents(
                 filename=file.filename, file_path=file_path, file_size=file.size or 0
             )
 
-            # Queue for background processing with Celery
-            task = process_document_task.delay(document.id)
+            # Use background task to introduce a delay before Celery task
+            if background_tasks:
+                background_tasks.add_task(
+                    process_document_task.apply_async,
+                    args=[document.id],
+                    countdown=2,  # 2-second delay
+                )
+            else:
+                # Fallback for environments without BackgroundTasks
+                process_document_task.apply_async(
+                    args=[document.id],
+                    countdown=2,  # 2-second delay
+                )
+
             tasks.append(
                 {
-                    "task_id": task.id,
                     "document_id": document.id,
                     "filename": document.filename,
                 }
