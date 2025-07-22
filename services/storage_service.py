@@ -36,8 +36,19 @@ class StorageService:
     def _init_local_storage(self):
         """Initialize local/render disk storage"""
         try:
-            # Create storage directory if it doesn't exist
-            Path(self.storage_path).mkdir(parents=True, exist_ok=True)
+            # For Render disks, the directory is guaranteed to exist.
+            # For local dev, it should be created manually or with a setup script.
+            if not os.path.exists(self.storage_path):
+                if settings.environment == "development":
+                    os.makedirs(self.storage_path)
+                    logger.info(
+                        f"Created development storage directory at: {self.storage_path}"
+                    )
+                else:
+                    logger.warning(
+                        f"Storage path {self.storage_path} not found. "
+                        "This is expected on Render if the disk is attached."
+                    )
             logger.info(f"Initialized local storage at: {self.storage_path}")
         except Exception as e:
             logger.error(f"Failed to initialize local storage: {str(e)}")
