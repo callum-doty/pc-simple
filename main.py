@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 import os
 from typing import List, Optional
 import logging
+from sqlalchemy.orm import Session
 
 from config import get_settings
 from database import init_db, get_db
