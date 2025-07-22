@@ -143,6 +143,38 @@ class StorageService:
                 logger.error(f"S3 error getting file {s3_key}: {str(e)}")
             return None
 
+    def _get_file_local_sync(self, file_path: str) -> Optional[bytes]:
+        """Get file from local storage (synchronous)"""
+        try:
+            with open(file_path, "rb") as f:
+                return f.read()
+        except FileNotFoundError:
+            logger.warning(f"File not found: {file_path}")
+            return None
+
+    def _get_file_s3_sync(self, s3_key: str) -> Optional[bytes]:
+        """Get file from S3 storage (synchronous)"""
+        try:
+            response = self.s3_client.get_object(Bucket=settings.s3_bucket, Key=s3_key)
+            return response["Body"].read()
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "NoSuchKey":
+                logger.warning(f"File not found in S3: {s3_key}")
+            else:
+                logger.error(f"S3 error getting file sync {s3_key}: {str(e)}")
+            return None
+
+    def get_file_sync(self, file_path: str) -> Optional[bytes]:
+        """Get file content as bytes (synchronous)"""
+        try:
+            if self.storage_type == "s3":
+                return self._get_file_s3_sync(file_path)
+            else:
+                return self._get_file_local_sync(file_path)
+        except Exception as e:
+            logger.error(f"Error getting file sync {file_path}: {str(e)}")
+            return None
+
     async def delete_file(self, file_path: str) -> bool:
         """Delete file from storage"""
         try:
@@ -215,6 +247,26 @@ class StorageService:
         # For now, return the same as file URL
         # In a more complex implementation, this could generate thumbnails
         return await self.get_file_url(file_path)
+
+    def get_file_url_sync(
+        self, file_path: str, expires_in: int = 3600
+    ) -> Optional[str]:
+        """Get URL for file access (synchronous)"""
+        try:
+            if self.storage_type == "s3":
+                return self._get_s3_presigned_url(file_path, expires_in)
+            else:
+                return self._get_local_file_url(file_path)
+
+        except Exception as e:
+            logger.error(f"Error getting file URL {file_path}: {str(e)}")
+            return None
+
+    def get_preview_url_sync(self, file_path: str) -> Optional[str]:
+        """Get preview URL for document (synchronous)"""
+        # For now, return the same as file URL
+        # In a more complex implementation, this could generate thumbnails
+        return self.get_file_url_sync(file_path)
 
     def get_storage_info(self) -> dict:
         """Get storage configuration info"""
