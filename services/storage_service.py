@@ -69,12 +69,25 @@ class StorageService:
                 endpoint_url=endpoint_url,
             )
 
-            # Test connection
-            self.s3_client.head_bucket(Bucket=settings.s3_bucket)
-            logger.info(f"Initialized S3 storage with bucket: {settings.s3_bucket}")
+            # Test connection to the bucket
+            try:
+                self.s3_client.head_bucket(Bucket=settings.s3_bucket)
+                logger.info(
+                    f"Successfully initialized S3 storage for bucket: {settings.s3_bucket}"
+                )
+            except ClientError as e:
+                logger.error(
+                    f"Could not connect to S3 bucket '{settings.s3_bucket}'. "
+                    f"Error: {e}. Please verify your S3 environment variables "
+                    "(S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION)."
+                )
+                # We log the error but don't raise, allowing the app to start.
+                # File operations will likely fail until the configuration is corrected.
 
         except Exception as e:
-            logger.error(f"Failed to initialize S3 storage: {str(e)}")
+            logger.error(
+                f"An unexpected error occurred during S3 initialization: {str(e)}"
+            )
             raise
 
     async def save_file(self, file: UploadFile) -> str:
