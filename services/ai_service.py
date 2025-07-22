@@ -16,6 +16,7 @@ import fitz  # PyMuPDF
 import anthropic
 import openai
 import google.generativeai as genai
+from sqlalchemy.orm import Session
 
 from config import get_settings
 from services.storage_service import StorageService
@@ -29,9 +30,10 @@ settings = get_settings()
 class AIService:
     """Unified AI service for document analysis with PromptManager integration"""
 
-    def __init__(self):
+    def __init__(self, db: Session):
+        self.db = db
         self.storage_service = StorageService()
-        self.taxonomy_service = TaxonomyService()
+        self.taxonomy_service = TaxonomyService(db=self.db)
         self.prompt_manager = PromptManager(taxonomy_service=self.taxonomy_service)
 
         # Initialize AI clients with explicit parameter handling

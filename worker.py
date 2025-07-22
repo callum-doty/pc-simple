@@ -144,14 +144,18 @@ def _process_document_holistically(
             document_service.update_document_embeddings_sync(document_id, embeddings)
 
 
+from database import get_db
+
+
 @celery_app.task(name="process_document_task")
 def process_document_task(document_id: int, analysis_type: str = "unified"):
     """
     Celery task to process a single document.
     Delegates to chunked processing for PDFs and holistic for others.
     """
-    document_service = DocumentService()
-    ai_service = AIService()
+    db = next(get_db())
+    document_service = DocumentService(db)
+    ai_service = AIService(db)
     storage_service = StorageService()
 
     try:

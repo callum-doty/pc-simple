@@ -27,7 +27,7 @@ class SearchService:
     def __init__(self, db: Session):
         self.db = db
         self.preview_service = PreviewService()
-        self.ai_service = AIService()
+        self.ai_service = AIService(db=self.db)
 
     def _create_pagination_info(
         self, page: int, per_page: int, total_count: int

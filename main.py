@@ -120,8 +120,8 @@ def get_document_service(db: Session = Depends(get_db)) -> DocumentService:
     return DocumentService(db)
 
 
-def get_ai_service() -> AIService:
-    return AIService()
+def get_ai_service(db: Session = Depends(get_db)) -> AIService:
+    return AIService(db)
 
 
 def get_search_service(db: Session = Depends(get_db)) -> SearchService:
