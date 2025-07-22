@@ -551,7 +551,7 @@ class SearchService:
             # Efficiently count canonical terms
             canonical_term_counts = (
                 self.db.query(
-                    func.jsonb_array_elements_text(
+                    func.json_array_elements_text(
                         Document.keywords["keyword_mappings"]
                     ).label("canonical_term"),
                     func.count().label("count"),

@@ -2,9 +2,12 @@
 Configuration settings for the simplified document catalog application
 """
 
+import logging
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 import os
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -108,8 +111,6 @@ class RenderSettings(ProductionSettings):
     """Render.com specific settings"""
 
     is_render: bool = True
-    storage_type: str = "render_disk"
-    storage_path: str = "/opt/render/project/storage"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -123,6 +124,17 @@ class RenderSettings(ProductionSettings):
         render_redis_url = os.getenv("REDIS_URL")
         if render_redis_url:
             self.redis_url = render_redis_url
+
+        # Automatically configure storage for Render
+        if self.s3_bucket and self.s3_access_key:
+            self.storage_type = "s3"
+            logger.info("Configured S3 storage for Render environment.")
+        else:
+            self.storage_type = "render_disk"
+            self.storage_path = self.render_disk_path
+            logger.info(
+                "Configured Render disk storage. Note: Not suitable for multi-container setups."
+            )
 
 
 @lru_cache()

@@ -44,10 +44,18 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
-    disk:
-      name: document-storage
-      mountPath: /opt/render/project/storage
-      sizeGB: 10
+      - key: STORAGE_TYPE
+        value: "s3"
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: S3_ENDPOINT_URL
+        sync: false
 
   # Celery Background Worker
   - type: worker
@@ -84,7 +92,15 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
-    disk:
-      name: document-storage
-      mountPath: /opt/render/project/storage
-      sizeGB: 10
+      - key: STORAGE_TYPE
+        value: "s3"
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: S3_ENDPOINT_URL
+        sync: false
