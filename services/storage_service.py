@@ -57,14 +57,16 @@ class StorageService:
     def _init_s3_client(self):
         """Initialize S3 client"""
         try:
+            endpoint_url = settings.s3_endpoint_url
+            if endpoint_url and not endpoint_url.startswith("https://"):
+                endpoint_url = f"https://{endpoint_url}"
+
             self.s3_client = boto3.client(
                 "s3",
                 aws_access_key_id=settings.s3_access_key,
                 aws_secret_access_key=settings.s3_secret_key,
                 region_name=settings.s3_region,
-                endpoint_url=(
-                    settings.s3_endpoint_url if settings.s3_endpoint_url else None
-                ),
+                endpoint_url=endpoint_url,
             )
 
             # Test connection
