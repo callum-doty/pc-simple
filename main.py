@@ -22,7 +22,7 @@ from typing import List, Optional
 import logging
 
 from config import get_settings
-from database import init_db
+from database import init_db, get_db
 from services.document_service import DocumentService
 from services.ai_service import AIService
 from services.search_service import SearchService
@@ -49,20 +49,15 @@ async def lifespan(app: FastAPI):
     logger.info("Starting up Document Catalog application...")
     await init_db()
 
-    # Initialize services
-    app.state.document_service = DocumentService()
-    app.state.ai_service = AIService()
-    app.state.search_service = SearchService()
-    app.state.storage_service = StorageService()
-    app.state.taxonomy_service = TaxonomyService()
-
     # Initialize taxonomy from CSV if it exists
     taxonomy_csv_path = "taxonomy.csv"
     if os.path.exists(taxonomy_csv_path):
         logger.info("Initializing taxonomy from CSV...")
-        success, message = await app.state.taxonomy_service.initialize_from_csv(
-            taxonomy_csv_path
-        )
+        # Create a temporary service instance for initialization
+        db_session = next(get_db())
+        taxonomy_service = TaxonomyService(db_session)
+        success, message = await taxonomy_service.initialize_from_csv(taxonomy_csv_path)
+        db_session.close()
         if success:
             logger.info(f"Taxonomy initialization: {message}")
         else:
@@ -120,24 +115,24 @@ templates = Jinja2Templates(directory="templates")
 
 
 # Dependency to get services
-def get_document_service() -> DocumentService:
-    return app.state.document_service
+def get_document_service(db: Session = Depends(get_db)) -> DocumentService:
+    return DocumentService(db)
 
 
 def get_ai_service() -> AIService:
-    return app.state.ai_service
+    return AIService()
 
 
-def get_search_service() -> SearchService:
-    return app.state.search_service
+def get_search_service(db: Session = Depends(get_db)) -> SearchService:
+    return SearchService(db)
 
 
 def get_storage_service() -> StorageService:
-    return app.state.storage_service
+    return StorageService()
 
 
-def get_taxonomy_service() -> TaxonomyService:
-    return app.state.taxonomy_service
+def get_taxonomy_service(db: Session = Depends(get_db)) -> TaxonomyService:
+    return TaxonomyService(db)
 
 
 # Routes

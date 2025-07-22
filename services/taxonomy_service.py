@@ -21,8 +21,8 @@ settings = get_settings()
 class TaxonomyService:
     """Service for managing taxonomy terms and hierarchical categorization"""
 
-    def __init__(self):
-        self.db = SessionLocal()
+    def __init__(self, db: Session):
+        self.db = db
 
     async def initialize_from_csv(self, csv_file_path: str) -> Tuple[bool, str]:
         """
@@ -458,8 +458,3 @@ class TaxonomyService:
         except Exception as e:
             logger.error(f"Error getting all canonical terms: {str(e)}")
             return {}
-
-    def __del__(self):
-        """Cleanup database connection"""
-        if hasattr(self, "db"):
-            self.db.close()

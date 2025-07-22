@@ -19,8 +19,8 @@ settings = get_settings()
 class DocumentService:
     """Service for managing documents"""
 
-    def __init__(self):
-        self.db = SessionLocal()
+    def __init__(self, db: Session):
+        self.db = db
 
     async def create_document(
         self, filename: str, file_path: str, file_size: int, **metadata
@@ -490,8 +490,3 @@ class DocumentService:
                 f"Error updating preview URL for document {document_id}: {str(e)}"
             )
             return False
-
-    def __del__(self):
-        """Cleanup database connection"""
-        if hasattr(self, "db"):
-            self.db.close()

@@ -24,8 +24,8 @@ settings = get_settings()
 class SearchService:
     """Service for searching and filtering documents"""
 
-    def __init__(self):
-        self.db = SessionLocal()
+    def __init__(self, db: Session):
+        self.db = db
         self.preview_service = PreviewService()
         self.ai_service = AIService()
 
@@ -627,8 +627,3 @@ class SearchService:
         except Exception as e:
             logger.error(f"Error getting top queries: {str(e)}")
             return []
-
-    def __del__(self):
-        """Cleanup database connection"""
-        if hasattr(self, "db"):
-            self.db.close()

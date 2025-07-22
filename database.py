@@ -50,23 +50,3 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-# Async database session for FastAPI
-class AsyncSessionLocal:
-    """Async wrapper for database sessions"""
-
-    def __init__(self):
-        self.db = SessionLocal()
-
-    async def __aenter__(self):
-        return self.db
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        self.db.close()
-
-
-async def get_async_db():
-    """Get async database session"""
-    async with AsyncSessionLocal() as db:
-        yield db
