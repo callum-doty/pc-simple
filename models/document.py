@@ -2,7 +2,8 @@
 Simplified Document model - consolidates all document-related data into a single table
 """
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, Float, JSON, Boolean
+from sqlalchemy import Column, Integer, String, Text, DateTime, Float, Boolean
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 from datetime import datetime
 from typing import Dict, Any, Optional, List
@@ -38,9 +39,9 @@ class Document(Base):
 
     # Content and analysis (JSON fields for flexibility)
     extracted_text = Column(Text, nullable=True)  # Raw extracted text
-    ai_analysis = Column(JSON, nullable=True)  # All AI analysis results
-    keywords = Column(JSON, nullable=True)  # Keywords and categories
-    file_metadata = Column(JSON, nullable=True)  # File metadata, page count, etc.
+    ai_analysis = Column(JSONB, nullable=True)  # All AI analysis results
+    keywords = Column(JSONB, nullable=True)  # Keywords and categories
+    file_metadata = Column(JSONB, nullable=True)  # File metadata, page count, etc.
 
     # Search and embeddings
     search_content = Column(Text, nullable=True, index=True)  # Searchable text

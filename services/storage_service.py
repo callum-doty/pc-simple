@@ -100,7 +100,7 @@ class StorageService:
             await f.write(content)
 
         logger.info(f"Saved file locally: {filename}")
-        return str(file_path)
+        return filename
 
     async def _save_file_s3(self, file: UploadFile, filename: str) -> str:
         """Save file to S3 storage"""
@@ -135,11 +135,12 @@ class StorageService:
 
     async def _get_file_local(self, file_path: str) -> Optional[bytes]:
         """Get file from local storage"""
+        full_path = Path(self.storage_path) / Path(file_path).name
         try:
-            async with aiofiles.open(file_path, "rb") as f:
+            async with aiofiles.open(full_path, "rb") as f:
                 return await f.read()
         except FileNotFoundError:
-            logger.warning(f"File not found: {file_path}")
+            logger.warning(f"File not found: {full_path}")
             return None
 
     async def _get_file_s3(self, s3_key: str) -> Optional[bytes]:
@@ -156,11 +157,12 @@ class StorageService:
 
     def _get_file_local_sync(self, file_path: str) -> Optional[bytes]:
         """Get file from local storage (synchronous)"""
+        full_path = Path(self.storage_path) / Path(file_path).name
         try:
-            with open(file_path, "rb") as f:
+            with open(full_path, "rb") as f:
                 return f.read()
         except FileNotFoundError:
-            logger.warning(f"File not found: {file_path}")
+            logger.warning(f"File not found: {full_path}")
             return None
 
     def _get_file_s3_sync(self, s3_key: str) -> Optional[bytes]:
