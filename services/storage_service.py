@@ -281,9 +281,8 @@ class StorageService:
 
     async def get_preview_url(self, file_path: str) -> Optional[str]:
         """Get preview URL for document"""
-        # For now, return the same as file URL
-        # In a more complex implementation, this could generate thumbnails
-        return await self.get_file_url(file_path)
+        preview_path = f"previews/{Path(file_path).stem}_preview.png"
+        return await self.get_file_url(preview_path)
 
     def get_file_url_sync(
         self, file_path: str, expires_in: int = 3600
@@ -301,9 +300,8 @@ class StorageService:
 
     def get_preview_url_sync(self, file_path: str) -> Optional[str]:
         """Get preview URL for document (synchronous)"""
-        # For now, return the same as file URL
-        # In a more complex implementation, this could generate thumbnails
-        return self.get_file_url_sync(file_path)
+        preview_path = f"previews/{Path(file_path).stem}_preview.png"
+        return self.get_file_url_sync(preview_path)
 
     def get_storage_info(self) -> dict:
         """Get storage configuration info"""
