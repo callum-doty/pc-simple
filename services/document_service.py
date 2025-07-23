@@ -11,7 +11,6 @@ from datetime import datetime, timedelta
 from database import SessionLocal
 from models.document import Document, DocumentStatus
 from config import get_settings
-from worker import process_document_task
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -45,6 +44,8 @@ class DocumentService:
 
             # Trigger background processing
             if settings.environment != "testing":
+                from worker import process_document_task
+
                 process_document_task.delay(document.id)
 
             logger.info(
