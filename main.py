@@ -185,20 +185,6 @@ async def upload_documents(
                 filename=file.filename, file_path=file_path, file_size=file.size or 0
             )
 
-            # Use background task to introduce a delay before Celery task
-            if background_tasks:
-                background_tasks.add_task(
-                    process_document_task.apply_async,
-                    args=[document.id],
-                    countdown=2,  # 2-second delay
-                )
-            else:
-                # Fallback for environments without BackgroundTasks
-                process_document_task.apply_async(
-                    args=[document.id],
-                    countdown=2,  # 2-second delay
-                )
-
             tasks.append(
                 {
                     "document_id": document.id,

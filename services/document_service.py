@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from database import SessionLocal
 from models.document import Document, DocumentStatus
 from config import get_settings
+from worker import process_document_task
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -42,7 +43,13 @@ class DocumentService:
             self.db.commit()
             self.db.refresh(document)
 
-            logger.info(f"Created document: {filename} (ID: {document.id})")
+            # Trigger background processing
+            if settings.environment != "testing":
+                process_document_task.delay(document.id)
+
+            logger.info(
+                f"Created document: {filename} (ID: {document.id}) and triggered processing"
+            )
             return document
 
         except Exception as e:
