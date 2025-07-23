@@ -63,10 +63,20 @@ def _process_pdf_document_by_page(
         keywords, categories = ai_service._extract_keywords_from_analysis(
             chunk_analysis
         )
+        mappings = ai_service._extract_mappings_from_analysis(chunk_analysis)
         aggregated_results["keywords"].extend(keywords)
         aggregated_results["categories"].extend(categories)
-        if chunk_analysis.get("summary"):
-            page_summaries.append(chunk_analysis.get("summary"))
+        aggregated_results["mappings"].extend(mappings)
+
+        # Try to find the summary in the nested structure
+        if isinstance(chunk_analysis, dict):
+            summary = chunk_analysis.get("summary")
+            if not summary:
+                doc_analysis = chunk_analysis.get("document_analysis", {})
+                if isinstance(doc_analysis, dict):
+                    summary = doc_analysis.get("summary")
+            if summary:
+                page_summaries.append(summary)
 
         # Update progress (estimate)
         # This is tricky with a generator. We can't know the total number of pages.
@@ -79,6 +89,7 @@ def _process_pdf_document_by_page(
     # Consolidate results
     final_keywords = list(set(aggregated_results["keywords"]))
     final_categories = list(set(aggregated_results["categories"]))
+    final_mappings = aggregated_results["mappings"]
     final_summary = "\n".join(page_summaries)
     final_extracted_text = "\n\n".join(full_extracted_text)
 
@@ -86,6 +97,7 @@ def _process_pdf_document_by_page(
         "summary": final_summary,
         "page_count": total_pages,
         "analysis_type": "chunked_unified",
+        "keyword_mappings": final_mappings,
     }
 
     # Update document with aggregated data
@@ -95,6 +107,7 @@ def _process_pdf_document_by_page(
         ai_analysis=final_ai_analysis,
         keywords=final_keywords,
         categories=final_categories,
+        keyword_mappings=final_mappings,
         file_type="pdf",
     )
 
@@ -125,6 +138,9 @@ def _process_document_holistically(
     keywords, categories = ai_service._extract_keywords_from_analysis(
         analysis_result.get("ai_analysis", {})
     )
+    mappings = ai_service._extract_mappings_from_analysis(
+        analysis_result.get("ai_analysis", {})
+    )
 
     document_service.update_document_content_sync(
         document_id,
@@ -132,6 +148,7 @@ def _process_document_holistically(
         ai_analysis=analysis_result.get("ai_analysis", {}),
         keywords=keywords,
         categories=categories,
+        keyword_mappings=mappings,
         file_type=analysis_result.get("file_type"),
     )
 

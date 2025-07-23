@@ -794,6 +794,33 @@ class AIService:
             logger.error(f"Error extracting JSON from response: {str(e)}")
             return {"raw_response": response_text, "extraction_error": str(e)}
 
+    def _extract_mappings_from_analysis(
+        self, ai_analysis: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Extracts keyword mappings from the analysis result."""
+        if not isinstance(ai_analysis, dict):
+            return []
+
+        all_mappings = []
+
+        # Look in the top level
+        if "keyword_mappings" in ai_analysis and isinstance(
+            ai_analysis["keyword_mappings"], list
+        ):
+            all_mappings.extend(ai_analysis["keyword_mappings"])
+
+        # Look in the nested taxonomy_keywords block (for modular analysis)
+        if "taxonomy_keywords" in ai_analysis and isinstance(
+            ai_analysis["taxonomy_keywords"], dict
+        ):
+            nested_mappings = ai_analysis["taxonomy_keywords"].get(
+                "keyword_mappings", []
+            )
+            if isinstance(nested_mappings, list):
+                all_mappings.extend(nested_mappings)
+
+        return all_mappings
+
     def _extract_keywords_from_analysis(
         self, ai_analysis: Dict[str, Any]
     ) -> Tuple[List[str], List[str]]:
@@ -1053,13 +1080,21 @@ class AIService:
         self, file_content: bytes
     ) -> Generator[Tuple[int, str], None, None]:
         """Synchronous generator for extracting text from PDF pages."""
-        loop = asyncio.get_event_loop()
-        async_gen = self._extract_text_from_pdf_generator(file_content)
+
+        async def get_all_pages():
+            return [
+                page
+                async for page in self._extract_text_from_pdf_generator(file_content)
+            ]
+
         try:
-            while True:
-                yield loop.run_until_complete(async_gen.__anext__())
-        except StopAsyncIteration:
-            pass
+            pages = asyncio.run(get_all_pages())
+            for page in pages:
+                yield page
+        except Exception as e:
+            logger.error(f"Error in sync PDF generator: {e}")
+            # Yield nothing if there's an error
+            return
 
     def analyze_text_chunk_sync(
         self, text_chunk: str, filename: str, analysis_type: str = "unified"
