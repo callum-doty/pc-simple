@@ -571,7 +571,7 @@ class AIService:
         """Call the configured AI provider and return the raw text response."""
         try:
             model_map = {
-                "anthropic": "claude-3-sonnet-20240229",
+                "anthropic": "claude-3-opus-20240229",
                 "openai": "gpt-4-turbo",
                 "gemini": "gemini-pro-vision",
             }
@@ -682,7 +682,7 @@ class AIService:
                 messages.append({"role": "user", "content": user_prompt})
 
             response = self.anthropic_client.messages.create(
-                model="claude-3-sonnet-20240229",
+                model="claude-3-opus-20240229",
                 max_tokens=3000,  # Increased for more detailed responses
                 system=system_prompt,
                 messages=messages,
