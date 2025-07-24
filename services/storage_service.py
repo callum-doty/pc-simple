@@ -58,7 +58,11 @@ class StorageService:
         """Initialize S3 client"""
         try:
             endpoint_url = settings.s3_endpoint_url
-            if endpoint_url and not endpoint_url.startswith("https://"):
+
+            # If no endpoint is specified, construct it from the region for Backblaze
+            if not endpoint_url and settings.s3_region:
+                endpoint_url = f"https://s3.{settings.s3_region}.backblazeb2.com"
+            elif endpoint_url and not endpoint_url.startswith("https://"):
                 endpoint_url = f"https://{endpoint_url}"
 
             from botocore.client import Config
