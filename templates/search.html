@@ -490,7 +490,7 @@ endblock %} {% block content %}
           metadataHtml += `<span class="badge bg-info me-1">Mappings: ${doc.mapping_count}</span>`;
         }
 
-        if (doc.embeddings) {
+        if (doc.has_embeddings) {
           metadataHtml += `<span class="badge bg-success me-1"><i class="fas fa-check me-1"></i>Embeddings</span>`;
         } else {
           metadataHtml += `<span class="badge bg-danger me-1"><i class="fas fa-times me-1"></i>Embeddings</span>`;
