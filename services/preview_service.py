@@ -102,6 +102,69 @@ class PreviewService:
 
         return None
 
+    def generate_preview_sync(self, original_file_path: str) -> Optional[str]:
+        """
+        Synchronous version of generate_preview for use in Celery tasks.
+        """
+        preview_path = self.get_preview_path(original_file_path)
+
+        # Synchronous check if preview exists
+        # This assumes storage service has a synchronous check_file_exists method
+        # For this implementation, we'll proceed and overwrite for simplicity,
+        # assuming the check is not critical for the sync worker.
+
+        file_content = self.storage.get_file_sync(original_file_path)
+        if not file_content:
+            logger.warning(
+                f"Could not retrieve file from storage (sync): {original_file_path}"
+            )
+            return None
+
+        file_ext = Path(original_file_path).suffix.lower()
+        preview_bytes = None
+
+        if file_ext == ".pdf":
+            # This part needs to be synchronous
+            try:
+                doc = fitz.open(stream=file_content, filetype="pdf")
+                page = doc[0]
+                mat = fitz.Matrix(2.0, 2.0)
+                pix = page.get_pixmap(matrix=mat)
+                img_data = pix.tobytes("png")
+                img = Image.open(io.BytesIO(img_data))
+                img.thumbnail((300, 400), Image.Resampling.LANCZOS)
+                img_byte_arr = io.BytesIO()
+                img.save(img_byte_arr, format="PNG", optimize=True)
+                doc.close()
+                preview_bytes = img_byte_arr.getvalue()
+            except Exception as e:
+                logger.error(f"Error generating PDF preview bytes (sync): {str(e)}")
+                return None
+        elif file_ext in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff"]:
+            # This part needs to be synchronous
+            try:
+                img = Image.open(io.BytesIO(file_content))
+                if img.mode in ("RGBA", "LA", "P"):
+                    img = img.convert("RGB")
+                img.thumbnail((300, 400), Image.Resampling.LANCZOS)
+                img_byte_arr = io.BytesIO()
+                img.save(img_byte_arr, format="PNG", optimize=True)
+                preview_bytes = img_byte_arr.getvalue()
+            except Exception as e:
+                logger.error(f"Error generating image preview bytes (sync): {str(e)}")
+                return None
+        else:
+            logger.warning(f"Unsupported file type for preview (sync): {file_ext}")
+            return None
+
+        if preview_bytes:
+            # Synchronous save
+            # This assumes storage service has a synchronous save_file_bytes method
+            self.storage.save_file_bytes_sync(preview_bytes, preview_path, "image/png")
+            return preview_path
+
+        return None
+
     async def get_preview_url(
         self, original_file_path: str, expires_in: int = 3600
     ) -> Optional[str]:

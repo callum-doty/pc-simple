@@ -154,6 +154,22 @@ class StorageService:
             async with aiofiles.open(file_path, "wb") as f:
                 await f.write(content)
 
+    def save_file_bytes_sync(
+        self, content: bytes, filename: str, content_type: Optional[str]
+    ) -> None:
+        """Save bytes to a file in storage (synchronous)."""
+        if self.storage_type == "s3":
+            self.s3_client.put_object(
+                Bucket=settings.s3_bucket,
+                Key=filename,
+                Body=content,
+                ContentType=content_type or "application/octet-stream",
+            )
+        else:
+            file_path = Path(self.storage_path) / filename
+            with open(file_path, "wb") as f:
+                f.write(content)
+
     async def get_file(self, file_path: str) -> Optional[bytes]:
         """Get file content as bytes"""
         try:

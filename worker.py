@@ -4,6 +4,7 @@ from config import get_settings
 from services.document_service import DocumentService
 from services.ai_service import AIService
 from services.storage_service import StorageService
+from services.preview_service import PreviewService
 from models.document import DocumentStatus
 import logging
 from typing import Generator, Tuple, List, Dict, Any
@@ -174,6 +175,7 @@ def process_document_task(document_id: int, analysis_type: str = "unified"):
     document_service = DocumentService(db)
     ai_service = AIService(db)
     storage_service = StorageService()
+    preview_service = PreviewService(storage_service)
 
     try:
         logger.info(
@@ -207,9 +209,14 @@ def process_document_task(document_id: int, analysis_type: str = "unified"):
             )
 
         # Final steps for all types
-        preview_url = storage_service.get_preview_url_sync(document.file_path)
-        if preview_url:
-            document_service.update_document_preview_url_sync(document_id, preview_url)
+        logger.info(f"Generating preview for document {document_id}")
+        preview_path = preview_service.generate_preview_sync(document.file_path)
+        if preview_path:
+            preview_url = storage_service.get_file_url_sync(preview_path)
+            if preview_url:
+                document_service.update_document_preview_url_sync(
+                    document_id, preview_url
+                )
 
         document_service.update_document_status_sync(
             document_id, DocumentStatus.COMPLETED, progress=100
