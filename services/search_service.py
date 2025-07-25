@@ -505,7 +505,7 @@ class SearchService:
                 )
 
             # Get total count before pagination
-            total_count = base_query.count()
+            total_count = base_query.with_entities(func.count(Document.id)).scalar()
 
             # Apply sorting
             sort_column = getattr(Document, sort_by, Document.created_at)
