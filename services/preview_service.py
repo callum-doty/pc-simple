@@ -173,7 +173,9 @@ class PreviewService:
         """
         preview_path = await self.generate_preview(original_file_path)
         if preview_path:
-            return await self.storage.get_file_url(preview_path, expires_in)
+            return await self.storage.get_file_url(
+                preview_path, expires_in, content_type="image/png"
+            )
         return None
 
     async def delete_preview(self, original_file_path: str) -> bool:

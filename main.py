@@ -108,7 +108,7 @@ if settings.storage_type == "local":
         """Serve preview images for local storage"""
         preview_path = os.path.join(settings.storage_path, "previews", filename)
         if os.path.exists(preview_path):
-            return FileResponse(preview_path)
+            return FileResponse(preview_path, media_type="image/png")
         raise HTTPException(status_code=404, detail="Preview not found")
 
 

@@ -272,13 +272,16 @@ class StorageService:
             return False
 
     async def get_file_url(
-        self, file_path: str, expires_in: int = 3600
+        self, file_path: str, expires_in: int = 3600, content_type: Optional[str] = None
     ) -> Optional[str]:
         """Get URL for file access"""
         try:
             if self.storage_type == "s3":
-                return self._get_s3_presigned_url(file_path, expires_in)
+                return self._get_s3_presigned_url(
+                    file_path, expires_in, content_type=content_type
+                )
             else:
+                # For local files, content type is handled by the serving endpoint
                 return self._get_local_file_url(file_path)
 
         except Exception as e:
@@ -287,16 +290,24 @@ class StorageService:
 
     def _get_local_file_url(self, file_path: str) -> str:
         """Get URL for local file (for development)"""
-        # For local development, return a path that can be served by FastAPI
-        filename = Path(file_path).name
-        return f"/files/{filename}"
+        # This now needs to handle previews correctly
+        path = Path(file_path)
+        if "previews" in path.parts:
+            return f"/previews/{path.name}"
+        return f"/files/{path.name}"
 
-    def _get_s3_presigned_url(self, s3_key: str, expires_in: int) -> Optional[str]:
+    def _get_s3_presigned_url(
+        self, s3_key: str, expires_in: int, content_type: Optional[str] = None
+    ) -> Optional[str]:
         """Get presigned URL for S3 file"""
         try:
+            params = {"Bucket": settings.s3_bucket, "Key": s3_key}
+            if content_type:
+                params["ResponseContentType"] = content_type
+
             url = self.s3_client.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": settings.s3_bucket, "Key": s3_key},
+                Params=params,
                 ExpiresIn=expires_in,
             )
             return url
