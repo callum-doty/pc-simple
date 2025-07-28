@@ -309,6 +309,36 @@ async def get_document_preview(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Document Download
+@app.get("/api/documents/{document_id}/download")
+async def download_document(
+    document_id: int,
+    document_service: DocumentService = Depends(get_document_service),
+    storage_service: StorageService = Depends(get_storage_service),
+):
+    """Download a document file"""
+    try:
+        document = await document_service.get_document(document_id)
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        file_content = await storage_service.get_file(document.file_path)
+        if not file_content:
+            raise HTTPException(status_code=404, detail="File not found in storage")
+
+        return FileResponse(
+            path=os.path.join(settings.storage_path, document.file_path),
+            filename=document.filename,
+            media_type="application/octet-stream",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Download error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Processing Status
 @app.get("/api/documents/{document_id}/status")
 async def get_processing_status(
