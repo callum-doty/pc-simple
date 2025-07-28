@@ -301,6 +301,10 @@ class StorageService:
     ) -> Optional[str]:
         """Get presigned URL for S3 file"""
         try:
+            # For previews, we now want to return a local URL to proxy the request
+            if "previews" in s3_key:
+                return f"/previews/{Path(s3_key).name}"
+
             params = {"Bucket": settings.s3_bucket, "Key": s3_key}
             if content_type:
                 params["ResponseContentType"] = content_type

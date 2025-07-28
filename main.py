@@ -103,14 +103,6 @@ if settings.storage_type == "local":
             return FileResponse(file_path)
         raise HTTPException(status_code=404, detail="File not found")
 
-    @app.get("/previews/{filename}")
-    async def serve_preview(filename: str):
-        """Serve preview images for local storage"""
-        preview_path = os.path.join(settings.storage_path, "previews", filename)
-        if os.path.exists(preview_path):
-            return FileResponse(preview_path, media_type="image/png")
-        raise HTTPException(status_code=404, detail="Preview not found")
-
 
 # Templates
 templates = Jinja2Templates(directory="templates")
@@ -144,6 +136,33 @@ def get_search_service(
 
 def get_taxonomy_service(db: Session = Depends(get_db)) -> TaxonomyService:
     return TaxonomyService(db)
+
+
+# This endpoint will now handle previews for all storage types
+@app.get("/previews/{filename}")
+async def serve_preview(
+    filename: str,
+    storage_service: StorageService = Depends(get_storage_service),
+):
+    """Serve preview images by streaming from the storage service"""
+    from fastapi.responses import StreamingResponse
+    import io
+
+    preview_path = f"previews/{filename}"
+
+    try:
+        file_content = await storage_service.get_file(preview_path)
+        if file_content:
+            return StreamingResponse(io.BytesIO(file_content), media_type="image/png")
+    except Exception as e:
+        logger.error(f"Error serving preview for {filename}: {e}")
+
+    # If the file is not found or an error occurs, return a placeholder
+    placeholder_path = "static/placeholder.svg"
+    if os.path.exists(placeholder_path):
+        return FileResponse(placeholder_path, media_type="image/svg+xml")
+
+    raise HTTPException(status_code=404, detail="Preview not found")
 
 
 # Routes
