@@ -3,6 +3,7 @@ Simplified Document model - consolidates all document-related data into a single
 """
 
 from sqlalchemy import Column, Integer, String, Text, DateTime, Float, Boolean
+from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -11,6 +12,8 @@ import json
 from pgvector.sqlalchemy import Vector
 
 from database import Base
+from models.document_taxonomy_map import document_taxonomy_map
+from models.taxonomy import TaxonomyTerm
 
 
 class Document(Base):
@@ -50,6 +53,13 @@ class Document(Base):
     # Preview and display
     preview_url = Column(String(500), nullable=True)
     thumbnail_url = Column(String(500), nullable=True)
+
+    # Relationships
+    taxonomy_terms = relationship(
+        "TaxonomyTerm",
+        secondary=document_taxonomy_map,
+        back_populates="documents",
+    )
 
     def __repr__(self):
         return f"<Document(id={self.id}, filename='{self.filename}', status='{self.status}')>"
@@ -200,37 +210,48 @@ class Document(Base):
             if mapping.get("mapped_canonical_term")
         ]
 
-    # Enhanced to_dict method to include mapping details:
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert document to dictionary for API responses"""
-        base_dict = {
+    def to_dict(self, full_detail: bool = False) -> Dict[str, Any]:
+        """
+        Convert document to dictionary for API responses.
+        - `full_detail=False`: Returns a summary view for search results.
+        - `full_detail=True`: Returns the complete document object.
+        """
+        data = {
             "id": self.id,
             "filename": self.filename,
             "file_size": self.file_size,
             "status": self.status,
-            "processing_progress": self.processing_progress,
             "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            "processed_at": (
-                self.processed_at.isoformat() if self.processed_at else None
-            ),
             "summary": self.get_summary(),
-            "extracted_text": self.extracted_text,
-            "ai_analysis": self.ai_analysis,
-            "keywords": self.keywords,
-            "metadata": self.file_metadata,
-            "preview_url": self.preview_url,
-            "thumbnail_url": self.thumbnail_url,
-            "processing_error": self.processing_error,
-            # Enhanced mapping information
-            "mapping_count": self.get_mapping_count(),
-            "verbatim_terms": self.get_verbatim_terms(),
+            "categories": self.get_categories(),
             "canonical_terms": self.get_canonical_terms(),
-            "keyword_mappings": self.get_keyword_mappings(),
+            "thumbnail_url": self.thumbnail_url,
+            "preview_url": self.preview_url,
             "has_embeddings": self.search_vector is not None,
         }
-        return base_dict
+
+        if full_detail:
+            # Add heavyweight fields for detailed view
+            data.update(
+                {
+                    "processing_progress": self.processing_progress,
+                    "updated_at": (
+                        self.updated_at.isoformat() if self.updated_at else None
+                    ),
+                    "processed_at": (
+                        self.processed_at.isoformat() if self.processed_at else None
+                    ),
+                    "extracted_text": self.extracted_text,
+                    "ai_analysis": self.ai_analysis,
+                    "keywords": self.keywords,
+                    "metadata": self.file_metadata,
+                    "processing_error": self.processing_error,
+                    "mapping_count": self.get_mapping_count(),
+                    "verbatim_terms": self.get_verbatim_terms(),
+                    "keyword_mappings": self.get_keyword_mappings(),
+                }
+            )
+        return data
 
 
 # Status constants

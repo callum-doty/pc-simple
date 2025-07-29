@@ -272,7 +272,7 @@ async def get_document(
         if not document:
             raise HTTPException(status_code=404, detail="Document not found")
 
-        return {"success": True, "document": document.to_dict()}
+        return {"success": True, "document": document.to_dict(full_detail=True)}
 
     except HTTPException:
         raise

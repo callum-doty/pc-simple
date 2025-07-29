@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 
 from database import Base
+from models.document_taxonomy_map import document_taxonomy_map
 
 
 class TaxonomyTerm(Base):
@@ -30,6 +31,13 @@ class TaxonomyTerm(Base):
     # Self-referential relationship for hierarchy
     parent_id = Column(Integer, ForeignKey("taxonomy_terms.id"), nullable=True)
     children = relationship("TaxonomyTerm", backref="parent", remote_side=[id])
+
+    # Many-to-many relationship with Document
+    documents = relationship(
+        "Document",
+        secondary=document_taxonomy_map,
+        back_populates="taxonomy_terms",
+    )
 
     def __repr__(self):
         return f"<TaxonomyTerm(term='{self.term}', category='{self.primary_category}')>"
