@@ -317,6 +317,9 @@ async def download_document(
     storage_service: StorageService = Depends(get_storage_service),
 ):
     """Download a document file"""
+    from fastapi.responses import StreamingResponse
+    import io
+
     try:
         document = await document_service.get_document(document_id)
         if not document:
@@ -326,10 +329,10 @@ async def download_document(
         if not file_content:
             raise HTTPException(status_code=404, detail="File not found in storage")
 
-        return FileResponse(
-            path=os.path.join(settings.storage_path, document.file_path),
-            filename=document.filename,
-            media_type="application/octet-stream",
+        return StreamingResponse(
+            io.BytesIO(file_content),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"inline; filename={document.filename}"},
         )
 
     except HTTPException:
