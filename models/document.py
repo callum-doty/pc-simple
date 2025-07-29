@@ -223,7 +223,6 @@ class Document(Base):
             "status": self.status,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "summary": self.get_summary(),
-            "categories": self.get_categories(),
             "canonical_terms": self.get_canonical_terms(),
             "thumbnail_url": self.thumbnail_url,
             "preview_url": self.preview_url,
