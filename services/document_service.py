@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 
 from database import SessionLocal
 from models.document import Document, DocumentStatus
+from models.taxonomy import TaxonomyTerm
 from config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -189,6 +190,9 @@ class DocumentService:
             document.search_content = " ".join(
                 sorted(list(set(str(p) for p in search_parts if p)))
             )
+
+            # Update taxonomy mappings
+            self._update_document_taxonomy_mappings(document, keyword_mappings)
 
             self.db.commit()
             logger.info(
@@ -408,6 +412,9 @@ class DocumentService:
                 sorted(list(set(str(p) for p in search_parts if p)))
             )
 
+            # Update taxonomy mappings
+            self._update_document_taxonomy_mappings(document, keyword_mappings)
+
             self.db.commit()
             logger.info(
                 f"Updated document {document_id} content with {len(keyword_mappings or [])} keyword mappings"
@@ -478,6 +485,49 @@ class DocumentService:
                 f"Error updating preview URL for document {document_id}: {str(e)}"
             )
             return False
+
+    def _update_document_taxonomy_mappings(
+        self, document: Document, keyword_mappings: List[Dict[str, str]]
+    ):
+        """Update the document's taxonomy term associations."""
+        if keyword_mappings is None:
+            return
+
+        try:
+            # Clear existing associations
+            document.taxonomy_terms.clear()
+
+            # Get all canonical terms from the mappings
+            canonical_terms = {
+                m["mapped_canonical_term"]
+                for m in keyword_mappings
+                if "mapped_canonical_term" in m
+            }
+
+            if not canonical_terms:
+                return
+
+            # Find all matching taxonomy terms in a single query
+            terms_to_associate = (
+                self.db.query(TaxonomyTerm)
+                .filter(TaxonomyTerm.term.in_(canonical_terms))
+                .all()
+            )
+
+            # Associate the found terms with the document
+            for term in terms_to_associate:
+                document.taxonomy_terms.append(term)
+
+            logger.info(
+                f"Updated {len(terms_to_associate)} taxonomy mappings for document {document.id}"
+            )
+
+        except Exception as e:
+            logger.error(
+                f"Error updating taxonomy mappings for document {document.id}: {str(e)}"
+            )
+            # Rollback is handled by the calling function
+            raise
 
     def update_document_preview_url_sync(
         self, document_id: int, preview_url: str
