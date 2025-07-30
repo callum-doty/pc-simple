@@ -182,17 +182,19 @@ class SearchService:
 
                 vector_query = None
                 if query_embedding is not None:
+                    # Cosine distance: 0 is perfect match, 2 is opposite.
+                    # We convert to similarity: 1 is perfect match, 0 is opposite.
                     vector_query = select(
                         Document.id,
-                        (Document.search_vector.cosine_distance(query_embedding)).label(
-                            "relevance"
-                        ),
+                        (
+                            1 - Document.search_vector.cosine_distance(query_embedding)
+                        ).label("relevance"),
                     ).filter(Document.search_vector.isnot(None))
 
                 text_query = None
                 if query.strip():
                     # Use PostgreSQL's full-text search capabilities
-                    ts_query = func.to_tsquery("english", query)
+                    ts_query = func.plainto_tsquery("english", query)
                     text_query = select(
                         Document.id,
                         func.ts_rank(Document.ts_vector, ts_query).label("relevance"),
@@ -225,7 +227,7 @@ class SearchService:
             )
 
             if search_subquery is not None:
-                final_query = final_query.join(
+                final_query = final_query.outerjoin(
                     search_subquery, Document.id == search_subquery.c.id
                 )
 

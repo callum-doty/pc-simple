@@ -115,7 +115,10 @@ def _process_pdf_document_by_page(
     # Generate embeddings from the consolidated summary
     if final_summary:
         logger.info(f"Generating embeddings from summary for document {document_id}")
-        embeddings = ai_service.generate_embeddings_sync(final_summary)
+        synthesized_text = " ".join(
+            filter(None, [document.filename, final_extracted_text, final_summary])
+        )
+        embeddings = ai_service.generate_embeddings_sync(synthesized_text)
         if embeddings:
             document_service.update_document_embeddings_sync(document_id, embeddings)
 
