@@ -161,66 +161,24 @@ class SearchService:
         primary_category: Optional[str] = None,
         subcategory: Optional[str] = None,
         canonical_term: Optional[str] = None,
-        sort_by: str = "created_at",
+        sort_by: str = "relevance",
         sort_direction: str = "desc",
     ) -> Dict[str, Any]:
         """
-        Optimized search with hierarchical taxonomy filtering, pushing all operations to the database.
+        Optimized search with hybrid text and vector search, hierarchical taxonomy filtering,
+        and relevance scoring.
         """
+        from sqlalchemy import union_all, select, literal_column
+
         try:
             if query.strip():
                 await self.log_search_query(query)
 
-            base_query = self.db.query(Document).filter(
+            # Base query for filtering by status and taxonomy
+            base_query = self.db.query(Document.id).filter(
                 Document.status == DocumentStatus.COMPLETED
             )
 
-            # Apply text and vector search
-            if query.strip():
-                query_embedding = await self.ai_service.generate_embeddings(query)
-                vector_subquery = None
-                if query_embedding is not None:
-                    vector_subquery = (
-                        self.db.query(Document.id)
-                        .filter(Document.search_vector.isnot(None))
-                        .order_by(Document.search_vector.l2_distance(query_embedding))
-                        .limit(100)
-                        .subquery()
-                    )
-
-                keywords = self._get_search_keywords(query)
-                text_search_clauses = []
-                if keywords:
-                    for keyword in keywords:
-                        search_term = f"%{keyword}%"
-                        text_search_clauses.append(
-                            or_(
-                                Document.filename.ilike(search_term),
-                                Document.search_content.ilike(search_term),
-                                Document.extracted_text.ilike(search_term),
-                            )
-                        )
-
-                text_subquery = (
-                    self.db.query(Document.id)
-                    .filter(and_(*text_search_clauses))
-                    .subquery()
-                )
-
-                # Combine text and vector search results
-                if vector_subquery is not None:
-                    base_query = base_query.filter(
-                        or_(
-                            Document.id.in_(self.db.query(vector_subquery.c.id)),
-                            Document.id.in_(self.db.query(text_subquery.c.id)),
-                        )
-                    )
-                else:
-                    base_query = base_query.filter(
-                        Document.id.in_(self.db.query(text_subquery.c.id))
-                    )
-
-            # Apply hierarchical taxonomy filters
             if primary_category:
                 base_query = base_query.join(Document.taxonomy_terms).filter(
                     TaxonomyTerm.primary_category == primary_category
@@ -234,22 +192,96 @@ class SearchService:
                     TaxonomyTerm.term == canonical_term
                 )
 
+            # If there's a search query, perform hybrid search
+            if query.strip():
+                query_embedding = await self.ai_service.generate_embeddings(query)
+                keywords = self._get_search_keywords(query)
+
+                # Vector search query
+                vector_query = None
+                if query_embedding is not None:
+                    vector_query = (
+                        select(
+                            Document.id,
+                            (
+                                1 - Document.search_vector.l2_distance(query_embedding)
+                            ).label("relevance"),
+                        )
+                        .filter(Document.search_vector.isnot(None))
+                        .order_by(desc("relevance"))
+                        .limit(100)
+                    )
+
+                # Text search query
+                text_search_clauses = []
+                if keywords:
+                    for keyword in keywords:
+                        search_term = f"%{keyword}%"
+                        text_search_clauses.append(
+                            or_(
+                                Document.filename.ilike(search_term),
+                                Document.search_content.ilike(search_term),
+                            )
+                        )
+
+                text_query = select(
+                    Document.id, literal_column("0.5").label("relevance")
+                ).filter(and_(*text_search_clauses))
+
+                # Combine queries using UNION
+                if vector_query is not None:
+                    combined_query = union_all(vector_query, text_query).alias(
+                        "combined"
+                    )
+                else:
+                    combined_query = text_query.alias("combined")
+
+                # Final query to get unique document IDs with max relevance
+                ranked_query = (
+                    select(
+                        combined_query.c.id,
+                        func.max(combined_query.c.relevance).label("relevance"),
+                    )
+                    .group_by(combined_query.c.id)
+                    .subquery()
+                )
+
+                # Filter the base query by the ranked results
+                base_query = base_query.join(
+                    ranked_query, Document.id == ranked_query.c.id
+                ).with_entities(Document, ranked_query.c.relevance)
+            else:
+                # If no query, add a default relevance
+                base_query = base_query.with_entities(
+                    Document, literal_column("0.0").label("relevance")
+                )
+
             # Get total count before pagination
-            total_count = base_query.with_entities(func.count(Document.id)).scalar()
+            total_count = base_query.with_entities(func.count()).scalar()
 
             # Apply sorting
-            sort_column = getattr(Document, sort_by, Document.created_at)
-            if sort_direction.lower() == "desc":
-                base_query = base_query.order_by(desc(sort_column))
+            if sort_by == "relevance" and query.strip():
+                order_clause = desc("relevance")
             else:
-                base_query = base_query.order_by(asc(sort_column))
+                sort_column = getattr(Document, sort_by, Document.created_at)
+                order_clause = (
+                    desc(sort_column)
+                    if sort_direction.lower() == "desc"
+                    else asc(sort_column)
+                )
+
+            base_query = base_query.order_by(order_clause)
 
             # Apply pagination
             offset = (page - 1) * per_page
-            documents = base_query.offset(offset).limit(per_page).all()
+            results = base_query.offset(offset).limit(per_page).all()
 
             # Format documents for response
-            formatted_docs = [doc.to_dict(full_detail=False) for doc in documents]
+            formatted_docs = []
+            for doc, relevance in results:
+                doc_dict = doc.to_dict(full_detail=False)
+                doc_dict["relevance"] = f"{relevance:.2f}" if relevance else "0.00"
+                formatted_docs.append(doc_dict)
 
             pagination = self._create_pagination_info(page, per_page, total_count)
             facets = await self._generate_enhanced_facets()

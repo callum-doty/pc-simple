@@ -137,6 +137,7 @@ endblock %} {% block content %}
                 <i class="fas fa-calendar me-1"></i>
                 <span class="upload-date"></span>
               </small>
+              <span class="badge bg-info relevance-score"></span>
               <div class="btn-group btn-group-sm">
                 <button type="button" class="btn btn-outline-primary view-btn">
                   <i class="fas fa-eye"></i>
@@ -337,7 +338,7 @@ endblock %} {% block content %}
         const params = new URLSearchParams({
           q: query,
           page: currentPage,
-          per_page: 8, // Fetch 8 documents per page
+          per_page: 12, // Fetch 12 documents per page
           sort_by: sort_by,
           sort_direction: sort_direction,
         });
@@ -408,6 +409,10 @@ endblock %} {% block content %}
         card
           .find(".upload-date")
           .text(new Date(doc.created_at).toLocaleDateString());
+
+        if (doc.relevance) {
+          card.find(".relevance-score").text(`Relevance: ${doc.relevance}`);
+        }
 
         // Set preview image
         if (doc.preview_url) {
