@@ -227,9 +227,12 @@ class SearchService:
             )
 
             if search_subquery is not None:
-                final_query = final_query.outerjoin(
+                # Use inner join to only get documents with a relevance score
+                final_query = final_query.join(
                     search_subquery, Document.id == search_subquery.c.id
                 )
+                # Filter out results with no relevance
+                final_query = final_query.filter(search_subquery.c.relevance > 0)
 
             # Apply filters
             final_query = final_query.filter(
