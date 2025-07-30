@@ -77,6 +77,7 @@ endblock %} {% block content %}
         <div class="mb-3">
           <label for="sortBy" class="form-label">Sort By</label>
           <select class="form-select" id="sortBy">
+            <option value="relevance" selected>Relevance</option>
             <option value="created_at">Upload Date</option>
             <option value="filename">Filename</option>
             <option value="file_size">File Size</option>
@@ -312,7 +313,7 @@ endblock %} {% block content %}
           "#canonicalTermAccordion .accordion-item, #canonicalTermAccordion .btn"
         ).show();
         activeCanonicalTerm = "";
-        $("#sortBy").val("created_at");
+        $("#sortBy").val("relevance");
         $("#sortDirection").val("desc");
         performSearch(true);
       });
