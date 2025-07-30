@@ -204,7 +204,7 @@ class SearchService:
                         select(
                             Document.id,
                             (
-                                1 - Document.search_vector.l2_distance(query_embedding)
+                                Document.search_vector.cosine_distance(query_embedding)
                             ).label("relevance"),
                         )
                         .filter(Document.search_vector.isnot(None))
@@ -225,7 +225,7 @@ class SearchService:
                         )
 
                 text_query = select(
-                    Document.id, literal_column("0.5").label("relevance")
+                    Document.id, literal_column("0.4").label("relevance")
                 ).filter(and_(*text_search_clauses))
 
                 # Combine queries using UNION
