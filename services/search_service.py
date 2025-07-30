@@ -198,7 +198,7 @@ class SearchService:
                     text_query = select(
                         Document.id,
                         func.ts_rank(Document.ts_vector, ts_query).label("relevance"),
-                    ).filter(Document.ts_vector.match(ts_query))
+                    ).filter(Document.ts_vector.op("@@")(ts_query))
 
                 if vector_query is not None:
                     combined_query = union_all(vector_query, text_query).alias(
