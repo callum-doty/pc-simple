@@ -225,7 +225,7 @@ class SearchService:
                         )
 
                 text_query = select(
-                    Document.id, literal_column("0.4").label("relevance")
+                    Document.id, literal_column("1.0").label("relevance")
                 ).filter(and_(*text_search_clauses))
 
                 # Combine queries using UNION
