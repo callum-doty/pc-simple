@@ -123,7 +123,7 @@ class DocumentService:
         ai_analysis: Dict[str, Any] = None,
         keywords: List[str] = None,
         categories: List[str] = None,
-        keyword_mappings: List[Dict[str, str]] = None,  # Add this parameter
+        keyword_mappings: List[Dict[str, str]] = None,
         **metadata,
     ) -> bool:
         """Update document content and analysis with rich keyword mappings"""
@@ -190,6 +190,9 @@ class DocumentService:
             document.search_content = " ".join(
                 sorted(list(set(str(p) for p in search_parts if p)))
             )
+
+            # Generate ts_vector from search_content
+            document.ts_vector = func.to_tsvector("english", document.search_content)
 
             # Update taxonomy mappings
             self._update_document_taxonomy_mappings(document, keyword_mappings)
@@ -411,6 +414,9 @@ class DocumentService:
             document.search_content = " ".join(
                 sorted(list(set(str(p) for p in search_parts if p)))
             )
+
+            # Generate ts_vector from search_content
+            document.ts_vector = func.to_tsvector("english", document.search_content)
 
             # Update taxonomy mappings
             self._update_document_taxonomy_mappings(document, keyword_mappings)

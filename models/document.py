@@ -2,9 +2,9 @@
 Simplified Document model - consolidates all document-related data into a single table
 """
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, Float, Boolean
+from sqlalchemy import Column, Integer, String, Text, DateTime, Float, Boolean, Index
 from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.sql import func
 from datetime import datetime
 from typing import Dict, Any, Optional, List
@@ -47,8 +47,9 @@ class Document(Base):
     file_metadata = Column(JSONB, nullable=True)  # File metadata, page count, etc.
 
     # Search and embeddings
-    search_content = Column(Text, nullable=True, index=True)  # Searchable text
-    search_vector = Column(Vector(3072), nullable=True)  # For text-embedding-3-large
+    search_content = Column(Text, nullable=True)  # Deprecated, use ts_vector
+    search_vector = Column(Vector(3072), nullable=True)
+    ts_vector = Column(TSVECTOR, nullable=True)
 
     # Preview and display
     preview_url = Column(String(500), nullable=True)
@@ -251,6 +252,20 @@ class Document(Base):
                 }
             )
         return data
+
+
+# Add indexes for FTS and vector search
+Index(
+    "idx_documents_ts_vector",
+    Document.ts_vector,
+    postgresql_using="gin",
+)
+Index(
+    "idx_documents_search_vector",
+    Document.search_vector,
+    postgresql_using="hnsw",
+    postgresql_with={"m": 16, "ef_construction": 64},
+)
 
 
 # Status constants

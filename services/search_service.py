@@ -189,19 +189,14 @@ class SearchService:
                         ),
                     ).filter(Document.search_vector.isnot(None))
 
-                text_search_clauses = []
-                if keywords:
-                    for keyword in keywords:
-                        search_term = f"%{keyword}%"
-                        text_search_clauses.append(
-                            or_(
-                                Document.filename.ilike(search_term),
-                                Document.search_content.ilike(search_term),
-                            )
-                        )
-                text_query = select(
-                    Document.id, literal_column("1.0").label("relevance")
-                ).filter(and_(*text_search_clauses))
+                text_query = None
+                if query.strip():
+                    # Use PostgreSQL's full-text search capabilities
+                    ts_query = func.to_tsquery("english", query)
+                    text_query = select(
+                        Document.id,
+                        func.ts_rank(Document.ts_vector, ts_query).label("relevance"),
+                    ).filter(Document.ts_vector.match(ts_query))
 
                 if vector_query is not None:
                     combined_query = union_all(vector_query, text_query).alias(
