@@ -53,7 +53,9 @@ class Document(Base):
     # Content and analysis (JSON fields for flexibility)
     extracted_text = Column(Text, nullable=True)  # Raw extracted text
     ai_analysis = Column(JSONB, nullable=True)  # All AI analysis results
-    keywords = Column(JSONB, nullable=True)  # Keywords and categories
+    keywords = Column(
+        JSONB, nullable=True, index=True, postgresql_using="gin"
+    )  # Keywords and categories
     file_metadata = Column(JSONB, nullable=True)  # File metadata, page count, etc.
 
     # Search and embeddings

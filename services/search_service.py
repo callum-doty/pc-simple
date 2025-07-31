@@ -67,26 +67,28 @@ class SearchService:
         self, verbatim_term: str, query: str = "", limit: int = 20
     ) -> List[Dict[str, Any]]:
         """Search documents by verbatim term with hybrid search"""
+        from sqlalchemy.dialects.postgresql import JSONB
+        from sqlalchemy import cast
+
         try:
-            # Use the main search function to get hybrid search results
-            search_results = await self.search(
-                query=query, per_page=limit * 2
-            )  # Fetch more to filter
-            all_documents = search_results.get("documents", [])
+            # Build a query that filters by verbatim term in the JSONB array
+            base_query = self.db.query(Document).filter(
+                Document.keywords.op(" @> ")(
+                    cast([{"verbatim_term": verbatim_term}], JSONB)
+                )
+            )
 
-            # Filter results by verbatim term
-            verbatim_documents = []
-            for doc in all_documents:
-                mappings = doc.get("keyword_mappings", [])
-                for mapping in mappings:
-                    if (
-                        verbatim_term.lower()
-                        in mapping.get("verbatim_term", "").lower()
-                    ):
-                        verbatim_documents.append(doc)
-                        break  # Add once per document
+            # Further refine with text search if a query is provided
+            if query.strip():
+                ts_query = func.plainto_tsquery("english", query)
+                base_query = base_query.filter(Document.ts_vector.op("@@")(ts_query))
 
-            return verbatim_documents[:limit]
+            # Order by creation date and limit results
+            results = base_query.order_by(desc(Document.created_at)).limit(limit).all()
+
+            # Format documents for response
+            formatted_docs = [doc.to_dict(full_detail=False) for doc in results]
+            return formatted_docs
 
         except Exception as e:
             logger.error(f"Error searching by verbatim term {verbatim_term}: {str(e)}")
@@ -94,58 +96,86 @@ class SearchService:
 
     async def get_mapping_statistics(self) -> Dict[str, Any]:
         """Get statistics about keyword mappings across all documents"""
+        from sqlalchemy.dialects.postgresql import JSONB
+        from sqlalchemy import cast
+
         try:
-            docs_with_keywords = (
-                self.db.query(Document)
+            # Count documents with keywords
+            docs_with_keywords_count = (
+                self.db.query(func.count(Document.id))
                 .filter(
                     Document.status == DocumentStatus.COMPLETED,
                     Document.keywords.isnot(None),
                 )
-                .all()
+                .scalar()
             )
 
-            total_mappings = 0
-            canonical_term_counts = {}
-            primary_category_counts = {}
-            verbatim_terms = set()
+            # Unnest keywords and perform aggregations
+            keyword_element = func.jsonb_array_elements(Document.keywords).alias(
+                "keyword_element"
+            )
 
-            for doc in docs_with_keywords:
-                mappings = doc.get_keyword_mappings()
-                total_mappings += len(mappings)
+            # Total mappings
+            total_mappings_query = self.db.query(func.count()).select_from(
+                keyword_element
+            )
+            total_mappings = total_mappings_query.scalar()
 
-                for mapping in mappings:
-                    # Count canonical terms
-                    canonical_term = mapping.get("mapped_canonical_term", "")
-                    if canonical_term:
-                        canonical_term_counts[canonical_term] = (
-                            canonical_term_counts.get(canonical_term, 0) + 1
-                        )
+            # Canonical term counts
+            canonical_term_counts_query = (
+                self.db.query(
+                    keyword_element.c.value["mapped_canonical_term"].astext,
+                    func.count(),
+                )
+                .filter(keyword_element.c.value["mapped_canonical_term"].isnot(None))
+                .group_by(keyword_element.c.value["mapped_canonical_term"].astext)
+                .order_by(func.count().desc())
+                .limit(10)
+            )
+            top_canonical_terms = canonical_term_counts_query.all()
 
-                    # Count primary categories
-                    primary_category = mapping.get("mapped_primary_category", "")
-                    if primary_category:
-                        primary_category_counts[primary_category] = (
-                            primary_category_counts.get(primary_category, 0) + 1
-                        )
+            # Primary category counts
+            primary_category_counts_query = (
+                self.db.query(
+                    keyword_element.c.value["mapped_primary_category"].astext,
+                    func.count(),
+                )
+                .filter(keyword_element.c.value["mapped_primary_category"].isnot(None))
+                .group_by(keyword_element.c.value["mapped_primary_category"].astext)
+            )
+            primary_category_counts = dict(primary_category_counts_query.all())
 
-                    # Collect unique verbatim terms
-                    verbatim_term = mapping.get("verbatim_term", "")
-                    if verbatim_term:
-                        verbatim_terms.add(verbatim_term)
+            # Unique verbatim and canonical terms
+            unique_verbatim_terms_query = self.db.query(
+                func.count(
+                    func.distinct(keyword_element.c.value["verbatim_term"].astext)
+                )
+            )
+            unique_verbatim_terms = unique_verbatim_terms_query.scalar()
+
+            unique_canonical_terms_query = self.db.query(
+                func.count(
+                    func.distinct(
+                        keyword_element.c.value["mapped_canonical_term"].astext
+                    )
+                )
+            )
+            unique_canonical_terms = unique_canonical_terms_query.scalar()
 
             return {
-                "total_documents_with_mappings": len(docs_with_keywords),
+                "total_documents_with_mappings": docs_with_keywords_count,
                 "total_keyword_mappings": total_mappings,
                 "average_mappings_per_document": (
-                    total_mappings / len(docs_with_keywords)
-                    if docs_with_keywords
+                    total_mappings / docs_with_keywords_count
+                    if docs_with_keywords_count
                     else 0
                 ),
-                "unique_verbatim_terms": len(verbatim_terms),
-                "unique_canonical_terms": len(canonical_term_counts),
-                "top_canonical_terms": sorted(
-                    canonical_term_counts.items(), key=lambda x: x[1], reverse=True
-                )[:10],
+                "unique_verbatim_terms": unique_verbatim_terms,
+                "unique_canonical_terms": unique_canonical_terms,
+                "top_canonical_terms": [
+                    {"term": term, "count": count}
+                    for term, count in top_canonical_terms
+                ],
                 "primary_category_distribution": primary_category_counts,
             }
 
