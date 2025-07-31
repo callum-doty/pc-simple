@@ -17,8 +17,9 @@ if config.config_file_name is not None:
 # add your model's MetaData object here
 # for 'autogenerate' support
 from database import Base
-from config import settings
+from config import get_settings
 
+settings = get_settings()
 target_metadata = Base.metadata
 
 # Set the database URL from settings

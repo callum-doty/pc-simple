@@ -2,7 +2,17 @@
 Simplified Document model - consolidates all document-related data into a single table
 """
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, Float, Boolean, Index
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Text,
+    DateTime,
+    Float,
+    Boolean,
+    Index,
+    Computed,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.sql import func
@@ -47,9 +57,15 @@ class Document(Base):
     file_metadata = Column(JSONB, nullable=True)  # File metadata, page count, etc.
 
     # Search and embeddings
-    search_content = Column(Text, nullable=True)  # Deprecated, use ts_vector
+    search_content = Column(Text, nullable=True)
     search_vector = Column(Vector(3072), nullable=True)
-    ts_vector = Column(TSVECTOR, nullable=True)
+    ts_vector = Column(
+        TSVECTOR,
+        Computed(
+            "to_tsvector('english', coalesce(filename, '') || ' ' || coalesce(extracted_text, ''))",
+            persisted=True,
+        ),
+    )
 
     # Preview and display
     preview_url = Column(String(500), nullable=True)
