@@ -515,13 +515,7 @@ endblock %} {% block content %}
           e.preventDefault();
           e.stopPropagation(); // Prevent card link from firing
 
-          const bsCollapse = new bootstrap.Collapse(
-            e.currentTarget.nextElementSibling,
-            {
-              toggle: true,
-            }
-          );
-
+          // Let bootstrap handle the collapse, just load the data
           const container = card.find(".extracted-text-info");
           if (!container.html()) {
             populateDetailedView(doc.id, container);
