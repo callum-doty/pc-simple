@@ -7,16 +7,16 @@ A streamlined FastAPI-based document processing system that leverages AI for tex
 ### Architecture Simplification
 
 - **Single Application**: Replaced 6-service Docker setup with 1-2 services
-- **No Celery**: FastAPI BackgroundTasks replace complex queue system
+- **Celery for Background Processing**: Uses Celery and Redis for robust, scalable background task management.
 - **Unified Database**: Single table with JSON fields instead of 10+ related tables
 - **Simplified Storage**: Local/Render disk storage instead of MinIO setup
 - **Consolidated Services**: Combined related functionality into fewer, focused services
 
 ### Cost & Resource Optimization
 
-- **75% Cost Reduction**: From ~$84/month to ~$21/month on Render
-- **Faster Deployment**: Single service vs complex orchestration
-- **Lower Memory Usage**: No Redis, MinIO, or multiple workers
+- **Significant Cost Reduction**: From ~$84/month to a lower cost on Render
+- **Faster Deployment**: Simplified service orchestration
+- **Optimized Memory Usage**: Efficient use of resources
 - **Simpler Monitoring**: Fewer services to track and debug
 
 ## Architecture Overview
@@ -236,8 +236,10 @@ databases:
 ```yaml
 services:
   - web (FastAPI)
+  - worker (Celery)
 databases:
   - PostgreSQL
+  - Redis
 ```
 
 **Cost**: ~$21/month, Simple deployment

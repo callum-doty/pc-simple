@@ -204,10 +204,14 @@ async def upload_documents(
                 filename=file.filename, file_path=file_path, file_size=file.size or 0
             )
 
+            # Queue the document for processing with Celery
+            task = process_document_task.delay(document.id)
+
             tasks.append(
                 {
                     "document_id": document.id,
                     "filename": document.filename,
+                    "task_id": task.id,
                 }
             )
 
