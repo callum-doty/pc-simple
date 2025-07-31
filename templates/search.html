@@ -127,7 +127,12 @@ endblock %} {% block content %}
   <!-- Document Card Template -->
   <template id="documentCardTemplate">
     <div class="col">
-      <a href="#" class="document-link text-decoration-none text-dark">
+      <a
+        href="#"
+        class="document-link text-decoration-none text-dark"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
         <div class="card h-100 document-card">
           <img
             src=""
@@ -165,7 +170,7 @@ endblock %} {% block content %}
             <div class="extra-info mb-2"></div>
             <div class="keywords mb-2"></div>
             <div class="metadata-info mb-2"></div>
-            <div class="all-data-info mb-2"></div>
+            <div class="extracted-text-info mb-2"></div>
           </div>
         </div>
       </div>
@@ -462,24 +467,7 @@ endblock %} {% block content %}
           `);
         }
 
-        // Display all other document fields
-        const allDataContainer = card.find(".all-data-info");
-        let allDataHtml = "";
-
-        for (const [key, value] of Object.entries(doc)) {
-          if (
-            value &&
-            typeof value !== "object" &&
-            typeof value !== "undefined"
-          ) {
-            if (key === "extracted_text") {
-              allDataHtml += `<div class="text-wrap" style="white-space: pre-wrap; word-wrap: break-word;"><strong>${key}:</strong> ${value}</div>`;
-            } else {
-              allDataHtml += `<span class="badge bg-light text-dark me-1 mb-1">${key}: ${value}</span>`;
-            }
-          }
-        }
-        allDataContainer.html(allDataHtml);
+        // The detailed extracted text is loaded on demand.
 
         const metadataContainer = card.find(".metadata-info");
         let metadataHtml = "";
@@ -534,7 +522,7 @@ endblock %} {% block content %}
             }
           );
 
-          const container = card.find(".all-data-info");
+          const container = card.find(".extracted-text-info");
           if (!container.html()) {
             populateDetailedView(doc.id, container);
           }
@@ -555,31 +543,25 @@ endblock %} {% block content %}
 
       // Populate detailed view
       function populateDetailedView(docId, container) {
+        container.html('<p class="text-muted">Loading text...</p>');
         fetch(`/api/documents/${docId}`)
           .then((response) => response.json())
           .then((data) => {
-            if (data.success) {
-              const doc = data.document;
-              let allDataHtml = "";
-              for (const [key, value] of Object.entries(doc)) {
-                if (
-                  value &&
-                  typeof value !== "object" &&
-                  typeof value !== "undefined"
-                ) {
-                  if (key === "extracted_text") {
-                    allDataHtml += `<div class="text-wrap" style="white-space: pre-wrap; word-wrap: break-word;"><strong>${key}:</strong> ${value}</div>`;
-                  } else {
-                    allDataHtml += `<span class="badge bg-light text-dark me-1 mb-1">${key}: ${value}</span>`;
-                  }
-                }
-              }
-              container.html(allDataHtml);
+            if (data.success && data.document.extracted_text) {
+              const text = data.document.extracted_text;
+              const textHtml = `<div class="text-wrap" style="white-space: pre-wrap; word-wrap: break-word;">${text}</div>`;
+              container.html(textHtml);
+            } else {
+              container.html(
+                '<p class="text-muted">No extracted text available.</p>'
+              );
             }
           })
           .catch((error) => {
             console.error("Error fetching document details:", error);
-            container.html('<p class="text-danger">Error loading details.</p>');
+            container.html(
+              '<p class="text-danger">Error loading details.</p>'
+            );
           });
       }
 
