@@ -60,9 +60,17 @@ class DocumentService:
             raise
 
     async def get_document(self, document_id: int) -> Optional[Document]:
-        """Get document by ID"""
+        """Get document by ID, ensuring heavyweight columns are loaded."""
+        from sqlalchemy.orm import undefer
+
         try:
-            return self.db.query(Document).filter(Document.id == document_id).first()
+            # Explicitly undefer extracted_text to ensure it's loaded
+            return (
+                self.db.query(Document)
+                .filter(Document.id == document_id)
+                .options(undefer(Document.extracted_text))
+                .first()
+            )
         except Exception as e:
             logger.error(f"Error getting document {document_id}: {str(e)}")
             return None
