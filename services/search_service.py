@@ -168,53 +168,79 @@ class SearchService:
         Optimized search with hybrid text and vector search, hierarchical taxonomy filtering,
         and relevance scoring.
         """
-        from sqlalchemy import union_all, select, literal_column
+        from sqlalchemy import select, literal_column, union_all
 
         try:
             if query.strip():
                 await self.log_search_query(query)
 
-            # 1. Build the search subquery to get relevance scores
             search_subquery = None
             if query.strip():
                 query_embedding = await self.ai_service.generate_embeddings(query)
-                keywords = self._get_search_keywords(query)
 
-                vector_query = None
+                vector_weight = 0.7
+                text_weight = 0.3
+
+                vector_subquery = None
                 if query_embedding is not None:
-                    # Cosine distance: 0 is perfect match, 2 is opposite.
-                    # We convert to similarity: 1 is perfect match, 0 is opposite.
-                    vector_query = select(
-                        Document.id,
-                        (
-                            1 - Document.search_vector.cosine_distance(query_embedding)
-                        ).label("relevance"),
-                    ).filter(Document.search_vector.isnot(None))
-
-                text_query = None
-                if query.strip():
-                    # Use PostgreSQL's full-text search capabilities
-                    ts_query = func.plainto_tsquery("english", query)
-                    text_query = select(
-                        Document.id,
-                        func.ts_rank(Document.ts_vector, ts_query).label("relevance"),
-                    ).filter(Document.ts_vector.op("@@")(ts_query))
-
-                if vector_query is not None:
-                    combined_query = union_all(vector_query, text_query).alias(
-                        "combined"
+                    vector_subquery = (
+                        select(
+                            Document.id.label("id"),
+                            (
+                                1
+                                - Document.search_vector.cosine_distance(
+                                    query_embedding
+                                )
+                            ).label("vector_relevance"),
+                        )
+                        .filter(Document.search_vector.isnot(None))
+                        .subquery()
                     )
-                else:
-                    combined_query = text_query.alias("combined")
 
-                search_subquery = (
+                ts_query = func.plainto_tsquery("english", query)
+                text_subquery = (
                     select(
-                        combined_query.c.id.label("id"),
-                        func.max(combined_query.c.relevance).label("relevance"),
+                        Document.id.label("id"),
+                        func.ts_rank_cd(Document.ts_vector, ts_query, 32).label(
+                            "text_relevance"
+                        ),
                     )
-                    .group_by(combined_query.c.id)
+                    .filter(Document.ts_vector.op("@@")(ts_query))
                     .subquery()
                 )
+
+                # Build a combined subquery using FULL OUTER JOIN
+                if vector_subquery is not None:
+                    # If both vector and text search are available
+                    combined_join = vector_subquery.join(
+                        text_subquery,
+                        vector_subquery.c.id == text_subquery.c.id,
+                        isouter=True,
+                    )
+
+                    relevance_expression = (
+                        func.coalesce(vector_subquery.c.vector_relevance, 0)
+                        * vector_weight
+                        + func.coalesce(text_subquery.c.text_relevance, 0) * text_weight
+                    ).label("relevance")
+
+                    id_expression = func.coalesce(
+                        vector_subquery.c.id, text_subquery.c.id
+                    )
+
+                    search_subquery = (
+                        select(id_expression.label("id"), relevance_expression)
+                        .select_from(combined_join)
+                        .subquery()
+                    )
+                else:
+                    # Fallback to only text search
+                    search_subquery = select(
+                        text_subquery.c.id.label("id"),
+                        (text_subquery.c.text_relevance * text_weight).label(
+                            "relevance"
+                        ),
+                    ).subquery()
 
             # 2. Build the final query, joining with search results if applicable
             final_query = self.db.query(
@@ -227,11 +253,9 @@ class SearchService:
             )
 
             if search_subquery is not None:
-                # Use inner join to only get documents with a relevance score
                 final_query = final_query.join(
                     search_subquery, Document.id == search_subquery.c.id
                 )
-                # Filter out results with no relevance
                 final_query = final_query.filter(search_subquery.c.relevance > 0)
 
             # Apply filters
@@ -258,7 +282,6 @@ class SearchService:
             if sort_by == "relevance" and search_subquery is not None:
                 order_clause = desc("relevance")
             else:
-                # Default to created_at if relevance is requested without a query
                 sort_column_name = "created_at" if sort_by == "relevance" else sort_by
                 sort_column = getattr(Document, sort_column_name, Document.created_at)
                 order_clause = (
