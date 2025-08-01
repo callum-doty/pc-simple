@@ -193,9 +193,20 @@ class RelevanceService:
 
         if canonical_term or primary_category:
             # Boost taxonomy relevance for filtered searches
-            weights["taxonomy"] = 0.25
-            weights["vector"] = 0.35
-            weights["text"] = 0.2
+            weights["taxonomy"] = 0.4
+            weights["quality"] = 0.2
+            weights["freshness"] = 0.15
+            weights["popularity"] = 0.15
+            weights["vector"] = 0.05
+            weights["text"] = 0.05
+        elif query_type == "empty":
+            # For empty queries (browsing), emphasize quality and freshness
+            weights["quality"] = 0.4
+            weights["freshness"] = 0.3
+            weights["taxonomy"] = 0.15
+            weights["popularity"] = 0.1
+            weights["vector"] = 0.025
+            weights["text"] = 0.025
         elif query_type == "entity":
             # For entity queries, boost text matching and taxonomy
             weights["text"] = 0.35

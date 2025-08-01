@@ -243,9 +243,13 @@ class SearchService:
             if query.strip():
                 await self.log_search_query(query)
 
-            # Step 1: Build base search components
+            # Check if this is a search query or just browsing/filtering
+            has_search_query = bool(query.strip())
+            has_filters = bool(primary_category or subcategory or canonical_term)
+
+            # Step 1: Build base search components (only if we have a search query)
             search_subquery = None
-            if query.strip():
+            if has_search_query:
                 query_embedding = await self.ai_service.generate_embeddings(query)
 
                 vector_weight = 0.7
@@ -312,34 +316,69 @@ class SearchService:
                         ),
                     ).subquery()
 
-            # Step 2: Build the base query with enhanced relevance
-            base_query = self.db.query(Document)
+            # Step 2: Build the query based on whether we have search or just filtering
+            if has_search_query:
+                # Search mode: Use enhanced relevance
+                base_query = self.db.query(Document)
 
-            # Calculate enhanced relevance
-            enhanced_relevance, weights, query_analysis = (
-                self.relevance_service.calculate_enhanced_relevance(
-                    query=query,
-                    base_query=base_query,
-                    search_subquery=search_subquery,
-                    canonical_term=canonical_term,
-                    primary_category=primary_category,
+                # Calculate enhanced relevance
+                enhanced_relevance, weights, query_analysis = (
+                    self.relevance_service.calculate_enhanced_relevance(
+                        query=query,
+                        base_query=base_query,
+                        search_subquery=search_subquery,
+                        canonical_term=canonical_term,
+                        primary_category=primary_category,
+                    )
                 )
-            )
 
-            # Build final query with enhanced relevance
-            final_query = self.db.query(Document, enhanced_relevance.label("relevance"))
-
-            # Join with search results if we have them
-            if search_subquery is not None:
-                final_query = final_query.join(
-                    search_subquery, Document.id == search_subquery.c.id
+                # Build final query with enhanced relevance
+                final_query = self.db.query(
+                    Document, enhanced_relevance.label("relevance")
                 )
-                final_query = final_query.filter(search_subquery.c.relevance > 0)
+
+                # Join with search results
+                if search_subquery is not None:
+                    final_query = final_query.join(
+                        search_subquery, Document.id == search_subquery.c.id
+                    )
+                    final_query = final_query.filter(search_subquery.c.relevance > 0)
+
+            else:
+                # Browse/Filter mode: Simple query without search relevance
+                final_query = self.db.query(
+                    Document, literal_column("0.0").label("relevance")
+                )
+
+                # For filter-only queries, we can still use some taxonomy scoring
+                if has_filters:
+                    try:
+                        base_query = self.db.query(Document)
+                        enhanced_relevance, weights, query_analysis = (
+                            self.relevance_service.calculate_enhanced_relevance(
+                                query="",  # Empty query for filter-only
+                                base_query=base_query,
+                                search_subquery=None,
+                                canonical_term=canonical_term,
+                                primary_category=primary_category,
+                            )
+                        )
+                        # Update the query to use the enhanced relevance for sorting
+                        final_query = self.db.query(
+                            Document, enhanced_relevance.label("relevance")
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Could not calculate enhanced relevance for filter-only query: {e}"
+                        )
+                        weights = {}
+                        query_analysis = {"type": "filter_only"}
 
             # Apply filters
             final_query = final_query.filter(
                 Document.status == DocumentStatus.COMPLETED
             )
+
             if primary_category:
                 final_query = final_query.join(Document.taxonomy_terms).filter(
                     TaxonomyTerm.primary_category == primary_category
@@ -356,8 +395,13 @@ class SearchService:
             # Get total count
             total_count = final_query.with_entities(func.count(Document.id)).scalar()
 
-            # Apply sorting - always by relevance for enhanced search
-            final_query = final_query.order_by(desc("relevance"))
+            # Apply sorting
+            if has_search_query or (has_filters and "enhanced_relevance" in locals()):
+                # Sort by relevance when we have search or enhanced filter relevance
+                final_query = final_query.order_by(desc("relevance"))
+            else:
+                # Sort by creation date for browsing
+                final_query = final_query.order_by(desc(Document.created_at))
 
             # Apply pagination
             offset = (page - 1) * per_page
@@ -371,10 +415,14 @@ class SearchService:
 
                 # Add debug info about scoring if needed
                 if settings.debug:
-                    doc_dict["_debug_query_type"] = query_analysis.get(
-                        "type", "unknown"
+                    doc_dict["_debug_query_type"] = (
+                        query_analysis.get("type", "unknown")
+                        if "query_analysis" in locals()
+                        else "browse"
                     )
-                    doc_dict["_debug_weights"] = weights
+                    doc_dict["_debug_weights"] = (
+                        weights if "weights" in locals() else {}
+                    )
 
                 formatted_docs.append(doc_dict)
 
@@ -388,8 +436,14 @@ class SearchService:
                 "total_count": total_count,
                 "query": query,
                 "enhanced_relevance": True,
-                "query_analysis": query_analysis if settings.debug else None,
-                "weights_used": weights if settings.debug else None,
+                "query_analysis": (
+                    query_analysis
+                    if settings.debug and "query_analysis" in locals()
+                    else None
+                ),
+                "weights_used": (
+                    weights if settings.debug and "weights" in locals() else None
+                ),
             }
 
         except Exception as e:
