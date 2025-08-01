@@ -386,7 +386,7 @@ class SearchService:
 
                 primary_category_filter = text(
                     """
-                    keywords @> :keyword_filter
+                    keywords->'keyword_mappings' @> :keyword_filter
                 """
                 ).bindparam(
                     keyword_filter=cast(
@@ -402,7 +402,7 @@ class SearchService:
 
                 subcategory_filter = text(
                     """
-                    keywords @> :keyword_filter
+                    keywords->'keyword_mappings' @> :keyword_filter
                 """
                 ).bindparam(
                     keyword_filter=cast([{"mapped_subcategory": subcategory}], JSONB)
@@ -417,7 +417,7 @@ class SearchService:
                 # Use JSONB query to find documents with the canonical term in their keyword mappings
                 canonical_term_filter = text(
                     """
-                    keywords @> :keyword_filter
+                    keywords->'keyword_mappings' @> :keyword_filter
                 """
                 ).bindparam(
                     keyword_filter=cast(
@@ -610,7 +610,7 @@ class SearchService:
 
                 primary_category_filter = text(
                     """
-                    keywords @> :keyword_filter
+                    keywords->'keyword_mappings' @> :keyword_filter
                 """
                 ).bindparam(
                     keyword_filter=cast(
@@ -626,7 +626,7 @@ class SearchService:
 
                 subcategory_filter = text(
                     """
-                    keywords @> :keyword_filter
+                    keywords->'keyword_mappings' @> :keyword_filter
                 """
                 ).bindparam(
                     keyword_filter=cast([{"mapped_subcategory": subcategory}], JSONB)
@@ -641,7 +641,7 @@ class SearchService:
                 # Use JSONB query to find documents with the canonical term in their keyword mappings
                 canonical_term_filter = text(
                     """
-                    keywords @> :keyword_filter
+                    keywords->'keyword_mappings' @> :keyword_filter
                 """
                 ).bindparam(
                     keyword_filter=cast(
