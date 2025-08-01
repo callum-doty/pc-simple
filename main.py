@@ -31,7 +31,7 @@ from services.storage_service import StorageService
 from services.taxonomy_service import TaxonomyService
 from services.preview_service import PreviewService
 from api import dashboard as dashboard_api
-from worker import process_document_task
+from worker import process_document_task, check_stuck_documents, get_processing_stats
 from celery.result import AsyncResult
 from models.search_query import SearchQuery
 
@@ -195,35 +195,66 @@ async def upload_documents(
     """Upload one or more documents"""
     try:
         tasks = []
+        skipped = []
+        errors = []
 
         for file in files:
             if not file.filename:
+                skipped.append({"reason": "No filename provided"})
                 continue
 
-            # Save file to storage
-            file_path = await storage_service.save_file(file)
+            # Basic file validation
+            if file.size and file.size > 50 * 1024 * 1024:  # 50MB limit
+                errors.append(
+                    {"filename": file.filename, "error": "File size exceeds 50MB limit"}
+                )
+                continue
 
-            # Create document record
-            document = await document_service.create_document(
-                filename=file.filename, file_path=file_path, file_size=file.size or 0
-            )
+            try:
+                # Save file to storage
+                file_path = await storage_service.save_file(file)
 
-            # Queue the document for processing with Celery
-            task = process_document_task.delay(document.id)
+                # Create document record (no longer triggers processing automatically)
+                document = await document_service.create_document(
+                    filename=file.filename,
+                    file_path=file_path,
+                    file_size=file.size or 0,
+                )
 
-            tasks.append(
-                {
-                    "document_id": document.id,
-                    "filename": document.filename,
-                    "task_id": task.id,
-                }
-            )
+                # Queue the document for processing with Celery - single task creation
+                logger.info(
+                    f"Queuing document {document.id} ({file.filename}) for processing"
+                )
+                task = process_document_task.delay(document.id)
 
-        return {
-            "success": True,
-            "message": f"Queued {len(tasks)} documents for processing",
+                tasks.append(
+                    {
+                        "document_id": document.id,
+                        "filename": document.filename,
+                        "task_id": task.id,
+                    }
+                )
+
+            except Exception as file_error:
+                logger.error(
+                    f"Error processing file {file.filename}: {str(file_error)}"
+                )
+                errors.append({"filename": file.filename, "error": str(file_error)})
+
+        # Prepare response
+        response = {
+            "success": len(tasks) > 0,
+            "message": f"Successfully queued {len(tasks)} documents for processing",
             "tasks": tasks,
         }
+
+        if skipped:
+            response["skipped"] = skipped
+        if errors:
+            response["errors"] = errors
+            response["message"] += f". {len(errors)} files had errors."
+
+        return response
 
     except Exception as e:
         logger.error(f"Upload error: {str(e)}")
@@ -613,6 +644,70 @@ async def get_statistics(
 
     except Exception as e:
         logger.error(f"Stats error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Admin/Monitoring API Endpoints
+@app.post("/api/admin/check-stuck-documents")
+async def admin_check_stuck_documents():
+    """Check for and reset stuck documents"""
+    try:
+        task = check_stuck_documents.delay()
+        return {
+            "success": True,
+            "message": "Stuck document check task queued",
+            "task_id": task.id,
+        }
+    except Exception as e:
+        logger.error(f"Admin stuck documents check error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/processing-stats")
+async def admin_processing_stats():
+    """Get current processing statistics"""
+    try:
+        task = get_processing_stats.delay()
+        result = task.get(timeout=10)  # Wait up to 10 seconds for result
+        return {"success": True, "stats": result}
+    except Exception as e:
+        logger.error(f"Admin processing stats error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/failed-documents")
+async def admin_failed_documents(
+    document_service: DocumentService = Depends(get_document_service),
+):
+    """Get list of failed documents"""
+    try:
+        failed_docs = await document_service.get_failed_documents(limit=50)
+        return {
+            "success": True,
+            "failed_documents": [doc.to_dict() for doc in failed_docs],
+            "count": len(failed_docs),
+        }
+    except Exception as e:
+        logger.error(f"Admin failed documents error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/stuck-documents")
+async def admin_stuck_documents(
+    hours: int = 1,
+    document_service: DocumentService = Depends(get_document_service),
+):
+    """Get list of stuck documents"""
+    try:
+        stuck_docs = await document_service.get_stuck_documents(hours=hours)
+        return {
+            "success": True,
+            "stuck_documents": [doc.to_dict() for doc in stuck_docs],
+            "count": len(stuck_docs),
+            "cutoff_hours": hours,
+        }
+    except Exception as e:
+        logger.error(f"Admin stuck documents error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

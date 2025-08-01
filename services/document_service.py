@@ -43,15 +43,7 @@ class DocumentService:
             self.db.commit()
             self.db.refresh(document)
 
-            # Trigger background processing
-            if settings.environment != "testing":
-                from worker import process_document_task
-
-                process_document_task.delay(document.id)
-
-            logger.info(
-                f"Created document: {filename} (ID: {document.id}) and triggered processing"
-            )
+            logger.info(f"Created document: {filename} (ID: {document.id})")
             return document
 
         except Exception as e:

@@ -5,7 +5,7 @@ from services.document_service import DocumentService
 from services.ai_service import AIService
 from services.storage_service import StorageService
 from services.preview_service import PreviewService
-from models.document import DocumentStatus
+from models.document import DocumentStatus, Document
 import logging
 from typing import Generator, Tuple, List, Dict, Any
 from collections import defaultdict
@@ -26,6 +26,12 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    # Task deduplication settings
+    task_ignore_result=False,
+    task_track_started=True,
+    task_reject_on_worker_lost=True,
+    # Prevent duplicate tasks for same document
+    task_routes={"process_document_task": {"queue": "document_processing"}},
 )
 
 
@@ -168,8 +174,79 @@ def _process_document_holistically(
 from database import get_db
 
 
-@celery_app.task(name="process_document_task")
-def process_document_task(document_id: int, analysis_type: str = "unified"):
+@celery_app.task(name="check_stuck_documents")
+def check_stuck_documents():
+    """
+    Utility task to check for and recover stuck documents.
+    Can be run periodically to clean up processing state.
+    """
+    db = next(get_db())
+    document_service = DocumentService(db)
+
+    try:
+        # Get documents that have been processing for more than 1 hour
+        from datetime import datetime, timedelta
+
+        cutoff_time = datetime.utcnow() - timedelta(hours=1)
+
+        stuck_documents = (
+            db.query(Document)
+            .filter(
+                Document.status == DocumentStatus.PROCESSING,
+                Document.updated_at < cutoff_time,
+            )
+            .all()
+        )
+
+        reset_count = 0
+        for doc in stuck_documents:
+            logger.warning(f"Resetting stuck document {doc.id} ({doc.filename})")
+            document_service.update_document_status_sync(
+                doc.id, DocumentStatus.PENDING, progress=0
+            )
+            reset_count += 1
+
+        logger.info(f"Reset {reset_count} stuck documents to PENDING status")
+        return {"reset_count": reset_count, "checked_documents": len(stuck_documents)}
+
+    except Exception as e:
+        logger.error(f"Error checking stuck documents: {str(e)}")
+        return {"error": str(e)}
+
+
+@celery_app.task(name="get_processing_stats")
+def get_processing_stats():
+    """
+    Get current processing statistics for monitoring.
+    """
+    db = next(get_db())
+
+    try:
+        from sqlalchemy import func
+
+        stats = {}
+        for status in [
+            DocumentStatus.PENDING,
+            DocumentStatus.PROCESSING,
+            DocumentStatus.COMPLETED,
+            DocumentStatus.FAILED,
+        ]:
+            count = (
+                db.query(func.count(Document.id))
+                .filter(Document.status == status)
+                .scalar()
+            )
+            stats[status.lower()] = count
+
+        return stats
+
+    except Exception as e:
+        logger.error(f"Error getting processing stats: {str(e)}")
+        return {"error": str(e)}
+
+
+@celery_app.task(name="process_document_task", bind=True)
+def process_document_task(self, document_id: int, analysis_type: str = "unified"):
     """
     Celery task to process a single document.
     Delegates to chunked processing for PDFs and holistic for others.
@@ -182,7 +259,7 @@ def process_document_task(document_id: int, analysis_type: str = "unified"):
 
     try:
         logger.info(
-            f"Starting Celery processing for document {document_id} with {analysis_type} analysis"
+            f"Starting Celery processing for document {document_id} with {analysis_type} analysis (task {self.request.id})"
         )
 
         document = document_service.get_document_sync(document_id)
@@ -190,9 +267,24 @@ def process_document_task(document_id: int, analysis_type: str = "unified"):
             logger.error(f"Document {document_id} not found")
             return False
 
+        # Idempotency check: prevent duplicate processing
+        if document.status == DocumentStatus.PROCESSING:
+            logger.warning(
+                f"Document {document_id} is already being processed, skipping duplicate task"
+            )
+            return True
+
+        if document.status == DocumentStatus.COMPLETED:
+            logger.info(f"Document {document_id} is already completed, skipping")
+            return True
+
+        # Set processing status with task ID for tracking
         document_service.update_document_status_sync(
             document_id, DocumentStatus.PROCESSING, progress=10
         )
+
+        # Log the task assignment
+        logger.info(f"Document {document_id} assigned to task {self.request.id}")
 
         # Determine file type and processing strategy
         file_type = ai_service._get_file_type(document.filename)
