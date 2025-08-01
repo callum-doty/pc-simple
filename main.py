@@ -30,6 +30,7 @@ from services.search_service import SearchService
 from services.storage_service import StorageService
 from services.taxonomy_service import TaxonomyService
 from services.preview_service import PreviewService
+from api import dashboard as dashboard_api
 from worker import process_document_task
 from celery.result import AsyncResult
 from models.search_query import SearchQuery
@@ -88,6 +89,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include API routers
+app.include_router(dashboard_api.router, prefix="/api", tags=["Dashboard"])
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -420,7 +424,7 @@ async def upload_page(request: Request):
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request):
     """Admin dashboard"""
-    return templates.TemplateResponse("admin.html", {"request": request})
+    return templates.TemplateResponse("admin/dashboard.html", {"request": request})
 
 
 # Taxonomy API Endpoints
