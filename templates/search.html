@@ -281,7 +281,12 @@ endblock %} {% block content %}
           $(this)
             .find(".btn")
             .each(function () {
-              const term = $(this).data("term").toLowerCase();
+              const termData = $(this).data("term");
+              // Skip buttons that don't have data-term attribute (like accordion headers)
+              if (!termData) {
+                return;
+              }
+              const term = String(termData).toLowerCase();
               if (term.includes(searchText)) {
                 $(this).show();
                 categoryVisible = true;
