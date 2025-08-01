@@ -15,6 +15,7 @@ from models.search_query import SearchQuery
 from config import get_settings
 from services.preview_service import PreviewService
 from services.ai_service import AIService
+from services.relevance_service import RelevanceService
 import datetime
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ class SearchService:
         self.db = db
         self.preview_service = preview_service
         self.ai_service = AIService(db=self.db)
+        self.relevance_service = RelevanceService(db=self.db)
 
     def _create_pagination_info(
         self, page: int, per_page: int, total_count: int
@@ -193,10 +195,230 @@ class SearchService:
         canonical_term: Optional[str] = None,
         sort_by: str = "relevance",
         sort_direction: str = "desc",
+        use_enhanced_relevance: bool = True,
     ) -> Dict[str, Any]:
         """
-        Optimized search with hybrid text and vector search, hierarchical taxonomy filtering,
-        and relevance scoring.
+        Enhanced search with multi-factor relevance scoring
+        """
+        if use_enhanced_relevance:
+            return await self.search_enhanced(
+                query=query,
+                page=page,
+                per_page=per_page,
+                primary_category=primary_category,
+                subcategory=subcategory,
+                canonical_term=canonical_term,
+                sort_by=sort_by,
+                sort_direction=sort_direction,
+            )
+        else:
+            return await self.search_legacy(
+                query=query,
+                page=page,
+                per_page=per_page,
+                primary_category=primary_category,
+                subcategory=subcategory,
+                canonical_term=canonical_term,
+                sort_by=sort_by,
+                sort_direction=sort_direction,
+            )
+
+    async def search_enhanced(
+        self,
+        query: str = "",
+        page: int = 1,
+        per_page: int = 20,
+        primary_category: Optional[str] = None,
+        subcategory: Optional[str] = None,
+        canonical_term: Optional[str] = None,
+        sort_by: str = "relevance",
+        sort_direction: str = "desc",
+    ) -> Dict[str, Any]:
+        """
+        Enhanced search with multi-factor relevance scoring
+        """
+        from sqlalchemy import select, literal_column, union_all
+
+        try:
+            if query.strip():
+                await self.log_search_query(query)
+
+            # Step 1: Build base search components
+            search_subquery = None
+            if query.strip():
+                query_embedding = await self.ai_service.generate_embeddings(query)
+
+                vector_weight = 0.7
+                text_weight = 0.3
+
+                vector_subquery = None
+                if query_embedding is not None:
+                    vector_subquery = (
+                        select(
+                            Document.id.label("id"),
+                            (
+                                1
+                                - Document.search_vector.cosine_distance(
+                                    query_embedding
+                                )
+                            ).label("vector_relevance"),
+                        )
+                        .filter(Document.search_vector.isnot(None))
+                        .subquery()
+                    )
+
+                ts_query = func.plainto_tsquery("english", query)
+                text_subquery = (
+                    select(
+                        Document.id.label("id"),
+                        func.ts_rank_cd(Document.ts_vector, ts_query, 32).label(
+                            "text_relevance"
+                        ),
+                    )
+                    .filter(Document.ts_vector.op("@@")(ts_query))
+                    .subquery()
+                )
+
+                # Build a combined subquery using FULL OUTER JOIN
+                if vector_subquery is not None:
+                    # If both vector and text search are available
+                    combined_join = vector_subquery.join(
+                        text_subquery,
+                        vector_subquery.c.id == text_subquery.c.id,
+                        isouter=True,
+                    )
+
+                    relevance_expression = (
+                        func.coalesce(vector_subquery.c.vector_relevance, 0)
+                        * vector_weight
+                        + func.coalesce(text_subquery.c.text_relevance, 0) * text_weight
+                    ).label("relevance")
+
+                    id_expression = func.coalesce(
+                        vector_subquery.c.id, text_subquery.c.id
+                    )
+
+                    search_subquery = (
+                        select(id_expression.label("id"), relevance_expression)
+                        .select_from(combined_join)
+                        .subquery()
+                    )
+                else:
+                    # Fallback to only text search
+                    search_subquery = select(
+                        text_subquery.c.id.label("id"),
+                        (text_subquery.c.text_relevance * text_weight).label(
+                            "relevance"
+                        ),
+                    ).subquery()
+
+            # Step 2: Build the base query with enhanced relevance
+            base_query = self.db.query(Document)
+
+            # Calculate enhanced relevance
+            enhanced_relevance, weights, query_analysis = (
+                self.relevance_service.calculate_enhanced_relevance(
+                    query=query,
+                    base_query=base_query,
+                    search_subquery=search_subquery,
+                    canonical_term=canonical_term,
+                    primary_category=primary_category,
+                )
+            )
+
+            # Build final query with enhanced relevance
+            final_query = self.db.query(Document, enhanced_relevance.label("relevance"))
+
+            # Join with search results if we have them
+            if search_subquery is not None:
+                final_query = final_query.join(
+                    search_subquery, Document.id == search_subquery.c.id
+                )
+                final_query = final_query.filter(search_subquery.c.relevance > 0)
+
+            # Apply filters
+            final_query = final_query.filter(
+                Document.status == DocumentStatus.COMPLETED
+            )
+            if primary_category:
+                final_query = final_query.join(Document.taxonomy_terms).filter(
+                    TaxonomyTerm.primary_category == primary_category
+                )
+            if subcategory:
+                final_query = final_query.join(Document.taxonomy_terms).filter(
+                    TaxonomyTerm.subcategory == subcategory
+                )
+            if canonical_term:
+                final_query = final_query.join(Document.taxonomy_terms).filter(
+                    TaxonomyTerm.term == canonical_term
+                )
+
+            # Get total count
+            total_count = final_query.with_entities(func.count(Document.id)).scalar()
+
+            # Apply sorting - always by relevance for enhanced search
+            final_query = final_query.order_by(desc("relevance"))
+
+            # Apply pagination
+            offset = (page - 1) * per_page
+            results = final_query.offset(offset).limit(per_page).all()
+
+            # Format documents for response
+            formatted_docs = []
+            for doc, relevance in results:
+                doc_dict = doc.to_dict(full_detail=False)
+                doc_dict["relevance"] = f"{relevance:.2f}" if relevance else "0.00"
+
+                # Add debug info about scoring if needed
+                if settings.debug:
+                    doc_dict["_debug_query_type"] = query_analysis.get(
+                        "type", "unknown"
+                    )
+                    doc_dict["_debug_weights"] = weights
+
+                formatted_docs.append(doc_dict)
+
+            pagination = self._create_pagination_info(page, per_page, total_count)
+            facets = await self._generate_enhanced_facets()
+
+            return {
+                "documents": formatted_docs,
+                "pagination": pagination,
+                "facets": facets,
+                "total_count": total_count,
+                "query": query,
+                "enhanced_relevance": True,
+                "query_analysis": query_analysis if settings.debug else None,
+                "weights_used": weights if settings.debug else None,
+            }
+
+        except Exception as e:
+            logger.error(f"Error in enhanced search: {str(e)}")
+            # Fallback to legacy search
+            return await self.search_legacy(
+                query=query,
+                page=page,
+                per_page=per_page,
+                primary_category=primary_category,
+                subcategory=subcategory,
+                canonical_term=canonical_term,
+                sort_by=sort_by,
+                sort_direction=sort_direction,
+            )
+
+    async def search_legacy(
+        self,
+        query: str = "",
+        page: int = 1,
+        per_page: int = 20,
+        primary_category: Optional[str] = None,
+        subcategory: Optional[str] = None,
+        canonical_term: Optional[str] = None,
+        sort_by: str = "relevance",
+        sort_direction: str = "desc",
+    ) -> Dict[str, Any]:
+        """
+        Legacy search with original relevance scoring (fallback)
         """
         from sqlalchemy import select, literal_column, union_all
 
@@ -272,7 +494,7 @@ class SearchService:
                         ),
                     ).subquery()
 
-            # 2. Build the final query, joining with search results if applicable
+            # Build the final query, joining with search results if applicable
             final_query = self.db.query(
                 Document,
                 (
@@ -305,10 +527,10 @@ class SearchService:
                     TaxonomyTerm.term == canonical_term
                 )
 
-            # 3. Get total count
+            # Get total count
             total_count = final_query.with_entities(func.count(Document.id)).scalar()
 
-            # 4. Apply sorting
+            # Apply sorting
             if sort_by == "relevance" and search_subquery is not None:
                 order_clause = desc("relevance")
             else:
@@ -322,11 +544,11 @@ class SearchService:
 
             final_query = final_query.order_by(order_clause)
 
-            # 5. Apply pagination
+            # Apply pagination
             offset = (page - 1) * per_page
             results = final_query.offset(offset).limit(per_page).all()
 
-            # 6. Format documents for response
+            # Format documents for response
             formatted_docs = []
             for doc, relevance in results:
                 doc_dict = doc.to_dict(full_detail=False)
@@ -342,10 +564,11 @@ class SearchService:
                 "facets": facets,
                 "total_count": total_count,
                 "query": query,
+                "enhanced_relevance": False,
             }
 
         except Exception as e:
-            logger.error(f"Error in optimized search: {str(e)}")
+            logger.error(f"Error in legacy search: {str(e)}")
             return {
                 "documents": [],
                 "pagination": {"page": 1, "per_page": per_page, "total": 0, "pages": 0},
