@@ -380,17 +380,52 @@ class SearchService:
             )
 
             if primary_category:
-                final_query = final_query.join(Document.taxonomy_terms).filter(
-                    TaxonomyTerm.primary_category == primary_category
+                # Filter using JSONB data directly to avoid dependency on relationship table
+                from sqlalchemy.dialects.postgresql import JSONB
+                from sqlalchemy import cast, text
+
+                primary_category_filter = text(
+                    """
+                    keywords @> :keyword_filter
+                """
+                ).bindparam(
+                    keyword_filter=cast(
+                        [{"mapped_primary_category": primary_category}], JSONB
+                    )
                 )
+
+                final_query = final_query.filter(primary_category_filter)
             if subcategory:
-                final_query = final_query.join(Document.taxonomy_terms).filter(
-                    TaxonomyTerm.subcategory == subcategory
+                # Filter using JSONB data directly to avoid dependency on relationship table
+                from sqlalchemy.dialects.postgresql import JSONB
+                from sqlalchemy import cast, text
+
+                subcategory_filter = text(
+                    """
+                    keywords @> :keyword_filter
+                """
+                ).bindparam(
+                    keyword_filter=cast([{"mapped_subcategory": subcategory}], JSONB)
                 )
+
+                final_query = final_query.filter(subcategory_filter)
             if canonical_term:
-                final_query = final_query.join(Document.taxonomy_terms).filter(
-                    TaxonomyTerm.term == canonical_term
+                # Filter using JSONB data directly to avoid dependency on relationship table
+                from sqlalchemy.dialects.postgresql import JSONB
+                from sqlalchemy import cast, text
+
+                # Use JSONB query to find documents with the canonical term in their keyword mappings
+                canonical_term_filter = text(
+                    """
+                    keywords @> :keyword_filter
+                """
+                ).bindparam(
+                    keyword_filter=cast(
+                        [{"mapped_canonical_term": canonical_term}], JSONB
+                    )
                 )
+
+                final_query = final_query.filter(canonical_term_filter)
 
             # Get total count
             total_count = final_query.with_entities(func.count(Document.id)).scalar()
@@ -569,17 +604,52 @@ class SearchService:
                 Document.status == DocumentStatus.COMPLETED
             )
             if primary_category:
-                final_query = final_query.join(Document.taxonomy_terms).filter(
-                    TaxonomyTerm.primary_category == primary_category
+                # Filter using JSONB data directly to avoid dependency on relationship table
+                from sqlalchemy.dialects.postgresql import JSONB
+                from sqlalchemy import cast, text
+
+                primary_category_filter = text(
+                    """
+                    keywords @> :keyword_filter
+                """
+                ).bindparam(
+                    keyword_filter=cast(
+                        [{"mapped_primary_category": primary_category}], JSONB
+                    )
                 )
+
+                final_query = final_query.filter(primary_category_filter)
             if subcategory:
-                final_query = final_query.join(Document.taxonomy_terms).filter(
-                    TaxonomyTerm.subcategory == subcategory
+                # Filter using JSONB data directly to avoid dependency on relationship table
+                from sqlalchemy.dialects.postgresql import JSONB
+                from sqlalchemy import cast, text
+
+                subcategory_filter = text(
+                    """
+                    keywords @> :keyword_filter
+                """
+                ).bindparam(
+                    keyword_filter=cast([{"mapped_subcategory": subcategory}], JSONB)
                 )
+
+                final_query = final_query.filter(subcategory_filter)
             if canonical_term:
-                final_query = final_query.join(Document.taxonomy_terms).filter(
-                    TaxonomyTerm.term == canonical_term
+                # Filter using JSONB data directly to avoid dependency on relationship table
+                from sqlalchemy.dialects.postgresql import JSONB
+                from sqlalchemy import cast, text
+
+                # Use JSONB query to find documents with the canonical term in their keyword mappings
+                canonical_term_filter = text(
+                    """
+                    keywords @> :keyword_filter
+                """
+                ).bindparam(
+                    keyword_filter=cast(
+                        [{"mapped_canonical_term": canonical_term}], JSONB
+                    )
                 )
+
+                final_query = final_query.filter(canonical_term_filter)
 
             # Get total count
             total_count = final_query.with_entities(func.count(Document.id)).scalar()
