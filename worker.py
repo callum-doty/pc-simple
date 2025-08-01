@@ -30,8 +30,6 @@ celery_app.conf.update(
     task_ignore_result=False,
     task_track_started=True,
     task_reject_on_worker_lost=True,
-    # Prevent duplicate tasks for same document
-    task_routes={"process_document_task": {"queue": "document_processing"}},
 )
 
 
