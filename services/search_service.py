@@ -111,9 +111,12 @@ class SearchService:
             )
 
             # Unnest keywords and perform aggregations
-            keyword_element = func.jsonb_array_elements(Document.keywords).alias(
-                "keyword_element"
-            )
+            keyword_element = func.jsonb_array_elements(
+                func.coalesce(
+                    Document.keywords.op("#>")("{keyword_mappings}"),
+                    cast("[]", JSONB),
+                )
+            ).alias("keyword_element")
 
             # Total mappings
             total_mappings_query = self.db.query(func.count()).select_from(
