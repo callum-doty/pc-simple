@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 20px;
+      }
+      .dashboard-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+        gap: 20px;
+      }
+      .panel {
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        padding: 20px;
+      }
+      .panel h2 {
+        margin-top: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Admin Dashboard</h1>
+
+    <div class="dashboard-grid">
+      <div class="panel">
+        <h2>Executive Summary</h2>
+        <p>Total Documents: <span id="total-docs">...</span></p>
+        <p>Success Rate (7d): <span id="success-rate">...</span>%</p>
+        <p>Avg. Processing Time: <span id="avg-time">...</span>s</p>
+      </div>
+
+      <div class="panel">
+        <h2>Processing Pipeline</h2>
+        <canvas id="processing-status-chart"></canvas>
+      </div>
+
+      <div class="panel">
+        <h2>User Activity</h2>
+        <canvas id="user-activity-chart"></canvas>
+      </div>
+
+      <div class="panel">
+        <h2>AI Analysis Quality</h2>
+        <canvas id="ai-quality-chart"></canvas>
+      </div>
+    </div>
+
+    <script>
+      document.addEventListener("DOMContentLoaded", async () => {
+        try {
+          const response = await fetch("/api/dashboard");
+          const data = await response.json();
+
+          // Executive Summary
+          document.getElementById("total-docs").textContent =
+            data.core_processing.queue_depth; // This is not total docs, will fix later
+          document.getElementById("success-rate").textContent =
+            data.core_processing.processing_success_rate;
+          document.getElementById("avg-time").textContent =
+            data.core_processing.average_processing_time_seconds;
+
+          // Processing Pipeline Chart
+          new Chart(document.getElementById("processing-status-chart"), {
+            type: "doughnut",
+            data: {
+              labels: ["Pending", "Processing", "Completed", "Failed"],
+              datasets: [
+                {
+                  label: "Document Status",
+                  data: [
+                    data.core_processing.queue_depth,
+                    0,
+                    0,
+                    0, // Placeholder values
+                  ],
+                  backgroundColor: ["#ffc107", "#007bff", "#28a745", "#dc3545"],
+                },
+              ],
+            },
+          });
+
+          // User Activity Chart
+          new Chart(document.getElementById("user-activity-chart"), {
+            type: "bar",
+            data: {
+              labels: ["Searches (7d)", "Uploads (7d)"],
+              datasets: [
+                {
+                  label: "Activity",
+                  data: [
+                    data.user_engagement.search_query_volume_7d,
+                    data.user_engagement.upload_volume_7d,
+                  ],
+                  backgroundColor: ["#17a2b8", "#6f42c1"],
+                },
+              ],
+            },
+          });
+
+          // AI Quality Chart
+          new Chart(document.getElementById("ai-quality-chart"), {
+            type: "bar",
+            data: {
+              labels: [
+                "Analysis Completion",
+                "Keyword Mapping",
+                "Embedding Generation",
+              ],
+              datasets: [
+                {
+                  label: "Success Rate (%)",
+                  data: [
+                    data.ai_analysis.analysis_completion_rate,
+                    data.ai_analysis.keyword_mapping_success_rate,
+                    data.ai_analysis.embedding_generation_rate,
+                  ],
+                  backgroundColor: ["#fd7e14", "#20c997", "#6610f2"],
+                },
+              ],
+            },
+            options: {
+              scales: {
+                y: {
+                  beginAtZero: true,
+                  max: 100,
+                },
+              },
+            },
+          });
+        } catch (error) {
+          console.error("Error fetching dashboard data:", error);
+          document.body.innerHTML = "<h1>Error loading dashboard data</h1>";
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -30,6 +30,7 @@ from services.search_service import SearchService
 from services.storage_service import StorageService
 from services.taxonomy_service import TaxonomyService
 from services.preview_service import PreviewService
+from api.dashboard import router as dashboard_router
 from worker import process_document_task
 from celery.result import AsyncResult
 from models.search_query import SearchQuery
@@ -91,6 +92,8 @@ app.add_middleware(
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+app.include_router(dashboard_router, prefix="/api", tags=["Dashboard"])
 
 # Mount files directory for serving uploaded documents
 if settings.storage_type == "local":
@@ -413,10 +416,10 @@ async def upload_page(request: Request):
 
 
 # Admin Interface
-@app.get("/admin", response_class=HTMLResponse)
+@app.get("/admin/dashboard", response_class=HTMLResponse)
 async def admin_page(request: Request):
     """Admin dashboard"""
-    return templates.TemplateResponse("admin.html", {"request": request})
+    return templates.TemplateResponse("admin/dashboard.html", {"request": request})
 
 
 # Taxonomy API Endpoints
