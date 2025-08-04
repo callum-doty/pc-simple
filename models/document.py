@@ -53,9 +53,7 @@ class Document(Base):
     # Content and analysis (JSON fields for flexibility)
     extracted_text = Column(Text, nullable=True)  # Raw extracted text
     ai_analysis = Column(JSONB, nullable=True)  # All AI analysis results
-    keywords = Column(
-        JSONB, nullable=True, index=True, postgresql_using="gin"
-    )  # Keywords and categories
+    keywords = Column(JSONB, nullable=True, index=True)  # Keywords and categories
     file_metadata = Column(JSONB, nullable=True)  # File metadata, page count, etc.
 
     # Search and embeddings
@@ -273,6 +271,7 @@ class Document(Base):
 
 
 # Add indexes for FTS and vector search
+Index("idx_documents_keywords", Document.keywords, postgresql_using="gin")
 Index(
     "idx_documents_ts_vector",
     Document.ts_vector,
