@@ -202,6 +202,7 @@ class SearchService:
         and relevance scoring.
         """
         from sqlalchemy import select, literal_column, union_all
+        from sqlalchemy.orm import undefer
 
         try:
             if query.strip():
@@ -327,7 +328,12 @@ class SearchService:
 
             # 5. Apply pagination
             offset = (page - 1) * per_page
-            results = final_query.offset(offset).limit(per_page).all()
+            results = (
+                final_query.options(undefer(Document.ai_analysis))
+                .offset(offset)
+                .limit(per_page)
+                .all()
+            )
 
             # 6. Format documents for response
             formatted_docs = []

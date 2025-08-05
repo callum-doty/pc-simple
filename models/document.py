@@ -13,7 +13,7 @@ from sqlalchemy import (
     Index,
     Computed,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, deferred
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -51,7 +51,9 @@ class Document(Base):
     processed_at = Column(DateTime(timezone=True), nullable=True)
 
     # Content and analysis (JSON fields for flexibility)
-    extracted_text = Column(Text, nullable=True)  # Raw extracted text
+    extracted_text = Column(
+        Text, nullable=True, info={"deferred": False}
+    )  # Raw extracted text
     ai_analysis = Column(JSONB, nullable=True)  # All AI analysis results
     keywords = Column(JSONB, nullable=True, index=True)  # Keywords and categories
     file_metadata = Column(JSONB, nullable=True)  # File metadata, page count, etc.
