@@ -20,27 +20,29 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "documents",
-        sa.Column(
-            "ts_vector",
-            sa.dialects.postgresql.TSVECTOR(),
-            sa.Computed(
-                "to_tsvector('english', coalesce(filename, '') || ' ' || coalesce(extracted_text, ''))",
-                persisted=True,
-            ),
-            nullable=True,
-        ),
-    )
-    op.create_index(
-        "idx_documents_ts_vector",
-        "documents",
-        ["ts_vector"],
-        unique=False,
-        postgresql_using="gin",
-    )
+    # op.add_column(
+    #     "documents",
+    #     sa.Column(
+    #         "ts_vector",
+    #         sa.dialects.postgresql.TSVECTOR(),
+    #         sa.Computed(
+    #             "to_tsvector('english', coalesce(filename, '') || ' ' || coalesce(extracted_text, ''))",
+    #             persisted=True,
+    #         ),
+    #         nullable=True,
+    #     ),
+    # )
+    # op.create_index(
+    #     "idx_documents_ts_vector",
+    #     "documents",
+    #     ["ts_vector"],
+    #     unique=False,
+    #     postgresql_using="gin",
+    # )
+    pass
 
 
 def downgrade() -> None:
-    op.drop_index("idx_documents_ts_vector", table_name="documents")
-    op.drop_column("documents", "ts_vector")
+    # op.drop_index("idx_documents_ts_vector", table_name="documents")
+    # op.drop_column("documents", "ts_vector")
+    pass
