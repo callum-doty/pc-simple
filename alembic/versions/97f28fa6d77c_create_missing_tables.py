@@ -41,8 +41,8 @@ def upgrade() -> None:
         sa.Column("synonym", sa.VARCHAR(length=255), nullable=False),
         sa.Column(
             "created_at",
-            sa.DATETIME(),
-            server_default=sa.text("(CURRENT_TIMESTAMP)"),
+            sa.TIMESTAMP(),
+            server_default=sa.text("now()"),
             nullable=True,
         ),
         sa.ForeignKeyConstraint(
@@ -66,8 +66,8 @@ def upgrade() -> None:
         sa.Column("description", sa.TEXT(), nullable=True),
         sa.Column(
             "created_at",
-            sa.DATETIME(),
-            server_default=sa.text("(CURRENT_TIMESTAMP)"),
+            sa.TIMESTAMP(),
+            server_default=sa.text("now()"),
             nullable=True,
         ),
         sa.Column("parent_id", sa.INTEGER(), nullable=True),
