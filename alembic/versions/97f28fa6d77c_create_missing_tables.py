@@ -50,6 +50,7 @@ def upgrade() -> None:
             ["taxonomy_terms.id"],
         ),
         sa.PrimaryKeyConstraint("id"),
+        if_not_exists=True,
     )
     op.create_index(
         "ix_taxonomy_synonyms_synonym", "taxonomy_synonyms", ["synonym"], unique=False
@@ -76,6 +77,7 @@ def upgrade() -> None:
             ["taxonomy_terms.id"],
         ),
         sa.PrimaryKeyConstraint("id"),
+        if_not_exists=True,
     )
     op.create_index("ix_taxonomy_terms_term", "taxonomy_terms", ["term"], unique=False)
     op.create_index(
