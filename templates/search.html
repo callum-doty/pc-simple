@@ -402,6 +402,7 @@ endblock %} {% block content %}
 
       // Create document card
       function createDocumentCard(doc) {
+        console.log("Document data:", doc);
         const template = $("#documentCardTemplate").html();
         const card = $(template);
 
