@@ -87,7 +87,7 @@ class SearchService:
             results = base_query.order_by(desc(Document.created_at)).limit(limit).all()
 
             # Format documents for response
-            formatted_docs = [doc.to_dict(full_detail=False) for doc in results]
+            formatted_docs = [doc.to_dict(full_detail=True) for doc in results]
             return formatted_docs
 
         except Exception as e:

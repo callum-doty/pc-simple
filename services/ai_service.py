@@ -1054,6 +1054,22 @@ class AIService:
                 analysis_result = await self._call_anthropic_api_with_system(
                     prompt_data["system"], enhanced_prompt
                 )
+                # Normalize the analysis result to ensure a consistent structure
+                if "document_analysis" not in analysis_result:
+                    analysis_result["document_analysis"] = {
+                        "summary": analysis_result.get(
+                            "summary", "No summary available"
+                        ),
+                        "document_type": analysis_result.get(
+                            "document_type", "unknown"
+                        ),
+                        "campaign_type": analysis_result.get(
+                            "campaign_type", "unknown"
+                        ),
+                        "document_tone": analysis_result.get(
+                            "document_tone", "neutral"
+                        ),
+                    }
             else:
                 # For simplicity, this example only implements the 'unified' chunk analysis
                 logger.warning(
