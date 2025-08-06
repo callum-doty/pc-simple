@@ -436,22 +436,7 @@ endblock %} {% block content %}
         }
 
         const keywordsContainer = card.find(".keywords");
-        if (
-          doc.ai_analysis?.keyword_mappings &&
-          doc.ai_analysis.keyword_mappings.length > 0
-        ) {
-          doc.ai_analysis.keyword_mappings.forEach((mapping) => {
-            if (mapping.verbatim_term && mapping.mapped_canonical_term) {
-              keywordsContainer.append(
-                `<span class="badge bg-secondary keyword-badge me-1 mb-1">${mapping.verbatim_term} <i class="fas fa-long-arrow-alt-right mx-1"></i> ${mapping.mapped_canonical_term}</span>`
-              );
-            } else if (mapping.verbatim_term) {
-              keywordsContainer.append(
-                `<span class="badge bg-light text-dark keyword-badge me-1 mb-1">${mapping.verbatim_term}</span>`
-              );
-            }
-          });
-        }
+        keywordsContainer.empty(); // Clear any previous content
 
         // Add extra info
         const extraInfoContainer = card.find(".extra-info");
@@ -518,9 +503,21 @@ endblock %} {% block content %}
         // Add canonical terms
         if (doc.canonical_terms && doc.canonical_terms.length > 0) {
           doc.canonical_terms.forEach((term) => {
-            keywordsContainer.append(`
-                        <span class="badge bg-info keyword-badge me-1">${term}</span>
-                    `);
+            keywordsContainer.append(
+              `<span class="badge bg-info keyword-badge me-1 mb-1">${term}</span>`
+            );
+          });
+        } else {
+          keywordsContainer.append(
+            '<p class="text-muted small mb-0">No canonical terms found.</p>'
+          );
+        }
+
+        // Initialize collapse functionality for the new card
+        const collapseElement = card.find(".collapse")[0];
+        if (collapseElement) {
+          new bootstrap.Collapse(collapseElement, {
+            toggle: false,
           });
         }
 
