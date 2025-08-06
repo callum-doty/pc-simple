@@ -28,4 +28,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        op.execute("DROP EXTENSION IF EXISTS vector;")
+        op.execute("DROP EXTENSION IF EXISTS vector CASCADE;")
