@@ -329,7 +329,9 @@ class SearchService:
             # 5. Apply pagination
             offset = (page - 1) * per_page
             results = (
-                final_query.options(undefer(Document.ai_analysis))
+                final_query.options(
+                    undefer(Document.ai_analysis), undefer(Document.search_vector)
+                )
                 .offset(offset)
                 .limit(per_page)
                 .all()
