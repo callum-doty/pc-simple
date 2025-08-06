@@ -60,7 +60,7 @@ class Document(Base):
 
     # Search and embeddings
     search_content = Column(Text, nullable=True)
-    search_vector = Column(Vector(3072), nullable=True)
+    search_vector = Column(Vector(1536), nullable=True)
     ts_vector = Column(
         TSVECTOR,
         Computed(

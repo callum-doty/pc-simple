@@ -21,7 +21,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("documents", sa.Column("search_vector", Vector(3072), nullable=True))
+    op.add_column("documents", sa.Column("search_vector", Vector(1536), nullable=True))
     op.create_index(
         "idx_documents_search_vector",
         "documents",
