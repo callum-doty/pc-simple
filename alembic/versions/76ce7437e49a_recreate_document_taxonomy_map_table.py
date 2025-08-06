@@ -54,11 +54,6 @@ def downgrade() -> None:
             ["documents.id"],
             name="document_taxonomy_map_document_id_fkey",
         ),
-        sa.ForeignKeyConstraint(
-            ["taxonomy_id"],
-            ["taxonomies.id"],
-            name="document_taxonomy_map_taxonomy_id_fkey",
-        ),
         sa.PrimaryKeyConstraint(
             "document_id",
             "taxonomy_id",
