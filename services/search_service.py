@@ -338,7 +338,7 @@ class SearchService:
             # 6. Format documents for response
             formatted_docs = []
             for doc, relevance in results:
-                doc_dict = doc.to_dict(full_detail=False)
+                doc_dict = doc.to_dict(full_detail=True)
                 doc_dict["relevance"] = f"{relevance:.2f}" if relevance else "0.00"
                 formatted_docs.append(doc_dict)
 
