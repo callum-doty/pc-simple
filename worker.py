@@ -139,12 +139,9 @@ def _process_document_holistically(
     if not analysis_result:
         raise ValueError("AI analysis failed")
 
-    keywords, categories = ai_service._extract_keywords_from_analysis(
-        analysis_result.get("ai_analysis", {})
-    )
-    mappings = ai_service._extract_mappings_from_analysis(
-        analysis_result.get("ai_analysis", {})
-    )
+    ai_analysis = analysis_result.get("ai_analysis", {})
+    keywords, categories = ai_service._extract_keywords_from_analysis(ai_analysis)
+    mappings = ai_service._extract_mappings_from_analysis(ai_analysis)
 
     document_service.update_document_content_sync(
         document_id,

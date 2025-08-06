@@ -137,7 +137,20 @@ class AIService:
                     analysis_type, extracted_text, file_content, file_type, filename
                 )
 
-            # Step 4: Extract keywords and categories
+            # Step 4: Validate keyword mappings and re-extract keywords/categories
+            mappings = self._extract_mappings_from_analysis(ai_analysis)
+            validated_mappings = await self._validate_keyword_mappings(mappings)
+
+            # Update the analysis with validated mappings
+            if "keyword_mappings" in ai_analysis:
+                ai_analysis["keyword_mappings"] = validated_mappings
+            if "taxonomy_keywords" in ai_analysis and isinstance(
+                ai_analysis.get("taxonomy_keywords"), dict
+            ):
+                ai_analysis["taxonomy_keywords"][
+                    "keyword_mappings"
+                ] = validated_mappings
+
             keywords, categories = self._extract_keywords_from_analysis(ai_analysis)
 
             # Step 5: Consolidate results
@@ -975,7 +988,7 @@ class AIService:
         try:
             if self.ai_provider == "openai" and self.openai_client:
                 response = self.openai_client.embeddings.create(
-                    model="text-embedding-3-large",
+                    model="text-embedding-3-small",
                     input=text,
                 )
                 return response.data[0].embedding
@@ -1054,6 +1067,13 @@ class AIService:
                 analysis_result = await self._call_anthropic_api_with_system(
                     prompt_data["system"], enhanced_prompt
                 )
+
+                # Validate keyword mappings
+                mappings = self._extract_mappings_from_analysis(analysis_result)
+                validated_mappings = await self._validate_keyword_mappings(mappings)
+                if "keyword_mappings" in analysis_result:
+                    analysis_result["keyword_mappings"] = validated_mappings
+
                 # Normalize the analysis result to ensure a consistent structure
                 if "document_analysis" not in analysis_result:
                     analysis_result["document_analysis"] = {
