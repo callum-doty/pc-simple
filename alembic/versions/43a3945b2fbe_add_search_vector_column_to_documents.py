@@ -29,6 +29,7 @@ def upgrade() -> None:
         unique=False,
         postgresql_using="hnsw",
         postgresql_with={"m": 16, "ef_construction": 64},
+        postgresql_ops={"search_vector": "vector_cosine_ops"},
     )
 
 
