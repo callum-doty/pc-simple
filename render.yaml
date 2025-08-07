@@ -16,7 +16,7 @@ services:
     name: document-catalog-app
     env: python
     region: oregon
-    plan: pro
+    plan: standard
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
@@ -63,7 +63,7 @@ services:
     name: celery-worker
     env: python
     region: oregon
-    plan: pro
+    plan: standard
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt

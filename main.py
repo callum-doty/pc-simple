@@ -14,9 +14,13 @@ from fastapi import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 import os
 from typing import List, Optional
 import logging
@@ -80,6 +84,14 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan,
 )
+
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address, default_limits=["1000/hour"])
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Add rate limiting middleware
+app.add_middleware(SlowAPIMiddleware)
 
 # Add CORS middleware
 app.add_middleware(
@@ -185,7 +197,9 @@ async def health_check():
 
 # Document Upload
 @app.post("/api/documents/upload")
+@limiter.limit("10/minute")
 async def upload_documents(
+    request: Request,
     files: List[UploadFile] = File(...),
     document_service: DocumentService = Depends(get_document_service),
     storage_service: StorageService = Depends(get_storage_service),
@@ -227,7 +241,9 @@ async def upload_documents(
 
 # Document Search
 @app.get("/api/documents/search")
+@limiter.limit("30/minute")
 async def search_documents(
+    request: Request,
     q: str = "",
     page: int = 1,
     per_page: int = 20,

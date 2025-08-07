@@ -13,6 +13,9 @@ psycopg2-binary==2.9.9
 # Pydantic settings
 pydantic-settings==2.0.3
 
+# Rate Limiting
+slowapi==0.1.9
+
 # Task Queue
 celery==5.3.6
 redis==5.0.1
