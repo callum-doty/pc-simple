@@ -278,29 +278,62 @@ endblock %} {% block content %}
       });
 
       // Handle search input for filters
-      $("#filterSearch").on("keyup", function () {
-        const searchText = $(this).val().toLowerCase();
-        $("#canonicalTermAccordion .accordion-item").each(function () {
-          let categoryVisible = false;
-          $(this)
-            .find(".btn")
-            .each(function () {
-              const term = $(this).data("term").toLowerCase();
-              if (term.includes(searchText)) {
-                $(this).show();
-                categoryVisible = true;
-              } else {
-                $(this).hide();
-              }
-            });
-
-          if (categoryVisible) {
-            $(this).show();
+      $("#filterSearch").on(
+        "keyup",
+        debounce(function () {
+          const searchText = $(this).val().toLowerCase();
+          if (searchText.length > 2) {
+            fetch(`/api/taxonomy/search?q=${searchText}`)
+              .then((response) => response.json())
+              .then((data) => {
+                if (data.success && data.terms) {
+                  updateCanonicalTermFilters(data.terms);
+                }
+              });
           } else {
-            $(this).hide();
+            loadCanonicalTermFilters();
           }
-        });
-      });
+        }, 300)
+      );
+
+      function updateCanonicalTermFilters(terms) {
+        const accordion = $("#canonicalTermAccordion");
+        accordion.empty();
+        const sanitizeForId = (text) => text.replace(/[^a-zA-Z0-9]/g, "-");
+
+        const groupedTerms = terms.reduce((acc, term) => {
+          const category = term.primary_category;
+          if (!acc[category]) {
+            acc[category] = [];
+          }
+          acc[category].push(term.term);
+          return acc;
+        }, {});
+
+        for (const [category, termList] of Object.entries(groupedTerms)) {
+          const categoryId = sanitizeForId(category);
+          const accordionItem = $(`
+        <div class="accordion-item">
+          <h2 class="accordion-header" id="heading-${categoryId}">
+            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-${categoryId}" aria-expanded="true" aria-controls="collapse-${categoryId}">
+              ${category}
+            </button>
+          </h2>
+          <div id="collapse-${categoryId}" class="accordion-collapse collapse show" aria-labelledby="heading-${categoryId}" data-bs-parent="#canonicalTermAccordion">
+            <div class="accordion-body d-flex flex-wrap gap-2">
+              ${termList
+                .map(
+                  (term) =>
+                    `<button type="button" class="btn btn-outline-secondary btn-sm" data-term="${term}">${term}</button>`
+                )
+                .join("")}
+            </div>
+          </div>
+        </div>
+      `);
+          accordion.append(accordionItem);
+        }
+      }
 
       $("#sortBy, #sortDirection").on("change", function () {
         performSearch(true);
