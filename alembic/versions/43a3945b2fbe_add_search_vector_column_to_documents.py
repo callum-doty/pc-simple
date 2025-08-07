@@ -1,7 +1,7 @@
 """add_search_vector_column_to_documents
 
 Revision ID: 43a3945b2fbe
-Revises: a4fb095d8669
+Revises: 72c808426f98
 Create Date: 2025-08-06 14:35:50.631999
 
 """
@@ -15,7 +15,7 @@ from pgvector.sqlalchemy import Vector
 
 # revision identifiers, used by Alembic.
 revision: str = "43a3945b2fbe"
-down_revision: Union[str, None] = "a4fb095d8669"
+down_revision: Union[str, None] = "72c808426f98"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
