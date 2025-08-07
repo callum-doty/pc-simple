@@ -31,7 +31,6 @@ from services.storage_service import StorageService
 from services.taxonomy_service import TaxonomyService
 from services.preview_service import PreviewService
 from api.dashboard import router as dashboard_router
-from api.taxonomy import router as taxonomy_router
 from worker import process_document_task
 from celery.result import AsyncResult
 from models.search_query import SearchQuery
@@ -95,7 +94,6 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 app.include_router(dashboard_router, prefix="/api", tags=["Dashboard"])
-app.include_router(taxonomy_router, prefix="/api", tags=["Taxonomy"])
 
 # Mount files directory for serving uploaded documents
 if settings.storage_type == "local":
@@ -478,6 +476,34 @@ async def get_filter_taxonomy(
         return {"success": True, "data": filter_data}
     except Exception as e:
         logger.error(f"Filter taxonomy data error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/taxonomy/canonical-terms")
+async def get_canonical_terms(
+    taxonomy_service: TaxonomyService = Depends(get_taxonomy_service),
+):
+    """Get a flat list of all canonical terms"""
+    try:
+        terms = await taxonomy_service.get_all_canonical_terms()
+        return {"success": True, "terms": terms}
+    except Exception as e:
+        logger.error(f"Error getting canonical terms: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+
+@app.get("/api/taxonomy/search")
+async def search_taxonomy_terms(
+    q: str,
+    taxonomy_service: TaxonomyService = Depends(get_taxonomy_service),
+):
+    """Search taxonomy terms"""
+    try:
+        terms = await taxonomy_service.search_terms(q)
+        return {"success": True, "terms": terms}
+
+    except Exception as e:
+        logger.error(f"Taxonomy search error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
