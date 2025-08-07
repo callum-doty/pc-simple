@@ -229,11 +229,14 @@ class Document(Base):
             if mapping.get("mapped_canonical_term")
         ]
 
-    def to_dict(self, full_detail: bool = False) -> Dict[str, Any]:
+    def to_dict(
+        self, full_detail: bool = False, include_heavy_fields: bool = False
+    ) -> Dict[str, Any]:
         """
         Convert document to dictionary for API responses.
         - `full_detail=False`: Returns a summary view for search results.
         - `full_detail=True`: Returns the complete document object.
+        - `include_heavy_fields`: Whether to include heavyweight fields like `extracted_text` and `ai_analysis`.
         """
         data = {
             "id": self.id,
@@ -259,8 +262,6 @@ class Document(Base):
                     "processed_at": (
                         self.processed_at.isoformat() if self.processed_at else None
                     ),
-                    "extracted_text": self.extracted_text,
-                    "ai_analysis": self.ai_analysis,
                     "keywords": self.keywords,
                     "metadata": self.file_metadata,
                     "processing_error": self.processing_error,
@@ -269,6 +270,11 @@ class Document(Base):
                     "keyword_mappings": self.get_keyword_mappings(),
                 }
             )
+
+        if include_heavy_fields:
+            data["extracted_text"] = self.extracted_text
+            data["ai_analysis"] = self.ai_analysis
+
         return data
 
 

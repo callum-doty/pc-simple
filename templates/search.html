@@ -29,11 +29,19 @@ endblock %} {% block content %}
     </div>
 
     <!-- Search Results -->
-    <div
-      id="searchResults"
-      class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4"
-    >
-      <!-- Document cards will be inserted here -->
+    <div id="searchResultsContainer" style="height: 80vh; overflow-y: auto">
+      <div
+        id="s"
+        style="position: relative; overflow: hidden; width: 100%; height: 100%"
+      >
+        <div
+          id="searchResults"
+          class="row row-cols-1 g-4"
+          style="position: absolute; top: 0; left: 0; right: 0; bottom: 0"
+        >
+          <!-- Document cards will be inserted here -->
+        </div>
+      </div>
     </div>
     <div id="sentinel" style="height: 1px"></div>
 
@@ -189,8 +197,15 @@ endblock %} {% block content %}
       let isLoading = false;
       let hasMore = true;
       let currentSearchQuery = "";
+      let allDocuments = [];
+      let visibleNodes = {};
+      const ITEM_HEIGHT = 450; // Approximate height of a card
 
-      const searchResultsContainer = document.getElementById("searchResults");
+      const searchResultsContainer = document.getElementById(
+        "searchResultsContainer"
+      );
+      const sizer = document.getElementById("s");
+      const searchResults = document.getElementById("searchResults");
       const loadingSpinner = document.getElementById("loadingSpinner");
       const sentinel = document.getElementById("sentinel");
 
@@ -252,22 +267,22 @@ endblock %} {% block content %}
           const accordionItem = document.createElement("div");
           accordionItem.className = "accordion-item";
           accordionItem.innerHTML = `
-            <h2 class="accordion-header" id="heading-${categoryId}">
-              <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-${categoryId}" aria-expanded="false" aria-controls="collapse-${categoryId}">
-                ${category}
-              </button>
-            </h2>
-            <div id="collapse-${categoryId}" class="accordion-collapse collapse" aria-labelledby="heading-${categoryId}" data-bs-parent="#canonicalTermAccordion">
-              <div class="accordion-body d-flex flex-wrap gap-2">
-                ${termList
-                  .map(
-                    (term) =>
-                      `<button type="button" class="btn btn-outline-secondary btn-sm" data-term="${term}">${term}</button>`
-                  )
-                  .join("")}
-              </div>
-            </div>
-          `;
+                    <h2 class="accordion-header" id="heading-${categoryId}">
+                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-${categoryId}" aria-expanded="false" aria-controls="collapse-${categoryId}">
+                            ${category}
+                        </button>
+                    </h2>
+                    <div id="collapse-${categoryId}" class="accordion-collapse collapse" aria-labelledby="heading-${categoryId}" data-bs-parent="#canonicalTermAccordion">
+                        <div class="accordion-body d-flex flex-wrap gap-2">
+                            ${termList
+                              .map(
+                                (term) =>
+                                  `<button type="button" class="btn btn-outline-secondary btn-sm" data-term="${term}">${term}</button>`
+                              )
+                              .join("")}
+                        </div>
+                    </div>
+                `;
           accordion.appendChild(accordionItem);
         }
       }
@@ -345,7 +360,9 @@ endblock %} {% block content %}
         if (isNewSearch) {
           currentPage = 1;
           hasMore = true;
-          searchResultsContainer.innerHTML = "";
+          allDocuments = [];
+          visibleNodes = {};
+          searchResults.innerHTML = "";
           currentSearchQuery = query;
         }
 
@@ -357,7 +374,7 @@ endblock %} {% block content %}
         const params = new URLSearchParams({
           q: query,
           page: currentPage,
-          per_page: 12,
+          per_page: 50, // Fetch more items at once
           sort_by: sortBy,
           sort_direction: sortDirection,
         });
@@ -369,7 +386,17 @@ endblock %} {% block content %}
         fetch(`/api/documents/search?${params}`)
           .then((response) => response.json())
           .then((data) => {
-            displaySearchResults(data, isNewSearch);
+            if (data.documents && data.documents.length > 0) {
+              allDocuments.push(...data.documents);
+              renderVisibleItems();
+            } else if (isNewSearch) {
+              searchResults.innerHTML = `
+                            <div class="text-center py-5">
+                                <i class="fas fa-search fa-3x text-muted mb-3"></i>
+                                <h5 class="text-muted">No documents found</h5>
+                                <p class="text-muted">Try adjusting your search terms or filters.</p>
+                            </div>`;
+            }
             updateStats(data);
             hasMore = data.pagination.has_next;
             if (hasMore) {
@@ -386,25 +413,40 @@ endblock %} {% block content %}
           });
       }
 
-      function displaySearchResults(data, isNewSearch) {
-        if (isNewSearch) {
-          searchResultsContainer.innerHTML = "";
+      function renderVisibleItems() {
+        const scrollTop = searchResultsContainer.scrollTop;
+        const containerHeight = searchResultsContainer.clientHeight;
+
+        const startIndex = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - 5);
+        const endIndex = Math.min(
+          allDocuments.length,
+          Math.ceil((scrollTop + containerHeight) / ITEM_HEIGHT) + 5
+        );
+
+        const newVisibleNodes = {};
+
+        for (let i = startIndex; i < endIndex; i++) {
+          const doc = allDocuments[i];
+          if (visibleNodes[doc.id]) {
+            newVisibleNodes[doc.id] = visibleNodes[doc.id];
+            delete visibleNodes[doc.id];
+          } else {
+            const card = createDocumentCard(doc);
+            card.style.position = "absolute";
+            card.style.top = `${i * ITEM_HEIGHT}px`;
+            card.style.width = "100%";
+            searchResults.appendChild(card);
+            newVisibleNodes[doc.id] = card;
+          }
         }
 
-        if (data.documents && data.documents.length > 0) {
-          data.documents.forEach((doc) => {
-            const card = createDocumentCard(doc);
-            searchResultsContainer.appendChild(card);
-          });
-        } else if (isNewSearch) {
-          searchResultsContainer.innerHTML = `
-            <div class="text-center py-5">
-                <i class="fas fa-search fa-3x text-muted mb-3"></i>
-                <h5 class="text-muted">No documents found</h5>
-                <p class="text-muted">Try adjusting your search terms or filters.</p>
-            </div>
-          `;
+        // Remove nodes that are no longer visible
+        for (const id in visibleNodes) {
+          visibleNodes[id].remove();
         }
+
+        visibleNodes = newVisibleNodes;
+        sizer.style.height = `${allDocuments.length * ITEM_HEIGHT}px`;
       }
 
       function createDocumentCard(doc) {
@@ -503,7 +545,9 @@ endblock %} {% block content %}
             '<p class="text-muted small mb-0">No canonical terms found.</p>';
         }
 
-        new bootstrap.Collapse(collapse, { toggle: false });
+        new bootstrap.Collapse(collapse, {
+          toggle: false,
+        });
 
         return card;
       }
@@ -514,12 +558,12 @@ endblock %} {% block content %}
       }
 
       function showError(message) {
-        searchResultsContainer.innerHTML = `
-          <div class="alert alert-danger">
-              <i class="fas fa-exclamation-triangle me-2"></i>
-              ${message}
-          </div>
-        `;
+        searchResults.innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    ${message}
+                </div>
+            `;
       }
 
       fetch("/api/stats")
@@ -540,9 +584,13 @@ endblock %} {% block content %}
             performSearch(false);
           }
         },
-        { threshold: 1.0 }
+        {
+          threshold: 1.0,
+        }
       );
       observer.observe(sentinel);
+
+      searchResultsContainer.addEventListener("scroll", renderVisibleItems);
 
       performSearch(true);
       loadCanonicalTermFilters();

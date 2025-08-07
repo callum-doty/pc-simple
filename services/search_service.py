@@ -16,6 +16,8 @@ from config import get_settings
 from services.preview_service import PreviewService
 from services.ai_service import AIService
 import datetime
+import redis
+import json
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -28,6 +30,18 @@ class SearchService:
         self.db = db
         self.preview_service = preview_service
         self.ai_service = AIService(db=self.db)
+        try:
+            if settings.REDIS_URL:
+                self.redis_client = redis.from_url(
+                    settings.REDIS_URL, decode_responses=True
+                )
+                self.redis_client.ping()
+                logger.info("Redis cache connected successfully.")
+            else:
+                self.redis_client = None
+        except redis.exceptions.ConnectionError as e:
+            logger.error(f"Could not connect to Redis: {e}")
+            self.redis_client = None
 
     def _create_pagination_info(
         self, page: int, per_page: int, total_count: int
@@ -87,7 +101,7 @@ class SearchService:
             results = base_query.order_by(desc(Document.created_at)).limit(limit).all()
 
             # Format documents for response
-            formatted_docs = [doc.to_dict(full_detail=True) for doc in results]
+            formatted_docs = [doc.to_dict(full_detail=False) for doc in results]
             return formatted_docs
 
         except Exception as e:
@@ -201,6 +215,16 @@ class SearchService:
         Optimized search with hybrid text and vector search, hierarchical taxonomy filtering,
         and relevance scoring.
         """
+        cache_key = f"search:{query}:{page}:{per_page}:{primary_category}:{subcategory}:{canonical_term}:{sort_by}:{sort_direction}"
+        if self.redis_client:
+            try:
+                cached_result = self.redis_client.get(cache_key)
+                if cached_result:
+                    logger.info(f"Cache HIT for key: {cache_key}")
+                    return json.loads(cached_result)
+                logger.info(f"Cache MISS for key: {cache_key}")
+            except redis.exceptions.RedisError as e:
+                logger.error(f"Redis GET error: {e}")
         from sqlalchemy import select, literal_column, union_all
         from sqlalchemy.orm import undefer
 
@@ -340,20 +364,30 @@ class SearchService:
             # 6. Format documents for response
             formatted_docs = []
             for doc, relevance in results:
-                doc_dict = doc.to_dict(full_detail=True)
+                doc_dict = doc.to_dict(full_detail=False)
                 doc_dict["relevance"] = f"{relevance:.2f}" if relevance else "0.00"
                 formatted_docs.append(doc_dict)
 
             pagination = self._create_pagination_info(page, per_page, total_count)
             facets = await self._generate_enhanced_facets()
 
-            return {
+            result = {
                 "documents": formatted_docs,
                 "pagination": pagination,
                 "facets": facets,
                 "total_count": total_count,
                 "query": query,
             }
+
+            if self.redis_client:
+                try:
+                    self.redis_client.set(
+                        cache_key, json.dumps(result, default=str), ex=3600
+                    )  # Cache for 1 hour
+                except redis.exceptions.RedisError as e:
+                    logger.error(f"Redis SET error: {e}")
+
+            return result
 
         except Exception as e:
             logger.error(f"Error in optimized search: {str(e)}")
