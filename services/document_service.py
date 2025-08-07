@@ -26,13 +26,13 @@ class DocumentService:
     async def create_document(
         self, filename: str, file_path: str, file_size: int, **metadata
     ) -> Document:
-        """Create a new document record"""
+        """Create a new document record and queue it for processing."""
         try:
             document = Document(
                 filename=filename,
                 file_path=file_path,
                 file_size=file_size,
-                status=DocumentStatus.PENDING,
+                status=DocumentStatus.QUEUED,  # Set status to QUEUED
             )
 
             # Set metadata if provided
@@ -43,15 +43,7 @@ class DocumentService:
             self.db.commit()
             self.db.refresh(document)
 
-            # Trigger background processing
-            if settings.environment != "testing":
-                from worker import process_document_task
-
-                process_document_task.delay(document.id)
-
-            logger.info(
-                f"Created document: {filename} (ID: {document.id}) and triggered processing"
-            )
+            logger.info(f"Created and queued document: {filename} (ID: {document.id})")
             return document
 
         except Exception as e:

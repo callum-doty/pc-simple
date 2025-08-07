@@ -26,6 +26,12 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    beat_schedule={
+        "enqueue-documents-every-two-minutes": {
+            "task": "worker.enqueue_documents_task",
+            "schedule": 120.0,  # 2 minutes
+        },
+    },
 )
 
 
@@ -163,6 +169,24 @@ def _process_document_holistically(
 
 
 from database import get_db
+from services.scheduler_service import SchedulerService
+
+
+@celery_app.task(name="enqueue_documents_task")
+def enqueue_documents_task():
+    """
+    Celery task to find and enqueue documents that are ready for processing.
+    """
+    db = next(get_db())
+    scheduler_service = SchedulerService(db)
+    try:
+        logger.info("Running scheduled task to enqueue documents.")
+        scheduler_service.enqueue_pending_documents()
+        logger.info("Finished scheduled task to enqueue documents.")
+    except Exception as e:
+        logger.error(f"Error in scheduled task enqueue_documents_task: {e}")
+    finally:
+        db.close()
 
 
 @celery_app.task(name="process_document_task")

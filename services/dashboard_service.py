@@ -193,3 +193,59 @@ class DashboardService:
         except Exception as e:
             logger.error(f"Error calculating user engagement metrics: {e}")
             return {}
+
+    async def get_queue_health_data(self) -> dict:
+        """
+        Gathers all data for the queue health dashboard.
+        """
+        try:
+            status_counts = (
+                self.db.query(Document.status, func.count(Document.status))
+                .group_by(Document.status)
+                .all()
+            )
+
+            # Convert to a dictionary for easier access
+            status_map = dict(status_counts)
+
+            # Get counts for each status, defaulting to 0
+            queued_count = status_map.get(DocumentStatus.QUEUED, 0)
+            pending_count = status_map.get(DocumentStatus.PENDING, 0)
+            processing_count = status_map.get(DocumentStatus.PROCESSING, 0)
+            failed_count = status_map.get(DocumentStatus.FAILED, 0)
+            completed_count = status_map.get(DocumentStatus.COMPLETED, 0)
+
+            # Get the oldest queued document
+            oldest_queued_doc = (
+                self.db.query(Document)
+                .filter(Document.status == DocumentStatus.QUEUED)
+                .order_by(Document.created_at.asc())
+                .first()
+            )
+
+            oldest_queued_time = None
+            if oldest_queued_doc:
+                oldest_queued_time = (
+                    datetime.utcnow() - oldest_queued_doc.created_at
+                ).total_seconds()
+
+            return {
+                "queued": queued_count,
+                "pending": pending_count,
+                "processing": processing_count,
+                "failed": failed_count,
+                "completed": completed_count,
+                "total": sum(
+                    [
+                        queued_count,
+                        pending_count,
+                        processing_count,
+                        failed_count,
+                        completed_count,
+                    ]
+                ),
+                "oldest_queued_seconds": oldest_queued_time,
+            }
+        except Exception as e:
+            logger.error(f"Error calculating queue health data: {e}")
+            return {}

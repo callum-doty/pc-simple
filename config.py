@@ -43,6 +43,7 @@ class Settings(BaseSettings):
 
     # Processing settings
     max_concurrent_processing: int = 3
+    max_concurrent_document_processing: int = 3
     processing_timeout: int = 300  # 5 minutes
 
     # Render-specific settings
