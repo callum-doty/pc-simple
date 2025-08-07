@@ -458,3 +458,28 @@ class TaxonomyService:
         except Exception as e:
             logger.error(f"Error getting all canonical terms: {str(e)}")
             return {}
+
+    async def search_canonical_terms(self, search_query: str) -> Dict[str, List[str]]:
+        """Search for canonical terms and return them grouped by primary category."""
+        try:
+            if not search_query:
+                return await self.get_all_canonical_terms()
+
+            query = self.db.query(
+                TaxonomyTerm.primary_category, TaxonomyTerm.term
+            ).filter(TaxonomyTerm.term.ilike(f"%{search_query}%"))
+
+            terms = query.order_by(
+                TaxonomyTerm.primary_category, TaxonomyTerm.term
+            ).all()
+
+            grouped_terms = {}
+            for primary_category, term in terms:
+                if primary_category not in grouped_terms:
+                    grouped_terms[primary_category] = []
+                grouped_terms[primary_category].append(term)
+
+            return grouped_terms
+        except Exception as e:
+            logger.error(f"Error searching canonical terms: {str(e)}")
+            return {}

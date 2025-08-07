@@ -212,8 +212,13 @@ endblock %} {% block content %}
       }
 
       // Fetch canonical terms for filter accordion
-      function loadCanonicalTermFilters() {
-        fetch("/api/taxonomy/canonical-terms")
+      function loadCanonicalTermFilters(searchTerm = "") {
+        const params = new URLSearchParams();
+        if (searchTerm) {
+          params.append("q", searchTerm);
+        }
+
+        fetch(`/api/taxonomy/search-terms?${params}`)
           .then((response) => response.json())
           .then((data) => {
             if (data.success && data.terms) {
@@ -278,29 +283,13 @@ endblock %} {% block content %}
       });
 
       // Handle search input for filters
-      $("#filterSearch").on("keyup", function () {
-        const searchText = $(this).val().toLowerCase();
-        $("#canonicalTermAccordion .accordion-item").each(function () {
-          let categoryVisible = false;
-          $(this)
-            .find(".btn")
-            .each(function () {
-              const term = $(this).data("term").toLowerCase();
-              if (term.includes(searchText)) {
-                $(this).show();
-                categoryVisible = true;
-              } else {
-                $(this).hide();
-              }
-            });
-
-          if (categoryVisible) {
-            $(this).show();
-          } else {
-            $(this).hide();
-          }
-        });
-      });
+      $("#filterSearch").on(
+        "keyup",
+        debounce(function () {
+          const searchText = $(this).val().toLowerCase();
+          loadCanonicalTermFilters(searchText);
+        }, 300)
+      );
 
       $("#sortBy, #sortDirection").on("change", function () {
         performSearch(true);
