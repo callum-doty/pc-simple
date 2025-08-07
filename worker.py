@@ -169,7 +169,6 @@ def _process_document_holistically(
 
 
 from database import get_db
-from services.scheduler_service import SchedulerService
 
 
 @celery_app.task(name="enqueue_documents_task")
@@ -177,6 +176,8 @@ def enqueue_documents_task():
     """
     Celery task to find and enqueue documents that are ready for processing.
     """
+    from services.scheduler_service import SchedulerService
+
     db = next(get_db())
     scheduler_service = SchedulerService(db)
     try:

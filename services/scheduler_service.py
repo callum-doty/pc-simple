@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
 from models.document import Document, DocumentStatus
-from worker import process_document_task
 from config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -59,6 +58,8 @@ class SchedulerService:
             if not documents_to_process:
                 logger.info("No documents in QUEUED status to process.")
                 return
+
+            from worker import process_document_task
 
             for doc in documents_to_process:
                 # Update status to PENDING to signify it's about to be processed
