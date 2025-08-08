@@ -20,7 +20,6 @@ services:
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
-      alembic downgrade 97f28fa6d77c
       alembic upgrade head
     startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
     healthCheckPath: "/health"
@@ -68,7 +67,6 @@ services:
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
-      alembic downgrade 97f28fa6d77c
       alembic upgrade head
     startCommand: "celery -A worker.celery_app worker --loglevel=info --concurrency=2"
     envVars:
