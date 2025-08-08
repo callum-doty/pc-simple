@@ -333,11 +333,14 @@ class SearchService:
                     TaxonomyTerm.subcategory == subcategory
                 )
             if canonical_term:
+                # Use JSONB containment to find documents with the canonical term
                 final_query = final_query.filter(
-                    func.jsonb_path_exists(
-                        Document.keywords,
-                        "$.keyword_mappings[*] ? (@.mapped_canonical_term == $term)",
-                        func.cast({"term": canonical_term}, JSONB),
+                    Document.keywords.op("@>")(
+                        {
+                            "keyword_mappings": [
+                                {"mapped_canonical_term": canonical_term}
+                            ]
+                        }
                     )
                 )
 

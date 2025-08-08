@@ -30,16 +30,10 @@ endblock %} {% block content %}
 
     <!-- Search Results -->
     <div id="searchResultsContainer" style="height: 80vh; overflow-y: auto">
-      <div id="s" style="position: relative; width: 100%; height: 100%">
-        <div
-          id="searchResults"
-          style="position: absolute; top: 0; left: 0; right: 0; bottom: 0"
-        >
-          <!-- Document cards will be inserted here -->
-        </div>
+      <div id="searchResults">
+        <!-- Document cards will be inserted here -->
       </div>
     </div>
-    <div id="sentinel" style="height: 1px"></div>
 
     <!-- Loading Spinner -->
     <div id="loadingSpinner" class="text-center py-5" style="display: none">
@@ -131,8 +125,8 @@ endblock %} {% block content %}
 
   <!-- Document Card Template -->
   <template id="documentCardTemplate">
-    <!-- Larger card with image on top -->
-    <div class="card document-card mb-3" style="max-width: 100%">
+    <!-- Large card with image on top, proper spacing -->
+    <div class="card document-card mb-4" style="width: 100%">
       <!-- Image on top -->
       <a
         href="#"
@@ -144,14 +138,14 @@ endblock %} {% block content %}
           src=""
           class="card-img-top preview-image"
           alt="Document preview"
-          style="height: 300px; object-fit: cover; width: 100%"
+          style="height: 280px; object-fit: cover; width: 100%"
         />
       </a>
 
       <!-- Content below image -->
       <div class="card-body">
-        <!-- Header -->
-        <div class="d-flex justify-content-between align-items-start mb-2">
+        <!-- Header with title and dropdown -->
+        <div class="d-flex justify-content-between align-items-start mb-3">
           <h6 class="card-title mb-0 flex-grow-1">
             <a
               href="#"
@@ -160,7 +154,7 @@ endblock %} {% block content %}
           </h6>
           <div class="d-flex align-items-center gap-2">
             <span class="badge bg-info relevance-score"></span>
-            <div class="dropdown position-static">
+            <div class="dropdown">
               <button
                 class="btn btn-sm btn-outline-secondary dropdown-toggle"
                 type="button"
@@ -176,7 +170,7 @@ endblock %} {% block content %}
                   min-width: 450px;
                   max-width: 600px;
                   z-index: 1060;
-                  position: absolute;
+                  position: fixed;
                   box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
                 "
               >
@@ -241,8 +235,11 @@ endblock %} {% block content %}
           </div>
         </div>
 
-        <!-- Summary -->
-        <p class="card-text summary text-muted small mb-2"></p>
+        <!-- Summary - now clearly visible -->
+        <p
+          class="card-text summary text-muted mb-3"
+          style="font-size: 0.9em; line-height: 1.4"
+        ></p>
 
         <!-- Footer Info -->
         <div class="d-flex justify-content-between align-items-center">
@@ -263,16 +260,12 @@ endblock %} {% block content %}
       let hasMore = true;
       let currentSearchQuery = "";
       let allDocuments = [];
-      let visibleNodes = {};
-      const ITEM_HEIGHT = 280; // Reduced height for horizontal card layout
 
       const searchResultsContainer = document.getElementById(
         "searchResultsContainer"
       );
-      const sizer = document.getElementById("s");
       const searchResults = document.getElementById("searchResults");
       const loadingSpinner = document.getElementById("loadingSpinner");
-      const sentinel = document.getElementById("sentinel");
 
       function loadTopQueries() {
         fetch("/api/search/top-queries")
@@ -357,6 +350,8 @@ endblock %} {% block content %}
         .addEventListener("click", (e) => {
           if (e.target.tagName === "BUTTON" && e.target.dataset.term) {
             const term = e.target.dataset.term;
+            console.log("Selected canonical term:", term); // Debug log
+
             if (e.target.classList.contains("active")) {
               e.target.classList.remove("active", "btn-primary");
               e.target.classList.add("btn-outline-secondary");
@@ -372,6 +367,8 @@ endblock %} {% block content %}
               e.target.classList.remove("btn-outline-secondary");
               activeCanonicalTerm = term;
             }
+
+            console.log("Active canonical term set to:", activeCanonicalTerm); // Debug log
             performSearch(true);
           }
         });
@@ -426,7 +423,6 @@ endblock %} {% block content %}
           currentPage = 1;
           hasMore = true;
           allDocuments = [];
-          visibleNodes = {};
           searchResults.innerHTML = "";
           currentSearchQuery = query;
         }
@@ -439,27 +435,37 @@ endblock %} {% block content %}
         const params = new URLSearchParams({
           q: query,
           page: currentPage,
-          per_page: 50, // Fetch more items at once
+          per_page: 20, // Regular pagination now
           sort_by: sortBy,
           sort_direction: sortDirection,
         });
 
         if (activeCanonicalTerm) {
+          console.log("Adding canonical_term parameter:", activeCanonicalTerm); // Debug log
           params.append("canonical_term", activeCanonicalTerm);
         }
+
+        console.log("Search URL:", `/api/documents/search?${params}`); // Debug log
 
         fetch(`/api/documents/search?${params}`)
           .then((response) => response.json())
           .then((data) => {
+            console.log("Search response:", data); // Debug log
+
             if (data.documents && data.documents.length > 0) {
               allDocuments.push(...data.documents);
-              renderVisibleItems();
+              renderDocuments();
             } else if (isNewSearch) {
               searchResults.innerHTML = `
                             <div class="text-center py-5">
                                 <i class="fas fa-search fa-3x text-muted mb-3"></i>
                                 <h5 class="text-muted">No documents found</h5>
                                 <p class="text-muted">Try adjusting your search terms or filters.</p>
+                                ${
+                                  activeCanonicalTerm
+                                    ? `<p class="text-info">Filtered by: <strong>${activeCanonicalTerm}</strong></p>`
+                                    : ""
+                                }
                             </div>`;
             }
             updateStats(data);
@@ -478,40 +484,15 @@ endblock %} {% block content %}
           });
       }
 
-      function renderVisibleItems() {
-        const scrollTop = searchResultsContainer.scrollTop;
-        const containerHeight = searchResultsContainer.clientHeight;
+      function renderDocuments() {
+        // Clear existing content
+        searchResults.innerHTML = "";
 
-        const startIndex = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - 5);
-        const endIndex = Math.min(
-          allDocuments.length,
-          Math.ceil((scrollTop + containerHeight) / ITEM_HEIGHT) + 5
-        );
-
-        const newVisibleNodes = {};
-
-        for (let i = startIndex; i < endIndex; i++) {
-          const doc = allDocuments[i];
-          if (visibleNodes[doc.id]) {
-            newVisibleNodes[doc.id] = visibleNodes[doc.id];
-            delete visibleNodes[doc.id];
-          } else {
-            const card = createDocumentCard(doc);
-            card.style.position = "absolute";
-            card.style.top = `${i * ITEM_HEIGHT}px`;
-            card.style.width = "100%";
-            searchResults.appendChild(card);
-            newVisibleNodes[doc.id] = card;
-          }
-        }
-
-        // Remove nodes that are no longer visible
-        for (const id in visibleNodes) {
-          visibleNodes[id].remove();
-        }
-
-        visibleNodes = newVisibleNodes;
-        sizer.style.height = `${allDocuments.length * ITEM_HEIGHT}px`;
+        // Render all documents normally (no virtual scrolling for now)
+        allDocuments.forEach((doc) => {
+          const card = createDocumentCard(doc);
+          searchResults.appendChild(card);
+        });
       }
 
       function createDocumentCard(doc) {
@@ -549,28 +530,69 @@ endblock %} {% block content %}
       }
 
       function populateDropdownContent(card, doc) {
-        // Extracted Text
+        // Debug log to check if extracted text exists
+        console.log("Document data for dropdown:", doc);
+
+        // Extracted Text - improved extraction
         const extractedTextContainer = card.querySelector(
           ".extracted-text-content"
         );
+        let extractedText = null;
+
+        // Try multiple locations for extracted text
         if (doc.extracted_text && doc.extracted_text.trim()) {
-          extractedTextContainer.textContent = doc.extracted_text;
+          extractedText = doc.extracted_text.trim();
+        } else if (doc.ai_analysis && typeof doc.ai_analysis === "object") {
+          // Check various nested locations
+          const analysis = doc.ai_analysis;
+          extractedText =
+            analysis.extracted_text ||
+            analysis.content ||
+            analysis.text ||
+            (analysis.document_analysis &&
+              analysis.document_analysis.extracted_text) ||
+            (analysis.text_extraction &&
+              analysis.text_extraction.extracted_text);
+        }
+
+        if (extractedText && extractedText.trim()) {
+          extractedTextContainer.textContent = extractedText.trim();
         } else {
           extractedTextContainer.innerHTML =
-            '<em class="text-muted">No extracted text available</em>';
+            '<em class="text-muted">No extracted text available for this document</em>';
         }
 
         // Extra Info (Document Details)
         const extraInfoContainer = card.querySelector(".extra-info");
         extraInfoContainer.innerHTML = "";
-        if (doc.document_type) {
-          extraInfoContainer.innerHTML += `<span class="badge bg-primary me-1 mb-1">${doc.document_type}</span>`;
+
+        // Try to get document details from various possible locations
+        let docType = doc.document_type;
+        let campaignType = doc.campaign_type;
+        let docTone = doc.document_tone;
+
+        // Check in ai_analysis if not found at top level
+        if (doc.ai_analysis && typeof doc.ai_analysis === "object") {
+          const analysis = doc.ai_analysis;
+          if (!docType && analysis.document_analysis) {
+            docType = analysis.document_analysis.document_type;
+          }
+          if (!campaignType && analysis.document_analysis) {
+            campaignType = analysis.document_analysis.campaign_type;
+          }
+          if (!docTone && analysis.document_analysis) {
+            docTone = analysis.document_analysis.document_tone;
+          }
         }
-        if (doc.campaign_type) {
-          extraInfoContainer.innerHTML += `<span class="badge bg-success me-1 mb-1">${doc.campaign_type}</span>`;
+
+        if (docType) {
+          extraInfoContainer.innerHTML += `<span class="badge bg-primary me-1 mb-1">${docType}</span>`;
         }
-        if (doc.document_tone) {
-          extraInfoContainer.innerHTML += `<span class="badge bg-warning me-1 mb-1">${doc.document_tone}</span>`;
+        if (campaignType) {
+          extraInfoContainer.innerHTML += `<span class="badge bg-success me-1 mb-1">${campaignType}</span>`;
+        }
+        if (docTone) {
+          extraInfoContainer.innerHTML += `<span class="badge bg-warning me-1 mb-1">${docTone}</span>`;
         }
         if (extraInfoContainer.innerHTML === "") {
           extraInfoContainer.innerHTML =
@@ -612,7 +634,7 @@ endblock %} {% block content %}
           metadataContainer.innerHTML += `<span class="badge bg-danger me-1 mb-1"><i class="fas fa-times me-1"></i>No Embeddings</span>`;
         }
         if (doc.processing_error) {
-          metadataContainer.innerHTML += `<div class="text-danger small mt-1 p-2 bg-light rounded" style="white-space: pre-wrap; word-wrap: break-word;" title="${doc.processing_error}"><i class="fas fa-exclamation-triangle me-1"></i>Processing Error: ${doc.processing_error}</div>`;
+          metadataContainer.innerHTML += `<div class="text-danger small mt-1 p-2 bg-light rounded" style="white-space: pre-wrap; word-wrap: break-word;"><i class="fas fa-exclamation-triangle me-1"></i>Processing Error: ${doc.processing_error}</div>`;
         }
         if (metadataContainer.innerHTML === "") {
           metadataContainer.innerHTML =
@@ -634,6 +656,19 @@ endblock %} {% block content %}
             `;
       }
 
+      // Load more results when scrolling near bottom
+      searchResultsContainer.addEventListener("scroll", () => {
+        if (
+          searchResultsContainer.scrollTop +
+            searchResultsContainer.clientHeight >=
+          searchResultsContainer.scrollHeight - 100
+        ) {
+          if (!isLoading && hasMore) {
+            performSearch(false);
+          }
+        }
+      });
+
       fetch("/api/stats")
         .then((response) => response.json())
         .then((data) => {
@@ -645,20 +680,6 @@ endblock %} {% block content %}
           }
         })
         .catch((error) => console.error("Stats error:", error));
-
-      const observer = new IntersectionObserver(
-        (entries) => {
-          if (entries[0].isIntersecting && !isLoading && hasMore) {
-            performSearch(false);
-          }
-        },
-        {
-          threshold: 1.0,
-        }
-      );
-      observer.observe(sentinel);
-
-      searchResultsContainer.addEventListener("scroll", renderVisibleItems);
 
       performSearch(true);
       loadCanonicalTermFilters();
