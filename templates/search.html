@@ -30,10 +30,7 @@ endblock %} {% block content %}
 
     <!-- Search Results -->
     <div id="searchResultsContainer" style="height: 80vh; overflow-y: auto">
-      <div
-        id="s"
-        style="position: relative; overflow: hidden; width: 100%; height: 100%"
-      >
+      <div id="s" style="position: relative; width: 100%; height: 100%">
         <div
           id="searchResults"
           class="row row-cols-1 g-4"
@@ -165,25 +162,23 @@ endblock %} {% block content %}
               </small>
               <span class="badge bg-info relevance-score"></span>
             </div>
-            <button
-              class="btn btn-sm btn-outline-secondary"
-              type="button"
-              data-bs-toggle="collapse"
-              data-bs-target="#collapseDetails"
-              aria-expanded="false"
-              aria-controls="collapseDetails"
-              style="width: 38px"
-            >
-              ...
-            </button>
-          </div>
-        </div>
-        <div class="collapse" id="collapseDetails">
-          <div class="card-footer">
-            <div class="extra-info mb-2"></div>
-            <div class="keywords mb-2"></div>
-            <div class="metadata-info mb-2"></div>
-            <div class="extracted-text-info mb-2"></div>
+            <div class="dropdown">
+              <button
+                class="btn btn-sm btn-outline-secondary dropdown-toggle"
+                type="button"
+                data-bs-toggle="dropdown"
+                aria-expanded="false"
+                style="width: 38px"
+              ></button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item extra-info" href="#"></a></li>
+                <li><a class="dropdown-item keywords" href="#"></a></li>
+                <li><a class="dropdown-item metadata-info" href="#"></a></li>
+                <li>
+                  <a class="dropdown-item extracted-text-info" href="#"></a>
+                </li>
+              </ul>
+            </div>
           </div>
         </div>
       </div>
@@ -457,15 +452,6 @@ endblock %} {% block content %}
         card.querySelector(".document-link-image").href = downloadUrl;
         card.querySelector(".document-link-filename").href = downloadUrl;
 
-        const collapseId = `collapseDetails-${doc.id}`;
-        const collapse = card.querySelector(".collapse");
-        collapse.id = collapseId;
-        const collapseButton = card.querySelector(
-          '[data-bs-toggle="collapse"]'
-        );
-        collapseButton.dataset.bsTarget = `#${collapseId}`;
-        collapseButton.setAttribute("aria-controls", collapseId);
-
         card.querySelector(".filename").textContent = doc.filename;
         card.querySelector(".summary").textContent =
           doc.summary || "No summary available";
@@ -544,10 +530,6 @@ endblock %} {% block content %}
           keywordsContainer.innerHTML =
             '<p class="text-muted small mb-0">No canonical terms found.</p>';
         }
-
-        new bootstrap.Collapse(collapse, {
-          toggle: false,
-        });
 
         return card;
       }
