@@ -514,40 +514,51 @@ endblock %} {% block content %}
           previewImage.src = "/static/placeholder.svg";
         }
 
-        // Populate dropdown sections
-        populateDropdownContent(card, doc);
+        // Add event listener to fetch details on expand
+        toggleButton.addEventListener("click", () => {
+          loadDocumentDetails(card, doc.id);
+        });
 
         return card;
       }
 
-      function populateDropdownContent(card, doc) {
-        // Debug log to check if extracted text exists
-        console.log("Document data for dropdown:", doc);
+      function loadDocumentDetails(card, documentId) {
+        const detailsSection = card.querySelector(".details-section");
+        if (detailsSection.dataset.loaded) {
+          return; // Already loaded
+        }
 
-        // Extracted Text - improved extraction
         const extractedTextContainer = card.querySelector(
           ".extracted-text-content"
         );
-        let extractedText = null;
+        extractedTextContainer.innerHTML =
+          '<div class="spinner-border spinner-border-sm" role="status"><span class="visually-hidden">Loading...</span></div>';
 
-        // Try multiple locations for extracted text
+        fetch(`/api/documents/${documentId}/details`)
+          .then((response) => {
+            if (!response.ok) {
+              throw new Error("Failed to load document details.");
+            }
+            return response.json();
+          })
+          .then((data) => {
+            populateDetailsContent(card, data);
+            detailsSection.dataset.loaded = "true";
+          })
+          .catch((error) => {
+            console.error("Error loading document details:", error);
+            extractedTextContainer.innerHTML =
+              '<em class="text-danger">Error loading details.</em>';
+          });
+      }
+
+      function populateDetailsContent(card, doc) {
+        // Extracted Text
+        const extractedTextContainer = card.querySelector(
+          ".extracted-text-content"
+        );
         if (doc.extracted_text && doc.extracted_text.trim()) {
-          extractedText = doc.extracted_text.trim();
-        } else if (doc.ai_analysis && typeof doc.ai_analysis === "object") {
-          // Check various nested locations
-          const analysis = doc.ai_analysis;
-          extractedText =
-            analysis.extracted_text ||
-            analysis.content ||
-            analysis.text ||
-            (analysis.document_analysis &&
-              analysis.document_analysis.extracted_text) ||
-            (analysis.text_extraction &&
-              analysis.text_extraction.extracted_text);
-        }
-
-        if (extractedText && extractedText.trim()) {
-          extractedTextContainer.textContent = extractedText.trim();
+          extractedTextContainer.textContent = doc.extracted_text.trim();
         } else {
           extractedTextContainer.innerHTML =
             '<em class="text-muted">No extracted text available for this document</em>';

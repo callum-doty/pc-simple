@@ -486,6 +486,17 @@ class DocumentService:
             )
             return False
 
+    async def get_document_details(self, document_id: int) -> Optional[Dict[str, Any]]:
+        """Get full document details, including heavyweight fields."""
+        try:
+            document = await self.get_document(document_id)
+            if not document:
+                return None
+            return document.to_dict(full_detail=True, include_heavy_fields=True)
+        except Exception as e:
+            logger.error(f"Error getting document details for {document_id}: {str(e)}")
+            return None
+
     def _update_document_taxonomy_mappings(
         self, document: Document, keyword_mappings: List[Dict[str, str]]
     ):

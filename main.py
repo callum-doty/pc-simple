@@ -35,6 +35,7 @@ from services.storage_service import StorageService
 from services.taxonomy_service import TaxonomyService
 from services.preview_service import PreviewService
 from api.dashboard import router as dashboard_router
+from api.documents import router as documents_router
 from worker import process_document_task
 from celery.result import AsyncResult
 from models.search_query import SearchQuery
@@ -106,6 +107,7 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 app.include_router(dashboard_router, prefix="/api", tags=["Dashboard"])
+app.include_router(documents_router, prefix="/api", tags=["Documents"])
 
 # Mount files directory for serving uploaded documents
 if settings.storage_type == "local":
