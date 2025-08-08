@@ -20,6 +20,8 @@ services:
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
+      # Force stamp to the new squashed migration
+      alembic stamp 67db21b59aa0 --purge
       alembic upgrade head
     startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
     healthCheckPath: "/health"

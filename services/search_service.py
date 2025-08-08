@@ -31,9 +31,9 @@ class SearchService:
         self.preview_service = preview_service
         self.ai_service = AIService(db=self.db)
         try:
-            if settings.REDIS_URL:
+            if settings.redis_url:
                 self.redis_client = redis.from_url(
-                    settings.REDIS_URL, decode_responses=True
+                    settings.redis_url, decode_responses=True
                 )
                 self.redis_client.ping()
                 logger.info("Redis cache connected successfully.")
