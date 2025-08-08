@@ -210,8 +210,9 @@ async def upload_documents(
     """Upload one or more documents"""
     try:
         tasks = []
+        delay_seconds = 120  # 2 minutes
 
-        for file in files:
+        for i, file in enumerate(files):
             if not file.filename:
                 continue
 
@@ -223,10 +224,18 @@ async def upload_documents(
                 filename=file.filename, file_path=file_path, file_size=file.size or 0
             )
 
+            # Dispatch Celery task for processing with a staggered delay
+            countdown = i * delay_seconds
+            task = process_document_task.apply_async(
+                args=[document.id], countdown=countdown
+            )
+
             tasks.append(
                 {
                     "document_id": document.id,
                     "filename": document.filename,
+                    "task_id": task.id,
+                    "processing_starts_in_seconds": countdown,
                 }
             )
 
