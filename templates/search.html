@@ -33,7 +33,6 @@ endblock %} {% block content %}
       <div id="s" style="position: relative; width: 100%; height: 100%">
         <div
           id="searchResults"
-          class="row row-cols-1 g-4"
           style="position: absolute; top: 0; left: 0; right: 0; bottom: 0"
         >
           <!-- Document cards will be inserted here -->
@@ -132,52 +131,120 @@ endblock %} {% block content %}
 
   <!-- Document Card Template -->
   <template id="documentCardTemplate">
-    <div class="col">
-      <div class="card h-100 document-card">
-        <a
-          href="#"
-          class="document-link-image"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img
-            src=""
-            class="card-img-top preview-image"
-            alt="Document preview"
-          />
-        </a>
-        <div class="card-body d-flex flex-column">
-          <h6 class="card-title">
-            <a
-              href="#"
-              class="document-link-filename filename text-decoration-none text-dark"
-            ></a>
-          </h6>
-          <p class="card-text summary text-muted small flex-grow-1"></p>
-          <div class="mt-auto">
-            <div class="d-flex justify-content-between align-items-center mb-2">
+    <!-- Removed the .col wrapper to take card out of container constraints -->
+    <div class="card document-card mb-3" style="max-width: 100%">
+      <div class="row g-0">
+        <!-- Image Column -->
+        <div class="col-md-3">
+          <a
+            href="#"
+            class="document-link-image d-block h-100"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <img
+              src=""
+              class="img-fluid h-100 w-100 preview-image"
+              alt="Document preview"
+              style="object-fit: cover; min-height: 200px"
+            />
+          </a>
+        </div>
+        <!-- Content Column -->
+        <div class="col-md-9">
+          <div class="card-body d-flex flex-column h-100">
+            <!-- Header -->
+            <div class="d-flex justify-content-between align-items-start mb-2">
+              <h6 class="card-title mb-0 flex-grow-1">
+                <a
+                  href="#"
+                  class="document-link-filename filename text-decoration-none text-dark"
+                ></a>
+              </h6>
+              <div class="d-flex align-items-center gap-2">
+                <span class="badge bg-info relevance-score"></span>
+                <div class="dropdown">
+                  <button
+                    class="btn btn-sm btn-outline-secondary dropdown-toggle"
+                    type="button"
+                    data-bs-toggle="dropdown"
+                    aria-expanded="false"
+                  >
+                    <i class="fas fa-ellipsis-v"></i>
+                  </button>
+                  <div
+                    class="dropdown-menu dropdown-menu-end p-3"
+                    style="min-width: 400px; max-width: 500px"
+                  >
+                    <!-- Extracted Text Section -->
+                    <div class="mb-3">
+                      <h6 class="dropdown-header px-0 text-primary">
+                        <i class="fas fa-file-text me-1"></i>Extracted Text
+                      </h6>
+                      <div
+                        class="extracted-text-content p-2 bg-light rounded"
+                        style="
+                          max-height: 200px;
+                          overflow-y: auto;
+                          white-space: pre-wrap;
+                          word-wrap: break-word;
+                          font-size: 0.85em;
+                          line-height: 1.4;
+                        "
+                      >
+                        <!-- Extracted text will be inserted here -->
+                      </div>
+                    </div>
+
+                    <hr class="dropdown-divider" />
+
+                    <!-- Document Details Section -->
+                    <div class="mb-3">
+                      <h6 class="dropdown-header px-0 text-success">
+                        <i class="fas fa-info-circle me-1"></i>Document Details
+                      </h6>
+                      <div class="extra-info d-flex flex-wrap gap-1">
+                        <!-- Extra info badges will be inserted here -->
+                      </div>
+                    </div>
+
+                    <hr class="dropdown-divider" />
+
+                    <!-- Keywords Section -->
+                    <div class="mb-3">
+                      <h6 class="dropdown-header px-0 text-warning">
+                        <i class="fas fa-tags me-1"></i>Keywords & Terms
+                      </h6>
+                      <div class="keywords d-flex flex-wrap gap-1">
+                        <!-- Keywords will be inserted here -->
+                      </div>
+                    </div>
+
+                    <hr class="dropdown-divider" />
+
+                    <!-- Metadata Section -->
+                    <div>
+                      <h6 class="dropdown-header px-0 text-info">
+                        <i class="fas fa-cog me-1"></i>Metadata
+                      </h6>
+                      <div class="metadata-info d-flex flex-wrap gap-1">
+                        <!-- Metadata will be inserted here -->
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Summary -->
+            <p class="card-text summary text-muted small mb-2 flex-grow-1"></p>
+
+            <!-- Footer Info -->
+            <div class="d-flex justify-content-between align-items-center">
               <small class="text-muted">
                 <i class="fas fa-calendar me-1"></i>
                 <span class="upload-date"></span>
               </small>
-              <span class="badge bg-info relevance-score"></span>
-            </div>
-            <div class="dropdown">
-              <button
-                class="btn btn-sm btn-outline-secondary dropdown-toggle"
-                type="button"
-                data-bs-toggle="dropdown"
-                aria-expanded="false"
-                style="width: 38px"
-              ></button>
-              <ul class="dropdown-menu dropdown-menu-end">
-                <li><a class="dropdown-item extra-info" href="#"></a></li>
-                <li><a class="dropdown-item keywords" href="#"></a></li>
-                <li><a class="dropdown-item metadata-info" href="#"></a></li>
-                <li>
-                  <a class="dropdown-item extracted-text-info" href="#"></a>
-                </li>
-              </ul>
             </div>
           </div>
         </div>
@@ -194,7 +261,7 @@ endblock %} {% block content %}
       let currentSearchQuery = "";
       let allDocuments = [];
       let visibleNodes = {};
-      const ITEM_HEIGHT = 450; // Approximate height of a card
+      const ITEM_HEIGHT = 280; // Reduced height for horizontal card layout
 
       const searchResultsContainer = document.getElementById(
         "searchResultsContainer"
@@ -472,66 +539,82 @@ endblock %} {% block content %}
           previewImage.src = "/static/placeholder.svg";
         }
 
-        const keywordsContainer = card.querySelector(".keywords");
-        keywordsContainer.innerHTML = "";
+        // Populate dropdown sections
+        populateDropdownContent(card, doc);
 
-        const extraInfoContainer = card.querySelector(".extra-info");
-        if (doc.document_type) {
-          extraInfoContainer.innerHTML += `<span class="badge bg-primary me-1">${doc.document_type}</span>`;
-        }
-        if (doc.campaign_type) {
-          extraInfoContainer.innerHTML += `<span class="badge bg-success me-1">${doc.campaign_type}</span>`;
-        }
-        if (doc.document_tone) {
-          extraInfoContainer.innerHTML += `<span class="badge bg-warning me-1">${doc.document_tone}</span>`;
-        }
+        return card;
+      }
 
+      function populateDropdownContent(card, doc) {
+        // Extracted Text
         const extractedTextContainer = card.querySelector(
-          ".extracted-text-info"
+          ".extracted-text-content"
         );
-        if (doc.extracted_text) {
-          extractedTextContainer.innerHTML = `<div class="text-wrap" style="white-space: pre-wrap; word-wrap: break-word;">${doc.extracted_text}</div>`;
+        if (doc.extracted_text && doc.extracted_text.trim()) {
+          extractedTextContainer.textContent = doc.extracted_text;
         } else {
           extractedTextContainer.innerHTML =
-            '<p class="text-muted">No extracted text available.</p>';
+            '<em class="text-muted">No extracted text available</em>';
         }
 
-        const metadataContainer = card.querySelector(".metadata-info");
-        let metadataHtml = "";
-        if (doc.status) {
-          let statusClass = "secondary";
-          if (doc.status === "COMPLETED") statusClass = "success";
-          if (doc.status === "FAILED") statusClass = "danger";
-          if (doc.status === "PROCESSING") statusClass = "primary";
-          metadataHtml += `<span class="badge bg-${statusClass} me-1">Status: ${doc.status}</span>`;
+        // Extra Info (Document Details)
+        const extraInfoContainer = card.querySelector(".extra-info");
+        extraInfoContainer.innerHTML = "";
+        if (doc.document_type) {
+          extraInfoContainer.innerHTML += `<span class="badge bg-primary me-1 mb-1">${doc.document_type}</span>`;
         }
-        if (doc.file_size) {
-          const sizeInKb = (doc.file_size / 1024).toFixed(2);
-          metadataHtml += `<span class="badge bg-light text-dark me-1">${sizeInKb} KB</span>`;
+        if (doc.campaign_type) {
+          extraInfoContainer.innerHTML += `<span class="badge bg-success me-1 mb-1">${doc.campaign_type}</span>`;
         }
-        if (doc.mapping_count > 0) {
-          metadataHtml += `<span class="badge bg-info me-1">Mappings: ${doc.mapping_count}</span>`;
+        if (doc.document_tone) {
+          extraInfoContainer.innerHTML += `<span class="badge bg-warning me-1 mb-1">${doc.document_tone}</span>`;
         }
-        if (doc.has_embeddings) {
-          metadataHtml += `<span class="badge bg-success me-1"><i class="fas fa-check me-1"></i>Embeddings</span>`;
-        } else {
-          metadataHtml += `<span class="badge bg-danger me-1"><i class="fas fa-times me-1"></i>Embeddings</span>`;
+        if (extraInfoContainer.innerHTML === "") {
+          extraInfoContainer.innerHTML =
+            '<em class="text-muted">No document details available</em>';
         }
-        if (doc.processing_error) {
-          metadataHtml += `<div class="text-danger small mt-1" title="${doc.processing_error}"><i class="fas fa-exclamation-triangle me-1"></i>Processing Error</div>`;
-        }
-        metadataContainer.innerHTML = metadataHtml;
 
+        // Keywords
+        const keywordsContainer = card.querySelector(".keywords");
+        keywordsContainer.innerHTML = "";
         if (doc.canonical_terms && doc.canonical_terms.length > 0) {
           doc.canonical_terms.forEach((term) => {
             keywordsContainer.innerHTML += `<span class="badge bg-info keyword-badge me-1 mb-1">${term}</span>`;
           });
         } else {
           keywordsContainer.innerHTML =
-            '<p class="text-muted small mb-0">No canonical terms found.</p>';
+            '<em class="text-muted">No canonical terms found</em>';
         }
 
-        return card;
+        // Metadata
+        const metadataContainer = card.querySelector(".metadata-info");
+        metadataContainer.innerHTML = "";
+        if (doc.status) {
+          let statusClass = "secondary";
+          if (doc.status === "COMPLETED") statusClass = "success";
+          if (doc.status === "FAILED") statusClass = "danger";
+          if (doc.status === "PROCESSING") statusClass = "primary";
+          metadataContainer.innerHTML += `<span class="badge bg-${statusClass} me-1 mb-1">Status: ${doc.status}</span>`;
+        }
+        if (doc.file_size) {
+          const sizeInKb = (doc.file_size / 1024).toFixed(2);
+          metadataContainer.innerHTML += `<span class="badge bg-light text-dark me-1 mb-1">${sizeInKb} KB</span>`;
+        }
+        if (doc.mapping_count > 0) {
+          metadataContainer.innerHTML += `<span class="badge bg-info me-1 mb-1">Mappings: ${doc.mapping_count}</span>`;
+        }
+        if (doc.has_embeddings) {
+          metadataContainer.innerHTML += `<span class="badge bg-success me-1 mb-1"><i class="fas fa-check me-1"></i>Embeddings</span>`;
+        } else {
+          metadataContainer.innerHTML += `<span class="badge bg-danger me-1 mb-1"><i class="fas fa-times me-1"></i>No Embeddings</span>`;
+        }
+        if (doc.processing_error) {
+          metadataContainer.innerHTML += `<div class="text-danger small mt-1 p-2 bg-light rounded" style="white-space: pre-wrap; word-wrap: break-word;" title="${doc.processing_error}"><i class="fas fa-exclamation-triangle me-1"></i>Processing Error: ${doc.processing_error}</div>`;
+        }
+        if (metadataContainer.innerHTML === "") {
+          metadataContainer.innerHTML =
+            '<em class="text-muted">No metadata available</em>';
+        }
       }
 
       function updateStats(data) {

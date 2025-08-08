@@ -6,6 +6,7 @@ Simplified search implementation with text-based and category filtering
 import logging
 from typing import Dict, Any, List, Optional
 from sqlalchemy import or_, and_, func, desc, asc
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from database import SessionLocal
@@ -332,8 +333,12 @@ class SearchService:
                     TaxonomyTerm.subcategory == subcategory
                 )
             if canonical_term:
-                final_query = final_query.join(Document.taxonomy_terms).filter(
-                    TaxonomyTerm.term == canonical_term
+                final_query = final_query.filter(
+                    func.jsonb_path_exists(
+                        Document.keywords,
+                        "$.keyword_mappings[*] ? (@.mapped_canonical_term == $term)",
+                        func.cast({"term": canonical_term}, JSONB),
+                    )
                 )
 
             # 3. Get total count
@@ -425,12 +430,27 @@ class SearchService:
                 .all()
             )
 
-            # Facets for canonical terms
+            # Use jsonb_array_elements to unnest the keyword_mappings array
+            keyword_element = func.jsonb_array_elements(
+                func.coalesce(
+                    Document.keywords.op("#>")("{keyword_mappings}"),
+                    func.cast("[]", JSONB),
+                )
+            ).alias("keyword_element")
+
+            # Then query the unnested elements
             canonical_term_facets = (
-                self.db.query(TaxonomyTerm.term, func.count(Document.id))
-                .join(Document.taxonomy_terms)
-                .group_by(TaxonomyTerm.term)
-                .order_by(desc(func.count(Document.id)))
+                self.db.query(
+                    keyword_element.c.value["mapped_canonical_term"].astext,
+                    func.count(Document.id),
+                )
+                .select_from(Document, keyword_element)
+                .filter(
+                    Document.status == DocumentStatus.COMPLETED,
+                    keyword_element.c.value["mapped_canonical_term"].isnot(None),
+                )
+                .group_by(keyword_element.c.value["mapped_canonical_term"].astext)
+                .order_by(func.count(Document.id).desc())
                 .limit(20)
                 .all()
             )
