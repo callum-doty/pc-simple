@@ -86,9 +86,12 @@ class SearchService:
 
         try:
             # Build a query that filters by verbatim term in the JSONB array
+            # This is a more robust way to query JSONB
             base_query = self.db.query(Document).filter(
-                Document.keywords.op(" @> ")(
-                    cast([{"verbatim_term": verbatim_term}], JSONB)
+                func.jsonb_path_exists(
+                    Document.keywords,
+                    "$.keyword_mappings[*] ? (@.verbatim_term == $term)",
+                    cast({"term": verbatim_term}, JSONB),
                 )
             )
 
