@@ -5,7 +5,7 @@ Simplified search implementation with text-based and category filtering
 
 import logging
 from typing import Dict, Any, List, Optional
-from sqlalchemy import or_, and_, func, desc, asc
+from sqlalchemy import or_, and_, func, desc, asc, cast
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
@@ -334,30 +334,14 @@ class SearchService:
                 )
             if canonical_term:
                 logger.info(f"Applying canonical term filter for: {canonical_term}")
-
-                # Use a subquery with jsonb_array_elements for better compatibility
-                keyword_element = func.jsonb_array_elements(
-                    func.coalesce(
-                        Document.keywords.op("#>")("{keyword_mappings}"),
-                        func.cast("[]", JSONB),
+                # Use jsonb_path_exists for efficient and accurate filtering
+                final_query = final_query.filter(
+                    func.jsonb_path_exists(
+                        Document.keywords,
+                        "$.keyword_mappings[*] ? (@.mapped_canonical_term.string().lower() == $term)",
+                        func.cast({"term": canonical_term.lower()}, JSONB),
                     )
-                ).alias("keyword_element")
-
-                # Find documents with matching canonical terms
-                matching_doc_ids = (
-                    self.db.query(Document.id)
-                    .select_from(Document, keyword_element)
-                    .filter(
-                        Document.status == DocumentStatus.COMPLETED,
-                        func.lower(
-                            keyword_element.c.value["mapped_canonical_term"].astext
-                        )
-                        == canonical_term.lower(),
-                    )
-                    .subquery()
                 )
-
-                final_query = final_query.filter(Document.id.in_(matching_doc_ids))
 
             # 3. Get total count
             total_count = final_query.with_entities(func.count(Document.id)).scalar()
