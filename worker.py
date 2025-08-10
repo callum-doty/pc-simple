@@ -1,4 +1,5 @@
 import os
+import redis
 from celery import Celery
 from config import get_settings
 from services.document_service import DocumentService
@@ -246,6 +247,19 @@ def process_document_task(document_id: int, analysis_type: str = "unified"):
         document_service.update_document_status_sync(
             document_id, DocumentStatus.COMPLETED, progress=100
         )
+
+        # Clear the search cache in Redis
+        try:
+            if settings.redis_url:
+                redis_client = redis.from_url(settings.redis_url)
+                # Invalidate all search-related keys
+                search_keys = redis_client.keys("search:*")
+                if search_keys:
+                    redis_client.delete(*search_keys)
+                    logger.info(f"Invalidated {len(search_keys)} search cache keys.")
+        except Exception as redis_error:
+            logger.error(f"Could not clear Redis cache: {redis_error}")
+
         logger.info(
             f"Successfully completed {analysis_type} processing for document {document_id}"
         )
