@@ -20,8 +20,8 @@ services:
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
->>>>>>>
       alembic upgrade head
+      python backfill_keyword_mappings.py
     startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
     healthCheckPath: "/health"
     envVars:
@@ -69,6 +69,7 @@ services:
       pip install --upgrade pip
       pip install -r requirements.txt
       alembic upgrade head
+      python backfill_keyword_mappings.py
     startCommand: "celery -A worker.celery_app worker --loglevel=info --concurrency=2"
     envVars:
       - key: PYTHON_VERSION

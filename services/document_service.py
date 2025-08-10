@@ -138,58 +138,19 @@ class DocumentService:
 
             # Update AI analysis
             if ai_analysis:
-                document.set_ai_analysis(ai_analysis)
+                document.ai_analysis = ai_analysis
 
-            # Enhanced keyword storage with mappings
+            # Set keywords, categories, and mappings using the new model method
             if keywords or categories or keyword_mappings:
-                enhanced_keywords = {
-                    "keywords": keywords or [],
-                    "categories": categories or [],
-                    "keyword_mappings": keyword_mappings
-                    or [],  # Store the rich mappings
-                    "mapping_count": len(keyword_mappings) if keyword_mappings else 0,
-                    "extraction_timestamp": datetime.utcnow().isoformat(),
-                }
-                document.keywords = enhanced_keywords
+                document.set_keywords(
+                    keywords=keywords,
+                    categories=categories,
+                    keyword_mappings=keyword_mappings,
+                )
 
             # Update metadata
             if metadata:
                 document.set_metadata(**metadata)
-
-            # Synthesize search_content
-            search_parts = [document.filename]
-            if ai_analysis:
-                # Add summary if available
-                if ai_analysis.get("summary"):
-                    search_parts.append(ai_analysis.get("summary"))
-                # Add content analysis if available
-                if ai_analysis.get("content_analysis"):
-                    search_parts.append(ai_analysis.get("content_analysis"))
-                # Add title if available
-                if ai_analysis.get("title"):
-                    search_parts.append(ai_analysis.get("title"))
-
-            # Add keywords and categories
-            if keywords:
-                search_parts.extend(keywords)
-            if categories:
-                search_parts.extend(categories)
-
-            # Add verbatim terms from mappings
-            if keyword_mappings:
-                verbatim_terms = [
-                    m["verbatim_term"] for m in keyword_mappings if "verbatim_term" in m
-                ]
-                search_parts.extend(verbatim_terms)
-
-            # Add raw extracted text
-            if extracted_text:
-                search_parts.append(extracted_text)
-
-            # Join all parts, ensuring they are strings and removing duplicates
-            document.search_content = " ".join(
-                sorted(list(set(str(p) for p in search_parts if p)))
-            )
 
             # Update taxonomy mappings
             self._update_document_taxonomy_mappings(document, keyword_mappings)
@@ -375,42 +336,18 @@ class DocumentService:
             if extracted_text:
                 document.extracted_text = extracted_text
             if ai_analysis:
-                document.set_ai_analysis(ai_analysis)
+                document.ai_analysis = ai_analysis
+
+            # Set keywords, categories, and mappings using the new model method
             if keywords or categories or keyword_mappings:
-                enhanced_keywords = {
-                    "keywords": keywords or [],
-                    "categories": categories or [],
-                    "keyword_mappings": keyword_mappings or [],
-                    "mapping_count": len(keyword_mappings) if keyword_mappings else 0,
-                    "extraction_timestamp": datetime.utcnow().isoformat(),
-                }
-                document.keywords = enhanced_keywords
+                document.set_keywords(
+                    keywords=keywords,
+                    categories=categories,
+                    keyword_mappings=keyword_mappings,
+                )
+
             if metadata:
                 document.set_metadata(**metadata)
-
-            search_parts = [document.filename]
-            if ai_analysis:
-                if ai_analysis.get("summary"):
-                    search_parts.append(ai_analysis.get("summary"))
-                if ai_analysis.get("content_analysis"):
-                    search_parts.append(ai_analysis.get("content_analysis"))
-                if ai_analysis.get("title"):
-                    search_parts.append(ai_analysis.get("title"))
-            if keywords:
-                search_parts.extend(keywords)
-            if categories:
-                search_parts.extend(categories)
-            if keyword_mappings:
-                verbatim_terms = [
-                    m["verbatim_term"] for m in keyword_mappings if "verbatim_term" in m
-                ]
-                search_parts.extend(verbatim_terms)
-            if extracted_text:
-                search_parts.append(extracted_text)
-
-            document.search_content = " ".join(
-                sorted(list(set(str(p) for p in search_parts if p)))
-            )
 
             # Update taxonomy mappings
             self._update_document_taxonomy_mappings(document, keyword_mappings)

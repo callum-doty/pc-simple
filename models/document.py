@@ -112,53 +112,68 @@ class Document(Base):
                 return keywords
         return []
 
-    def set_ai_analysis(self, analysis: Dict[str, Any]):
-        """Set AI analysis results"""
-        if not isinstance(analysis, dict):
-            raise ValueError("Analysis must be a dictionary")
-        self.ai_analysis = analysis
-
-        # Update search content with analysis text
-        search_parts = []
-        if self.extracted_text:
-            search_parts.append(self.extracted_text)
-        if analysis.get("summary"):
-            search_parts.append(analysis["summary"])
-        if analysis.get("content_analysis"):
-            search_parts.append(analysis["content_analysis"])
-
-        # Add keywords and categories to search content
-        if self.keywords:
-            if self.keywords.get("keywords"):
-                search_parts.extend(self.keywords["keywords"])
-            if self.keywords.get("categories"):
-                search_parts.extend(self.keywords["categories"])
-
-        self.search_content = " ".join(search_parts)
-
-    def set_keywords(self, keywords: List[str], categories: List[str] = None):
-        """Set document keywords and categories"""
+    def set_keywords(
+        self,
+        keywords: List[str],
+        categories: List[str] = None,
+        keyword_mappings: List[Dict[str, str]] = None,
+    ):
+        """
+        Set document keywords, categories, and rich keyword mappings.
+        This method centralizes keyword management and ensures data consistency.
+        """
+        # Initialize a comprehensive dictionary for all keyword-related data
         self.keywords = {
             "keywords": keywords if isinstance(keywords, list) else [],
             "categories": categories if isinstance(categories, list) else [],
+            "keyword_mappings": (
+                keyword_mappings if isinstance(keyword_mappings, list) else []
+            ),
+            "mapping_count": len(keyword_mappings) if keyword_mappings else 0,
+            "extraction_timestamp": datetime.utcnow().isoformat(),
         }
 
-        # Update search content
-        search_parts = []
+        # Update search content dynamically based on all available text fields
+        self._update_search_content()
+
+    def _update_search_content(self):
+        """
+        Consolidate all relevant text fields into a single, searchable string.
+        This is triggered when keywords or other text-based fields are updated.
+        """
+        search_parts = [self.filename]
+
+        # Add raw extracted text
         if self.extracted_text:
             search_parts.append(self.extracted_text)
-        if self.ai_analysis and self.ai_analysis.get("summary"):
-            search_parts.append(self.ai_analysis.get("summary"))
-        if self.ai_analysis and self.ai_analysis.get("content_analysis"):
-            search_parts.append(self.ai_analysis.get("content_analysis"))
 
-        if self.keywords:
+        # Add fields from AI analysis
+        if self.ai_analysis and isinstance(self.ai_analysis, dict):
+            if self.ai_analysis.get("summary"):
+                search_parts.append(self.ai_analysis.get("summary"))
+            if self.ai_analysis.get("content_analysis"):
+                search_parts.append(self.ai_analysis.get("content_analysis"))
+            if self.ai_analysis.get("title"):
+                search_parts.append(self.ai_analysis.get("title"))
+
+        # Add keywords, categories, and verbatim terms from mappings
+        if self.keywords and isinstance(self.keywords, dict):
             if self.keywords.get("keywords"):
                 search_parts.extend(self.keywords["keywords"])
             if self.keywords.get("categories"):
                 search_parts.extend(self.keywords["categories"])
+            if self.keywords.get("keyword_mappings"):
+                verbatim_terms = [
+                    m.get("verbatim_term")
+                    for m in self.keywords["keyword_mappings"]
+                    if m.get("verbatim_term")
+                ]
+                search_parts.extend(verbatim_terms)
 
-        self.search_content = " ".join(search_parts)
+        # Join all parts, ensuring they are strings and removing duplicates
+        self.search_content = " ".join(
+            sorted(list(set(str(p) for p in search_parts if p)))
+        )
 
     def set_metadata(self, **metadata):
         """Set document metadata"""
