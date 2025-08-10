@@ -5,7 +5,7 @@ Simplified search implementation with text-based and category filtering
 
 import logging
 from typing import Dict, Any, List, Optional
-from sqlalchemy import or_, and_, func, desc, asc, cast
+from sqlalchemy import or_, and_, func, desc, asc, cast, true
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
@@ -229,7 +229,7 @@ class SearchService:
                 logger.info(f"Cache MISS for key: {cache_key}")
             except redis.exceptions.RedisError as e:
                 logger.error(f"Redis GET error: {e}")
-        from sqlalchemy import select, literal_column, union_all
+        from sqlalchemy import literal_column, union_all, select
         from sqlalchemy.orm import undefer
 
         try:
@@ -334,13 +334,28 @@ class SearchService:
                 )
             if canonical_term:
                 logger.info(f"Applying canonical term filter for: {canonical_term}")
-                # Use jsonb_path_exists with like_regex for case-insensitive matching
-                final_query = final_query.filter(
-                    func.jsonb_path_exists(
-                        Document.keywords,
-                        '$.keyword_mappings[*] ? (@.mapped_canonical_term like_regex $term flag "i")',
-                        func.cast({"term": canonical_term}, JSONB),
+                # Use a subquery with jsonb_array_elements and ILIKE for robust, case-insensitive filtering.
+                keyword_alias = func.jsonb_array_elements(
+                    Document.keywords["keyword_mappings"]
+                ).alias("keyword_alias")
+
+                matching_docs_subquery = (
+                    select(Document.id)
+                    .join(
+                        keyword_alias,
+                        # This creates the implicit LATERAL JOIN condition
+                        true(),
                     )
+                    .filter(
+                        keyword_alias.c.value["mapped_canonical_term"].astext.ilike(
+                            f"%{canonical_term}%"
+                        )
+                    )
+                    .distinct()
+                )
+
+                final_query = final_query.filter(
+                    Document.id.in_(matching_docs_subquery)
                 )
 
             # 3. Get total count
