@@ -37,22 +37,17 @@ async def backfill_keyword_mappings():
                 continue
 
             # Extract mappings from ai_analysis
-            if doc.ai_analysis and "keyword_extraction" in doc.ai_analysis:
-                keyword_extraction_data = doc.ai_analysis["keyword_extraction"]
+            if doc.ai_analysis and "keyword_mappings" in doc.ai_analysis:
+                keyword_mappings = doc.ai_analysis.get("keyword_mappings", [])
 
-                if isinstance(keyword_extraction_data, dict):
-                    keyword_mappings = keyword_extraction_data.get(
-                        "keyword_mappings", []
+                if keyword_mappings:
+                    # Update the document with the extracted mappings
+                    await doc_service.update_document_content(
+                        document_id=doc.id,
+                        keyword_mappings=keyword_mappings,
                     )
-
-                    if keyword_mappings:
-                        # Update the document with the extracted mappings
-                        await doc_service.update_document_content(
-                            document_id=doc.id,
-                            keyword_mappings=keyword_mappings,
-                        )
-                        processed_count += 1
-                        logger.info(f"Backfilled mappings for document ID: {doc.id}")
+                    processed_count += 1
+                    logger.info(f"Backfilled mappings for document ID: {doc.id}")
 
         logger.info(
             f"Backfill process completed. {processed_count} documents were updated."
