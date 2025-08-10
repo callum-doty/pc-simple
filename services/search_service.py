@@ -333,14 +333,31 @@ class SearchService:
                     TaxonomyTerm.subcategory == subcategory
                 )
             if canonical_term:
-                # Use a more robust JSONB path query to check if the term exists in the array
-                final_query = final_query.filter(
-                    func.jsonb_path_exists(
-                        Document.keywords,
-                        "$.keyword_mappings[*] ? (@.mapped_canonical_term == $term)",
-                        func.jsonb_build_object("term", canonical_term),
+                logger.info(f"Applying canonical term filter for: {canonical_term}")
+
+                # Use a subquery with jsonb_array_elements for better compatibility
+                keyword_element = func.jsonb_array_elements(
+                    func.coalesce(
+                        Document.keywords.op("#>")("{keyword_mappings}"),
+                        func.cast("[]", JSONB),
                     )
+                ).alias("keyword_element")
+
+                # Find documents with matching canonical terms
+                matching_doc_ids = (
+                    self.db.query(Document.id)
+                    .select_from(Document, keyword_element)
+                    .filter(
+                        Document.status == DocumentStatus.COMPLETED,
+                        func.lower(
+                            keyword_element.c.value["mapped_canonical_term"].astext
+                        )
+                        == canonical_term.lower(),
+                    )
+                    .subquery()
                 )
+
+                final_query = final_query.filter(Document.id.in_(matching_doc_ids))
 
             # 3. Get total count
             total_count = final_query.with_entities(func.count(Document.id)).scalar()
