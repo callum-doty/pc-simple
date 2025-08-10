@@ -334,12 +334,12 @@ class SearchService:
                 )
             if canonical_term:
                 logger.info(f"Applying canonical term filter for: {canonical_term}")
-                # Use jsonb_path_exists for efficient and accurate filtering
+                # Use jsonb_path_exists with like_regex for case-insensitive matching
                 final_query = final_query.filter(
                     func.jsonb_path_exists(
                         Document.keywords,
-                        "$.keyword_mappings[*] ? (@.mapped_canonical_term.string().lower() == $term)",
-                        func.cast({"term": canonical_term.lower()}, JSONB),
+                        '$.keyword_mappings[*] ? (@.mapped_canonical_term like_regex $term flag "i")',
+                        func.cast({"term": canonical_term}, JSONB),
                     )
                 )
 
