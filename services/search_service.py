@@ -334,28 +334,13 @@ class SearchService:
                 )
             if canonical_term:
                 logger.info(f"Applying canonical term filter for: {canonical_term}")
-                # Use a subquery with jsonb_array_elements and ILIKE for robust, case-insensitive filtering.
-                keyword_alias = func.jsonb_array_elements(
-                    Document.keywords["keyword_mappings"]
-                ).alias("keyword_alias")
-
-                matching_docs_subquery = (
-                    select(Document.id)
-                    .join(
-                        keyword_alias,
-                        # This creates the implicit LATERAL JOIN condition
-                        true(),
-                    )
-                    .filter(
-                        keyword_alias.c.value["mapped_canonical_term"].astext.ilike(
-                            f"%{canonical_term}%"
-                        )
-                    )
-                    .distinct()
-                )
-
+                # Use jsonb_path_exists for a direct and efficient query
                 final_query = final_query.filter(
-                    Document.id.in_(matching_docs_subquery)
+                    func.jsonb_path_exists(
+                        Document.keywords,
+                        "$.keyword_mappings[*] ? (@.mapped_canonical_term == $term)",
+                        cast({"term": canonical_term}, JSONB),
+                    )
                 )
 
             # 3. Get total count
