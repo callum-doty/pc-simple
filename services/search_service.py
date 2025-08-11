@@ -6,8 +6,8 @@ Simplified search implementation with text-based and category filtering
 import logging
 import re
 from typing import Dict, Any, List, Optional
-from sqlalchemy import or_, and_, func, desc, asc, cast, true
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import or_, and_, func, desc, asc, cast, true, text
+from sqlalchemy.dialects.postgresql import JSONB, JSONPATH
 from sqlalchemy.orm import Session
 
 from database import SessionLocal
@@ -90,12 +90,15 @@ class SearchService:
             # Build a query that filters by verbatim term in the JSONB array
             # This is a more robust way to query JSONB
             pattern = f"^{re.escape(verbatim_term)}$"
-            base_query = self.db.query(Document).filter(
-                func.jsonb_path_exists(
-                    Document.keywords,
-                    '$.keyword_mappings[*] ? (@.canonical_term like_regex $term flag "i")',
-                    cast({"term": pattern}, JSONB),
+            path_expr = '$.keyword_mappings[*] ? (@.mapped_canonical_term like_regex $term flag "i")'
+            base_query = (
+                self.db.query(Document)
+                .filter(
+                    text(
+                        "jsonb_path_exists(documents.keywords, :path::jsonpath, :vars::jsonb)"
+                    )
                 )
+                .params(path=path_expr, vars=json.dumps({"term": pattern}))
             )
 
             # Further refine with text search if a query is provided
@@ -337,13 +340,14 @@ class SearchService:
             if canonical_term:
                 logger.info(f"Applying canonical term filter for: {canonical_term}")
                 # Use jsonb_path_exists for a direct and efficient query
+                # Anchor the regex to prevent partial matches
+                pattern = f"^{re.escape(canonical_term)}$"
+                path_expr = '$.keyword_mappings[*] ? (@.mapped_canonical_term like_regex $term flag "i")'
                 final_query = final_query.filter(
-                    func.jsonb_path_exists(
-                        Document.keywords,
-                        '$.keyword_mappings[*] ? (@.mapped_canonical_term like_regex $term flag "i")',
-                        cast({"term": canonical_term}, JSONB),
+                    text(
+                        "jsonb_path_exists(documents.keywords, :path::jsonpath, :vars::jsonb)"
                     )
-                )
+                ).params(path=path_expr, vars=json.dumps({"term": pattern}))
 
             # 3. Get total count
             total_count = final_query.with_entities(func.count(Document.id)).scalar()
