@@ -31,7 +31,7 @@ endblock %} {% block content %}
     <!-- Search Results -->
     <div
       id="searchResultsContainer"
-      style="overflow-y: auto; height: calc(100vh - 140px)"
+      style="overflow-y: auto; height: calc(100vh - 10px)"
     >
       <div id="searchResults">
         <!-- Document cards will be inserted here -->
@@ -202,16 +202,6 @@ endblock %} {% block content %}
                 min-height: 50px;
               "
             ></div>
-          </div>
-
-          <hr />
-
-          <!-- Document Details Section -->
-          <div class="mb-3">
-            <h6 class="text-success">
-              <i class="fas fa-info-circle me-1"></i>Document Details
-            </h6>
-            <div class="extra-info d-flex flex-wrap gap-1"></div>
           </div>
 
           <hr />
@@ -565,43 +555,6 @@ endblock %} {% block content %}
         } else {
           extractedTextContainer.innerHTML =
             '<em class="text-muted">No extracted text available for this document</em>';
-        }
-
-        // Extra Info (Document Details)
-        const extraInfoContainer = card.querySelector(".extra-info");
-        extraInfoContainer.innerHTML = "";
-
-        // Try to get document details from various possible locations
-        let docType = doc.document_type;
-        let campaignType = doc.campaign_type;
-        let docTone = doc.document_tone;
-
-        // Check in ai_analysis if not found at top level
-        if (doc.ai_analysis && typeof doc.ai_analysis === "object") {
-          const analysis = doc.ai_analysis;
-          if (!docType && analysis.document_analysis) {
-            docType = analysis.document_analysis.document_type;
-          }
-          if (!campaignType && analysis.document_analysis) {
-            campaignType = analysis.document_analysis.campaign_type;
-          }
-          if (!docTone && analysis.document_analysis) {
-            docTone = analysis.document_analysis.document_tone;
-          }
-        }
-
-        if (docType) {
-          extraInfoContainer.innerHTML += `<span class="badge bg-primary me-1 mb-1">${docType}</span>`;
-        }
-        if (campaignType) {
-          extraInfoContainer.innerHTML += `<span class="badge bg-success me-1 mb-1">${campaignType}</span>`;
-        }
-        if (docTone) {
-          extraInfoContainer.innerHTML += `<span class="badge bg-warning me-1 mb-1">${docTone}</span>`;
-        }
-        if (extraInfoContainer.innerHTML === "") {
-          extraInfoContainer.innerHTML =
-            '<em class="text-muted">No document details available</em>';
         }
 
         // Keywords
