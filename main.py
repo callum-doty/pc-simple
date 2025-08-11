@@ -156,9 +156,10 @@ if settings.storage_type == "local":
 
     @app.get("/files/{filename}")
     async def serve_file(filename: str, authorization: Optional[str] = Header(None)):
-        """Serve uploaded files for local storage - SECURED"""
-        # Verify authentication
-        security_service.verify_api_key(authorization)
+        """Serve uploaded files for local storage - CONDITIONALLY SECURED"""
+        # Only verify authentication if explicitly required
+        if settings.require_auth:
+            security_service.verify_api_key(authorization)
 
         # Sanitize filename to prevent path traversal
         safe_filename = security_service.sanitize_filename(filename)
@@ -253,7 +254,7 @@ async def health_check():
 
 # Document Upload
 @app.post("/api/documents/upload")
-@limiter.limit("5/minute")  # Reduced rate limit for security
+@limiter.limit("20/minute")  # Increased rate limit for better usability
 async def upload_documents(
     request: Request,
     files: List[UploadFile] = File(...),

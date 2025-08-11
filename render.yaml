@@ -58,6 +58,10 @@ services:
         sync: false
       - key: S3_ENDPOINT_URL
         sync: false
+      - key: REQUIRE_AUTH
+        value: "false"
+      - key: API_KEY
+        value: ""
 
   # Celery Background Worker
   - type: worker

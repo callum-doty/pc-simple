@@ -262,12 +262,25 @@ class SecurityService:
 
     def get_security_headers(self) -> dict:
         """Get security headers to add to responses"""
+        # More permissive CSP for production compatibility
+        csp_policy = (
+            "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https:; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https: data:; "
+            "style-src 'self' 'unsafe-inline' https: data:; "
+            "img-src 'self' data: blob: https: http:; "
+            "font-src 'self' data: https:; "
+            "connect-src 'self' https: wss: ws:; "
+            "media-src 'self' data: blob: https:; "
+            "object-src 'none'; "
+            "base-uri 'self';"
+        )
+
         return {
             "X-Content-Type-Options": "nosniff",
-            "X-Frame-Options": "SAMEORIGIN",  # Changed from DENY to allow same-origin frames
+            "X-Frame-Options": "SAMEORIGIN",
             "X-XSS-Protection": "1; mode=block",
             "Referrer-Policy": "strict-origin-when-cross-origin",
-            "Content-Security-Policy": "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:;",
+            "Content-Security-Policy": csp_policy,
         }
 
 
