@@ -264,10 +264,10 @@ class SecurityService:
         """Get security headers to add to responses"""
         return {
             "X-Content-Type-Options": "nosniff",
-            "X-Frame-Options": "DENY",
+            "X-Frame-Options": "SAMEORIGIN",  # Changed from DENY to allow same-origin frames
             "X-XSS-Protection": "1; mode=block",
             "Referrer-Policy": "strict-origin-when-cross-origin",
-            "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';",
+            "Content-Security-Policy": "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:;",
         }
 
 

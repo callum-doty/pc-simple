@@ -40,7 +40,7 @@ This document outlines the critical security vulnerabilities found and the fixes
 
 - **Issue**: No authentication/authorization
 - **Files Fixed**: `main.py`, `config.py`
-- **Fix**: Added API key-based authentication system
+- **Fix**: Added API key-based authentication system (configurable - disabled by default for development)
 
 ## Security Headers Added
 

@@ -212,16 +212,12 @@ def get_taxonomy_service(db: Session = Depends(get_db)) -> TaxonomyService:
 async def serve_preview(
     filename: str,
     storage_service: StorageService = Depends(get_storage_service),
-    authorization: Optional[str] = Header(None),
 ):
-    """Serve preview images by streaming from the storage service - SECURED"""
+    """Serve preview images by streaming from the storage service - PUBLIC"""
     from fastapi.responses import StreamingResponse
     import io
 
-    # Verify authentication
-    security_service.verify_api_key(authorization)
-
-    # Sanitize filename to prevent path traversal
+    # Sanitize filename to prevent path traversal (but no auth required for previews)
     safe_filename = security_service.sanitize_filename(filename)
     preview_path = f"previews/{safe_filename}"
 
@@ -353,7 +349,7 @@ async def search_documents(
     sort_direction: str = "desc",
     search_service: SearchService = Depends(get_search_service),
 ):
-    """Search documents - SECURED"""
+    """Search documents - PUBLIC ENDPOINT"""
     try:
         # Validate and sanitize search query
         safe_query = security_service.validate_search_query(q)

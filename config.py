@@ -48,7 +48,7 @@ class Settings(BaseSettings):
 
     # Security settings
     api_key: str = ""
-    require_auth: bool = True
+    require_auth: bool = False  # Default to False for development
     max_file_size_mb: int = 100
     allowed_file_extensions: list = [".pdf", ".jpg", ".jpeg", ".png", ".txt", ".docx"]
 
