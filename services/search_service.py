@@ -83,24 +83,23 @@ class SearchService:
         self, verbatim_term: str, query: str = "", limit: int = 20
     ) -> List[Dict[str, Any]]:
         """Search documents by verbatim term with hybrid search"""
-        from sqlalchemy.dialects.postgresql import JSONB
-        from sqlalchemy import cast
-
         try:
-            # Build a query that filters by verbatim term in the JSONB array
-            # This is a more robust way to query JSONB
-            pattern = f"^{re.escape(verbatim_term)}$"
-            path_expr = (
-                '$.keyword_mappings[*] ? (@.verbatim_term like_regex $term flag "i")'
-            )
-            base_query = (
-                self.db.query(Document)
-                .filter(
-                    text(
-                        "jsonb_path_exists(documents.keywords, :path::jsonpath, :vars::jsonb)"
-                    )
+            # Escape the verbatim term for SQL LIKE patterns
+            escaped_term = verbatim_term.replace("'", "''")
+
+            # Use the same approach as canonical term filtering
+            verbatim_filter = text(
+                f"""
+                EXISTS (
+                    SELECT 1 
+                    FROM jsonb_array_elements(documents.keywords->'keyword_mappings') AS mapping
+                    WHERE mapping->>'verbatim_term' ILIKE '%{escaped_term}%'
                 )
-                .params(path=path_expr, vars=json.dumps({"term": pattern}))
+            """
+            )
+
+            base_query = self.db.query(Document).filter(
+                Document.status == DocumentStatus.COMPLETED, verbatim_filter
             )
 
             # Further refine with text search if a query is provided
@@ -342,50 +341,28 @@ class SearchService:
             if canonical_term:
                 logger.info(f"Applying canonical term filter for: {canonical_term}")
 
-                # Try multiple approaches to find the canonical term
-                # 1. Exact match with case-insensitive regex (anchored)
-                pattern_exact = f"^{re.escape(canonical_term)}$"
-                path_expr_exact = '$.keyword_mappings[*] ? (@.mapped_canonical_term like_regex $term flag "i")'
+                # Use a simpler and more reliable approach with JSONB operators
+                # This avoids the SQLAlchemy parameter binding issues with JSONPath
 
-                # 2. Partial match for more flexible searching
-                pattern_partial = re.escape(canonical_term)
-                path_expr_partial = '$.keyword_mappings[*] ? (@.mapped_canonical_term like_regex $term flag "i")'
+                # Escape the canonical term for SQL LIKE patterns
+                escaped_term = canonical_term.replace("'", "''")
 
-                # 3. Also check verbatim terms in case the canonical term appears there
-                path_expr_verbatim = '$.keyword_mappings[*] ? (@.verbatim_term like_regex $term flag "i")'
-
-                # Log the patterns being used for debugging
-                logger.info(
-                    f"Search patterns - Exact: {pattern_exact}, Partial: {pattern_partial}"
-                )
-                logger.info(f"JSONPath expressions - Exact: {path_expr_exact}")
-                logger.info(f"JSONPath expressions - Partial: {path_expr_partial}")
-                logger.info(f"JSONPath expressions - Verbatim: {path_expr_verbatim}")
-
-                # Apply each filter separately and combine with OR logic
-                exact_filter = text(
-                    "jsonb_path_exists(documents.keywords, :path_exact::jsonpath, :vars_exact::jsonb)"
-                ).params(
-                    path_exact=path_expr_exact,
-                    vars_exact=json.dumps({"term": pattern_exact}),
+                # Create a raw SQL filter that searches within the keyword_mappings array
+                # This uses jsonb_array_elements to unnest the array and then searches within it
+                canonical_filter = text(
+                    f"""
+                    EXISTS (
+                        SELECT 1 
+                        FROM jsonb_array_elements(documents.keywords->'keyword_mappings') AS mapping
+                        WHERE (
+                            mapping->>'mapped_canonical_term' ILIKE '%{escaped_term}%'
+                            OR mapping->>'verbatim_term' ILIKE '%{escaped_term}%'
+                        )
+                    )
+                """
                 )
 
-                partial_filter = text(
-                    "jsonb_path_exists(documents.keywords, :path_partial::jsonpath, :vars_partial::jsonb)"
-                ).params(
-                    path_partial=path_expr_partial,
-                    vars_partial=json.dumps({"term": pattern_partial}),
-                )
-
-                verbatim_filter = text(
-                    "jsonb_path_exists(documents.keywords, :path_verbatim::jsonpath, :vars_verbatim::jsonb)"
-                ).params(
-                    path_verbatim=path_expr_verbatim,
-                    vars_verbatim=json.dumps({"term": pattern_partial}),
-                )
-
-                # Combine all three approaches with OR logic
-                canonical_filter = or_(exact_filter, partial_filter, verbatim_filter)
+                logger.info(f"Applied canonical term filter for: {canonical_term}")
                 final_query = final_query.filter(canonical_filter)
 
             # 3. Get total count

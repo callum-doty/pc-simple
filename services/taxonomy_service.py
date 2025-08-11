@@ -440,21 +440,81 @@ class TaxonomyService:
             return []
 
     async def get_all_canonical_terms(self) -> Dict[str, List[str]]:
-        """Get a dictionary of canonical terms grouped by primary category."""
+        """Get a dictionary of canonical terms grouped by primary category, filtered to only include terms that exist in document mappings."""
+        from sqlalchemy.dialects.postgresql import JSONB
+        from sqlalchemy import func, cast
+        from models.document import Document, DocumentStatus
+
         try:
-            terms = (
+            # Get canonical terms that actually exist in document keyword mappings
+            keyword_element = func.jsonb_array_elements(
+                func.coalesce(
+                    Document.keywords.op("#>")("{keyword_mappings}"),
+                    cast("[]", JSONB),
+                )
+            ).alias("keyword_element")
+
+            # Get distinct canonical terms from documents with their counts
+            document_canonical_terms = (
+                self.db.query(
+                    keyword_element.c.value["mapped_canonical_term"].astext.label(
+                        "canonical_term"
+                    ),
+                    func.count(Document.id).label("doc_count"),
+                )
+                .select_from(Document, keyword_element)
+                .filter(
+                    Document.status == DocumentStatus.COMPLETED,
+                    keyword_element.c.value["mapped_canonical_term"].isnot(None),
+                )
+                .group_by(keyword_element.c.value["mapped_canonical_term"].astext)
+                .having(
+                    func.count(Document.id) > 0
+                )  # Only terms that appear in at least one document
+                .all()
+            )
+
+            # Get the taxonomy information for these terms
+            canonical_terms_list = [term for term, count in document_canonical_terms]
+
+            if not canonical_terms_list:
+                logger.warning("No canonical terms found in document mappings")
+                return {}
+
+            # Get taxonomy information for these canonical terms
+            taxonomy_terms = (
                 self.db.query(TaxonomyTerm.primary_category, TaxonomyTerm.term)
+                .filter(TaxonomyTerm.term.in_(canonical_terms_list))
                 .order_by(TaxonomyTerm.primary_category, TaxonomyTerm.term)
                 .all()
             )
 
+            # Group by primary category
             grouped_terms = {}
-            for primary_category, term in terms:
+            for primary_category, term in taxonomy_terms:
                 if primary_category not in grouped_terms:
                     grouped_terms[primary_category] = []
                 grouped_terms[primary_category].append(term)
 
+            # Also include terms that exist in documents but not in taxonomy (with a fallback category)
+            taxonomy_term_set = {term for _, term in taxonomy_terms}
+            orphaned_terms = [
+                term for term in canonical_terms_list if term not in taxonomy_term_set
+            ]
+
+            if orphaned_terms:
+                logger.info(
+                    f"Found {len(orphaned_terms)} canonical terms in documents that don't exist in taxonomy"
+                )
+                if "Other" not in grouped_terms:
+                    grouped_terms["Other"] = []
+                grouped_terms["Other"].extend(sorted(orphaned_terms))
+
+            logger.info(
+                f"Returning {sum(len(terms) for terms in grouped_terms.values())} canonical terms across {len(grouped_terms)} categories"
+            )
             return grouped_terms
+
         except Exception as e:
             logger.error(f"Error getting all canonical terms: {str(e)}")
             return {}
