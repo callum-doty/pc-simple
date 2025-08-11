@@ -93,7 +93,7 @@ class SearchService:
             base_query = self.db.query(Document).filter(
                 func.jsonb_path_exists(
                     Document.keywords,
-                    '$.keyword_mappings[*] ? (@.verbatim_term like_regex $term flag "i")',
+                    '$.keyword_mappings[*] ? (@.mapped_canonical_term like_regex $term flag "i")',
                     cast({"term": pattern}, JSONB),
                 )
             )
