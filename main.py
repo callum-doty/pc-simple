@@ -331,7 +331,7 @@ async def search_documents(
     primary_category: Optional[str] = None,
     subcategory: Optional[str] = None,
     canonical_term: Optional[str] = None,
-    sort_by: str = "created_at",
+    sort_by: str = "relevance",
     sort_direction: str = "desc",
     search_service: SearchService = Depends(get_search_service),
 ):
@@ -347,9 +347,15 @@ async def search_documents(
             per_page = 20
 
         # Validate sort parameters
-        allowed_sort_fields = ["created_at", "updated_at", "filename", "file_size"]
+        allowed_sort_fields = [
+            "relevance",
+            "created_at",
+            "updated_at",
+            "filename",
+            "file_size",
+        ]
         if sort_by not in allowed_sort_fields:
-            sort_by = "created_at"
+            sort_by = "relevance"
 
         if sort_direction.lower() not in ["asc", "desc"]:
             sort_direction = "desc"
