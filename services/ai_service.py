@@ -880,6 +880,28 @@ class AIService:
                                 if primary_category:
                                     categories.append(primary_category)
 
+            # Handle document_analysis format
+            if "document_analysis" in ai_analysis:
+                document_analysis = ai_analysis["document_analysis"]
+                if isinstance(document_analysis, dict):
+                    if "summary" in document_analysis and document_analysis["summary"]:
+                        keywords.append(document_analysis["summary"])
+                    if (
+                        "document_type" in document_analysis
+                        and document_analysis["document_type"]
+                    ):
+                        keywords.append(document_analysis["document_type"])
+                    if (
+                        "campaign_type" in document_analysis
+                        and document_analysis["campaign_type"]
+                    ):
+                        keywords.append(document_analysis["campaign_type"])
+                    if (
+                        "document_tone" in document_analysis
+                        and document_analysis["document_tone"]
+                    ):
+                        keywords.append(document_analysis["document_tone"])
+
             # Handle classification format
             if "classification" in ai_analysis:
                 classification = ai_analysis["classification"]
