@@ -70,7 +70,7 @@ services:
       pip install -r requirements.txt
       alembic upgrade head
       python backfill_keyword_mappings.py
-    startCommand: "celery -A worker.celery_app worker --loglevel=info --concurrency=2"
+    startCommand: "celery -A worker.celery_app worker --loglevel=info --concurrency=4 --prefetch-multiplier=1"
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.9"

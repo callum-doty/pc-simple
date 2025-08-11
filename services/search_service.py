@@ -436,7 +436,19 @@ class SearchService:
             }
 
     async def _generate_enhanced_facets(self) -> Dict[str, Any]:
-        """Generate enhanced facets including canonical terms using efficient queries."""
+        """Generate enhanced facets including canonical terms using efficient queries with caching."""
+        # Check cache first
+        facet_cache_key = "facets:enhanced:all"
+        if self.redis_client:
+            try:
+                cached_facets = self.redis_client.get(facet_cache_key)
+                if cached_facets:
+                    logger.info("Cache HIT for enhanced facets")
+                    return json.loads(cached_facets)
+                logger.info("Cache MISS for enhanced facets")
+            except redis.exceptions.RedisError as e:
+                logger.error(f"Redis GET error for facets: {e}")
+
         try:
             # Facets for primary categories
             primary_category_facets = (
@@ -496,6 +508,16 @@ class SearchService:
                     for term, count in canonical_term_facets
                 ],
             }
+
+            # Cache the results for 6 hours
+            if self.redis_client:
+                try:
+                    self.redis_client.set(
+                        facet_cache_key, json.dumps(facets), ex=21600  # 6 hours
+                    )
+                    logger.info("Cached enhanced facets for 6 hours")
+                except redis.exceptions.RedisError as e:
+                    logger.error(f"Redis SET error for facets: {e}")
 
             return facets
 

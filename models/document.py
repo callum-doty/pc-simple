@@ -308,6 +308,12 @@ Index(
     postgresql_ops={"search_vector": "vector_cosine_ops"},
 )
 
+# Add composite indexes for common query patterns
+Index("idx_status_created", Document.status, Document.created_at)
+Index("idx_status_updated", Document.status, Document.updated_at)
+Index("idx_status_processed", Document.status, Document.processed_at)
+Index("idx_filename_status", Document.filename, Document.status)
+
 
 # Status constants
 class DocumentStatus:

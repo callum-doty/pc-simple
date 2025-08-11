@@ -21,8 +21,16 @@ if settings.database_url.startswith("sqlite"):
         echo=settings.debug,
     )
 else:
-    # PostgreSQL or other databases
-    engine = create_engine(settings.database_url, echo=settings.debug)
+    # PostgreSQL or other databases with optimized connection pooling
+    engine = create_engine(
+        settings.database_url,
+        echo=settings.debug,
+        pool_size=10,  # Number of connections to maintain in pool
+        max_overflow=20,  # Additional connections beyond pool_size
+        pool_pre_ping=True,  # Verify connections before use
+        pool_recycle=3600,  # Recycle connections after 1 hour
+        pool_timeout=30,  # Timeout for getting connection from pool
+    )
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

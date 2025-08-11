@@ -47,6 +47,10 @@ logger = logging.getLogger(__name__)
 # Set sqlalchemy engine logger to WARNING to reduce verbosity
 logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
+# Performance monitoring
+import time
+from contextlib import asynccontextmanager as async_context
+
 settings = get_settings()
 
 
@@ -93,6 +97,27 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Add rate limiting middleware
 app.add_middleware(SlowAPIMiddleware)
+
+
+# Add performance monitoring middleware
+@app.middleware("http")
+async def performance_monitoring_middleware(request: Request, call_next):
+    """Monitor request performance and log slow queries"""
+    start_time = time.time()
+
+    response = await call_next(request)
+
+    process_time = time.time() - start_time
+    response.headers["X-Process-Time"] = str(process_time)
+
+    # Log slow requests (>2 seconds)
+    if process_time > 2.0:
+        logger.warning(
+            f"Slow request: {request.method} {request.url.path} took {process_time:.2f}s"
+        )
+
+    return response
+
 
 # Add CORS middleware
 app.add_middleware(
