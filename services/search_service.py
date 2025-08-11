@@ -362,27 +362,31 @@ class SearchService:
                 logger.info(f"JSONPath expressions - Partial: {path_expr_partial}")
                 logger.info(f"JSONPath expressions - Verbatim: {path_expr_verbatim}")
 
-                # Combine all three approaches with OR logic
-                canonical_filter = or_(
-                    text(
-                        "jsonb_path_exists(documents.keywords, :path1::jsonpath, :vars1::jsonb)"
-                    ),
-                    text(
-                        "jsonb_path_exists(documents.keywords, :path2::jsonpath, :vars2::jsonb)"
-                    ),
-                    text(
-                        "jsonb_path_exists(documents.keywords, :path3::jsonpath, :vars3::jsonb)"
-                    ),
+                # Apply each filter separately and combine with OR logic
+                exact_filter = text(
+                    "jsonb_path_exists(documents.keywords, :path_exact::jsonpath, :vars_exact::jsonb)"
+                ).params(
+                    path_exact=path_expr_exact,
+                    vars_exact=json.dumps({"term": pattern_exact}),
                 )
 
-                final_query = final_query.filter(canonical_filter).params(
-                    path1=path_expr_exact,
-                    vars1=json.dumps({"term": pattern_exact}),
-                    path2=path_expr_partial,
-                    vars2=json.dumps({"term": pattern_partial}),
-                    path3=path_expr_verbatim,
-                    vars3=json.dumps({"term": pattern_partial}),
+                partial_filter = text(
+                    "jsonb_path_exists(documents.keywords, :path_partial::jsonpath, :vars_partial::jsonb)"
+                ).params(
+                    path_partial=path_expr_partial,
+                    vars_partial=json.dumps({"term": pattern_partial}),
                 )
+
+                verbatim_filter = text(
+                    "jsonb_path_exists(documents.keywords, :path_verbatim::jsonpath, :vars_verbatim::jsonb)"
+                ).params(
+                    path_verbatim=path_expr_verbatim,
+                    vars_verbatim=json.dumps({"term": pattern_partial}),
+                )
+
+                # Combine all three approaches with OR logic
+                canonical_filter = or_(exact_filter, partial_filter, verbatim_filter)
+                final_query = final_query.filter(canonical_filter)
 
             # 3. Get total count
             total_count = final_query.with_entities(func.count(Document.id)).scalar()
