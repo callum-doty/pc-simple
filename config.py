@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     max_concurrent_document_processing: int = 3
     processing_timeout: int = 300  # 5 minutes
 
+    # Security settings
+    api_key: str = ""
+    require_auth: bool = True
+    max_file_size_mb: int = 100
+    allowed_file_extensions: list = [".pdf", ".jpg", ".jpeg", ".png", ".txt", ".docx"]
+
     # Render-specific settings
     is_render: bool = False
     render_disk_path: str = "/opt/render/project/storage"

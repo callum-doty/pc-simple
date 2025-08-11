@@ -179,16 +179,18 @@ def enqueue_documents_task():
     """
     from services.scheduler_service import SchedulerService
 
-    db = next(get_db())
-    scheduler_service = SchedulerService(db)
+    db = None
     try:
+        db = next(get_db())
+        scheduler_service = SchedulerService(db)
         logger.info("Running scheduled task to enqueue documents.")
         scheduler_service.enqueue_pending_documents()
         logger.info("Finished scheduled task to enqueue documents.")
     except Exception as e:
         logger.error(f"Error in scheduled task enqueue_documents_task: {e}")
     finally:
-        db.close()
+        if db:
+            db.close()
 
 
 @celery_app.task(name="process_document_task")
@@ -197,13 +199,14 @@ def process_document_task(document_id: int, analysis_type: str = "unified"):
     Celery task to process a single document.
     Delegates to chunked processing for PDFs and holistic for others.
     """
-    db = next(get_db())
-    document_service = DocumentService(db)
-    ai_service = AIService(db)
-    storage_service = StorageService()
-    preview_service = PreviewService(storage_service)
-
+    db = None
     try:
+        db = next(get_db())
+        document_service = DocumentService(db)
+        ai_service = AIService(db)
+        storage_service = StorageService()
+        preview_service = PreviewService(storage_service)
+
         logger.info(
             f"Starting Celery processing for document {document_id} with {analysis_type} analysis"
         )
@@ -267,7 +270,17 @@ def process_document_task(document_id: int, analysis_type: str = "unified"):
 
     except Exception as e:
         logger.error(f"Error processing document {document_id}: {str(e)}")
-        document_service.update_document_status_sync(
-            document_id, DocumentStatus.FAILED, progress=0, error=str(e)
-        )
+        if db:
+            try:
+                document_service = DocumentService(db)
+                document_service.update_document_status_sync(
+                    document_id, DocumentStatus.FAILED, progress=0, error=str(e)
+                )
+            except Exception as db_error:
+                logger.error(
+                    f"Failed to update document status after error: {db_error}"
+                )
         return False
+    finally:
+        if db:
+            db.close()

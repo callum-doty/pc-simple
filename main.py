@@ -11,6 +11,7 @@ from fastapi import (
     UploadFile,
     File,
     Request,
+    Header,
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -25,6 +26,7 @@ import os
 from typing import List, Optional
 import logging
 from sqlalchemy.orm import Session
+from pathlib import Path
 
 from config import get_settings
 from database import init_db, get_db
@@ -34,6 +36,7 @@ from services.search_service import SearchService
 from services.storage_service import StorageService
 from services.taxonomy_service import TaxonomyService
 from services.preview_service import PreviewService
+from services.security_service import security_service
 from api.dashboard import router as dashboard_router
 from api.documents import router as documents_router
 from worker import process_document_task
@@ -99,6 +102,20 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
 
+# Add security headers middleware
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Add security headers to all responses"""
+    response = await call_next(request)
+
+    # Add security headers
+    security_headers = security_service.get_security_headers()
+    for header, value in security_headers.items():
+        response.headers[header] = value
+
+    return response
+
+
 # Add performance monitoring middleware
 @app.middleware("http")
 async def performance_monitoring_middleware(request: Request, call_next):
@@ -138,11 +155,21 @@ app.include_router(documents_router, prefix="/api", tags=["Documents"])
 if settings.storage_type == "local":
 
     @app.get("/files/{filename}")
-    async def serve_file(filename: str):
-        """Serve uploaded files for local storage"""
-        file_path = os.path.join(settings.storage_path, filename)
-        if os.path.exists(file_path):
-            return FileResponse(file_path)
+    async def serve_file(filename: str, authorization: Optional[str] = Header(None)):
+        """Serve uploaded files for local storage - SECURED"""
+        # Verify authentication
+        security_service.verify_api_key(authorization)
+
+        # Sanitize filename to prevent path traversal
+        safe_filename = security_service.sanitize_filename(filename)
+
+        # Validate file path
+        safe_path = security_service.validate_file_path(
+            safe_filename, settings.storage_path
+        )
+
+        if os.path.exists(safe_path):
+            return FileResponse(safe_path)
         raise HTTPException(status_code=404, detail="File not found")
 
 
@@ -185,19 +212,25 @@ def get_taxonomy_service(db: Session = Depends(get_db)) -> TaxonomyService:
 async def serve_preview(
     filename: str,
     storage_service: StorageService = Depends(get_storage_service),
+    authorization: Optional[str] = Header(None),
 ):
-    """Serve preview images by streaming from the storage service"""
+    """Serve preview images by streaming from the storage service - SECURED"""
     from fastapi.responses import StreamingResponse
     import io
 
-    preview_path = f"previews/{filename}"
+    # Verify authentication
+    security_service.verify_api_key(authorization)
+
+    # Sanitize filename to prevent path traversal
+    safe_filename = security_service.sanitize_filename(filename)
+    preview_path = f"previews/{safe_filename}"
 
     try:
         file_content = await storage_service.get_file(preview_path)
         if file_content:
             return StreamingResponse(io.BytesIO(file_content), media_type="image/png")
     except Exception as e:
-        logger.error(f"Error serving preview for {filename}: {e}")
+        logger.error(f"Error serving preview for {safe_filename}: {e}")
 
     # If the file is not found or an error occurs, return a placeholder
     placeholder_path = "static/placeholder.svg"
@@ -224,21 +257,39 @@ async def health_check():
 
 # Document Upload
 @app.post("/api/documents/upload")
-@limiter.limit("10/minute")
+@limiter.limit("5/minute")  # Reduced rate limit for security
 async def upload_documents(
     request: Request,
     files: List[UploadFile] = File(...),
     document_service: DocumentService = Depends(get_document_service),
     storage_service: StorageService = Depends(get_storage_service),
     background_tasks: BackgroundTasks = None,
+    authorization: Optional[str] = Header(None),
 ):
-    """Upload one or more documents"""
+    """Upload one or more documents - SECURED"""
     try:
+        # Verify authentication
+        security_service.verify_api_key(authorization)
+
         tasks = []
+        validation_errors = []
         delay_seconds = 120  # 2 minutes
 
         for i, file in enumerate(files):
             if not file.filename:
+                validation_errors.append(f"File {i+1}: No filename provided")
+                continue
+
+            # Validate file before processing
+            validation_result = await security_service.validate_upload_file(file)
+
+            if not validation_result["valid"]:
+                validation_errors.extend(
+                    [
+                        f"File '{file.filename}': {error}"
+                        for error in validation_result["errors"]
+                    ]
+                )
                 continue
 
             # Save file to storage
@@ -261,15 +312,27 @@ async def upload_documents(
                     "filename": document.filename,
                     "task_id": task.id,
                     "processing_starts_in_seconds": countdown,
+                    "file_info": validation_result.get("file_info", {}),
                 }
             )
 
-        return {
-            "success": True,
+        # Return results with any validation errors
+        response = {
+            "success": len(tasks) > 0,
             "message": f"Queued {len(tasks)} documents for processing",
             "tasks": tasks,
         }
 
+        if validation_errors:
+            response["validation_errors"] = validation_errors
+            response[
+                "message"
+            ] += f". {len(validation_errors)} files rejected due to validation errors."
+
+        return response
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Upload error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -290,10 +353,27 @@ async def search_documents(
     sort_direction: str = "desc",
     search_service: SearchService = Depends(get_search_service),
 ):
-    """Search documents"""
+    """Search documents - SECURED"""
     try:
+        # Validate and sanitize search query
+        safe_query = security_service.validate_search_query(q)
+
+        # Validate pagination parameters
+        if page < 1:
+            page = 1
+        if per_page < 1 or per_page > 100:
+            per_page = 20
+
+        # Validate sort parameters
+        allowed_sort_fields = ["created_at", "updated_at", "filename", "file_size"]
+        if sort_by not in allowed_sort_fields:
+            sort_by = "created_at"
+
+        if sort_direction.lower() not in ["asc", "desc"]:
+            sort_direction = "desc"
+
         results = await search_service.search(
-            query=q,
+            query=safe_query,
             page=page,
             per_page=per_page,
             primary_category=primary_category,
@@ -311,6 +391,8 @@ async def search_documents(
             "total_count": results["total_count"],
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Search error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

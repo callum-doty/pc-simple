@@ -489,6 +489,7 @@ class AIService:
         Extract text from PDF page by page using AI-based OCR.
         Yields a tuple of (page_number, extracted_text).
         """
+        doc = None
         try:
             doc = fitz.open(stream=file_content, filetype="pdf")
             if doc.page_count == 0:
@@ -496,11 +497,17 @@ class AIService:
                 return
 
             for page_num in range(len(doc)):
+                page = None
+                pix = None
                 try:
                     page = doc.load_page(page_num)
                     logger.info(f"Performing AI-based OCR on page {page_num + 1}.")
                     pix = page.get_pixmap(dpi=200)  # Lower DPI to save memory
                     img_data = pix.tobytes("png")
+
+                    # Clean up pixmap immediately after use
+                    pix = None
+
                     ocr_text = await self._extract_text_from_image(img_data)
                     if ocr_text.strip():
                         yield (page_num + 1, ocr_text)
@@ -509,9 +516,19 @@ class AIService:
                         f"Error processing page {page_num + 1}: {str(page_error)}"
                     )
                     continue
-            doc.close()
+                finally:
+                    # Clean up page resources
+                    if pix:
+                        pix = None
+                    if page:
+                        page = None
+
         except Exception as e:
             logger.error(f"Error extracting text from PDF with AI OCR: {str(e)}")
+        finally:
+            # Always close the document
+            if doc:
+                doc.close()
 
     async def _extract_text_from_pdf(self, file_content: bytes) -> str:
         """
