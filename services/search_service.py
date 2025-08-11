@@ -88,11 +88,12 @@ class SearchService:
             escaped_term = verbatim_term.replace("'", "''")
 
             # Use the same approach as canonical term filtering
+            # Note: Cast json to jsonb since the keywords column is json type
             verbatim_filter = text(
                 f"""
                 EXISTS (
                     SELECT 1 
-                    FROM jsonb_array_elements(documents.keywords->'keyword_mappings') AS mapping
+                    FROM jsonb_array_elements(documents.keywords::jsonb->'keyword_mappings') AS mapping
                     WHERE mapping->>'verbatim_term' ILIKE '%{escaped_term}%'
                 )
             """
@@ -135,9 +136,10 @@ class SearchService:
             )
 
             # Unnest keywords and perform aggregations
+            # Note: Cast json to jsonb since the keywords column is json type
             keyword_element = func.jsonb_array_elements(
                 func.coalesce(
-                    Document.keywords.op("#>")("{keyword_mappings}"),
+                    Document.keywords.op("::jsonb").op("#>")("{keyword_mappings}"),
                     cast("[]", JSONB),
                 )
             ).alias("keyword_element")
@@ -349,11 +351,12 @@ class SearchService:
 
                 # Create a raw SQL filter that searches within the keyword_mappings array
                 # This uses jsonb_array_elements to unnest the array and then searches within it
+                # Note: Cast json to jsonb since the keywords column is json type
                 canonical_filter = text(
                     f"""
                     EXISTS (
                         SELECT 1 
-                        FROM jsonb_array_elements(documents.keywords->'keyword_mappings') AS mapping
+                        FROM jsonb_array_elements(documents.keywords::jsonb->'keyword_mappings') AS mapping
                         WHERE (
                             mapping->>'mapped_canonical_term' ILIKE '%{escaped_term}%'
                             OR mapping->>'verbatim_term' ILIKE '%{escaped_term}%'
@@ -455,9 +458,10 @@ class SearchService:
             )
 
             # Use jsonb_array_elements to unnest the keyword_mappings array
+            # Note: Cast json to jsonb since the keywords column is json type
             keyword_element = func.jsonb_array_elements(
                 func.coalesce(
-                    Document.keywords.op("#>")("{keyword_mappings}"),
+                    Document.keywords.op("::jsonb").op("#>")("{keyword_mappings}"),
                     func.cast("[]", JSONB),
                 )
             ).alias("keyword_element")

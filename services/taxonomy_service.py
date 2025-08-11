@@ -447,9 +447,10 @@ class TaxonomyService:
 
         try:
             # Get canonical terms that actually exist in document keyword mappings
+            # Note: Cast json to jsonb since the keywords column is json type
             keyword_element = func.jsonb_array_elements(
                 func.coalesce(
-                    Document.keywords.op("#>")("{keyword_mappings}"),
+                    Document.keywords.op("::jsonb").op("#>")("{keyword_mappings}"),
                     cast("[]", JSONB),
                 )
             ).alias("keyword_element")
