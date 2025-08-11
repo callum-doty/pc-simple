@@ -10,6 +10,7 @@ from fastapi import (
     Depends,
     UploadFile,
     File,
+    Form,
     Request,
     Header,
 )
@@ -258,7 +259,7 @@ async def health_check():
 async def upload_documents(
     request: Request,
     files: List[UploadFile] = File(...),
-    password: str = "",
+    password: str = Form(""),
     document_service: DocumentService = Depends(get_document_service),
     storage_service: StorageService = Depends(get_storage_service),
     background_tasks: BackgroundTasks = None,
@@ -267,7 +268,7 @@ async def upload_documents(
     try:
         # Simple password check
         upload_password = settings.upload_password or "upload123"
-        if password != upload_password:
+        if not password or password != upload_password:
             raise HTTPException(status_code=401, detail="Invalid upload password")
 
         tasks = []
