@@ -258,43 +258,34 @@ async def health_check():
 async def upload_documents(
     request: Request,
     files: List[UploadFile] = File(...),
+    password: str = "",
     document_service: DocumentService = Depends(get_document_service),
     storage_service: StorageService = Depends(get_storage_service),
     background_tasks: BackgroundTasks = None,
-    authorization: Optional[str] = Header(None),
 ):
-    """Upload one or more documents - SECURED"""
+    """Upload one or more documents - SIMPLE PASSWORD PROTECTION"""
     try:
-        # Verify authentication
-        security_service.verify_api_key(authorization)
+        # Simple password check
+        upload_password = settings.upload_password or "upload123"
+        if password != upload_password:
+            raise HTTPException(status_code=401, detail="Invalid upload password")
 
         tasks = []
-        validation_errors = []
         delay_seconds = 120  # 2 minutes
 
         for i, file in enumerate(files):
             if not file.filename:
-                validation_errors.append(f"File {i+1}: No filename provided")
                 continue
 
-            # Validate file before processing
-            validation_result = await security_service.validate_upload_file(file)
-
-            if not validation_result["valid"]:
-                validation_errors.extend(
-                    [
-                        f"File '{file.filename}': {error}"
-                        for error in validation_result["errors"]
-                    ]
-                )
-                continue
+            # Basic filename sanitization only
+            safe_filename = security_service.sanitize_filename(file.filename)
 
             # Save file to storage
             file_path = await storage_service.save_file(file)
 
             # Create document record
             document = await document_service.create_document(
-                filename=file.filename, file_path=file_path, file_size=file.size or 0
+                filename=safe_filename, file_path=file_path, file_size=file.size or 0
             )
 
             # Dispatch Celery task for processing with a staggered delay
@@ -309,22 +300,15 @@ async def upload_documents(
                     "filename": document.filename,
                     "task_id": task.id,
                     "processing_starts_in_seconds": countdown,
-                    "file_info": validation_result.get("file_info", {}),
                 }
             )
 
-        # Return results with any validation errors
+        # Return results
         response = {
             "success": len(tasks) > 0,
             "message": f"Queued {len(tasks)} documents for processing",
             "tasks": tasks,
         }
-
-        if validation_errors:
-            response["validation_errors"] = validation_errors
-            response[
-                "message"
-            ] += f". {len(validation_errors)} files rejected due to validation errors."
 
         return response
 

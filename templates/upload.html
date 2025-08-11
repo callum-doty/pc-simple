@@ -36,6 +36,22 @@ endblock %} {% block content %}
             <div id="selectedFiles"></div>
           </div>
 
+          <!-- Password Field -->
+          <div class="mb-4">
+            <label for="uploadPassword" class="form-label"
+              >Upload Password:</label
+            >
+            <input
+              type="password"
+              class="form-control"
+              id="uploadPassword"
+              name="password"
+              placeholder="Enter upload password"
+              required
+            />
+            <div class="form-text">Default password: upload123</div>
+          </div>
+
           <!-- Upload Button -->
           <div class="text-center">
             <button
@@ -238,6 +254,10 @@ endblock %} {% block content %}
       selectedFiles.forEach((file) => {
         formData.append("files", file);
       });
+
+      // Add password to form data
+      const password = $("#uploadPassword").val();
+      formData.append("password", password);
 
       // Show progress
       $("#uploadProgress").show();

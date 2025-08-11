@@ -106,7 +106,9 @@ class SearchService:
             # Further refine with text search if a query is provided
             if query.strip():
                 ts_query = func.plainto_tsquery("english", query)
-                base_query = base_query.filter(Document.ts_vector.op("@@")(ts_query))
+                base_query = base_query.filter(
+                    Document.ts_vector.bool_op("@@")(ts_query)
+                )
 
             # Order by creation date and limit results
             results = base_query.order_by(desc(Document.created_at)).limit(limit).all()
@@ -275,7 +277,7 @@ class SearchService:
                             "text_relevance"
                         ),
                     )
-                    .filter(Document.ts_vector.op("@@")(ts_query))
+                    .filter(Document.ts_vector.bool_op("@@")(ts_query))
                     .subquery()
                 )
 
