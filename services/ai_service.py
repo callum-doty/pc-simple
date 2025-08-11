@@ -975,8 +975,12 @@ class AIService:
                 categories.extend(ai_analysis["categories"])
 
         # Remove duplicates and None values
-        keywords = list(set([k for k in keywords if k and isinstance(k, str)]))
-        categories = list(set([c for c in categories if c and isinstance(c, str)]))
+        keywords = list(
+            set([k.strip().lower() for k in keywords if k and isinstance(k, str)])
+        )
+        categories = list(
+            set([c.strip().lower() for c in categories if c and isinstance(c, str)])
+        )
 
         return keywords, categories
 
