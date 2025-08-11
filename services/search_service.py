@@ -90,7 +90,9 @@ class SearchService:
             # Build a query that filters by verbatim term in the JSONB array
             # This is a more robust way to query JSONB
             pattern = f"^{re.escape(verbatim_term)}$"
-            path_expr = '$.keyword_mappings[*] ? (@.mapped_canonical_term like_regex $term flag "i")'
+            path_expr = (
+                '$.keyword_mappings[*] ? (@.verbatim_term like_regex $term flag "i")'
+            )
             base_query = (
                 self.db.query(Document)
                 .filter(
