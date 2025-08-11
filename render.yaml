@@ -22,7 +22,7 @@ services:
       pip install -r requirements.txt
       alembic upgrade head
       python backfill_keyword_mappings.py
-    startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
+    startCommand: "python debug_keywords.py"
     healthCheckPath: "/health"
     envVars:
       - key: PYTHON_VERSION
