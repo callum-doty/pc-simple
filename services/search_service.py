@@ -338,7 +338,7 @@ class SearchService:
                 final_query = final_query.filter(
                     func.jsonb_path_exists(
                         Document.keywords,
-                        "$.keyword_mappings[*] ? (@.mapped_canonical_term == $term)",
+                        '$.keyword_mappings[*] ? (@.mapped_canonical_term like_regex $term flag "i")',
                         cast({"term": canonical_term}, JSONB),
                     )
                 )
