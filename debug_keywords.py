@@ -84,7 +84,7 @@ async def debug_keywords():
             print(f"Document: {hinman_doc.filename}")
 
             # Try to re-analyze this document
-            ai_service = AIService()
+            ai_service = AIService(db=db)
             print(f"AI Provider: {ai_service.ai_provider}")
 
             if hinman_doc.status == "COMPLETED" and hinman_doc.file_path:
