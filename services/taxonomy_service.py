@@ -440,13 +440,13 @@ class TaxonomyService:
             return []
 
     async def get_all_canonical_terms(self) -> Dict[str, List[str]]:
-        """Get a dictionary of canonical terms grouped by primary category, filtered to only include terms that exist in document mappings."""
+        """Get a dictionary of canonical terms grouped by primary category, with fallback to all taxonomy terms."""
         from sqlalchemy.dialects.postgresql import JSONB
         from sqlalchemy import func, cast
         from models.document import Document, DocumentStatus
 
         try:
-            # Get canonical terms that actually exist in document keyword mappings
+            # First, try to get canonical terms that actually exist in document keyword mappings
             # Note: Cast json to jsonb since the keywords column is json type
             keyword_element = func.jsonb_array_elements(
                 func.coalesce(
@@ -478,44 +478,97 @@ class TaxonomyService:
             # Get the taxonomy information for these terms
             canonical_terms_list = [term for term, count in document_canonical_terms]
 
-            if not canonical_terms_list:
-                logger.warning("No canonical terms found in document mappings")
-                return {}
-
-            # Get taxonomy information for these canonical terms
-            taxonomy_terms = (
-                self.db.query(TaxonomyTerm.primary_category, TaxonomyTerm.term)
-                .filter(TaxonomyTerm.term.in_(canonical_terms_list))
-                .order_by(TaxonomyTerm.primary_category, TaxonomyTerm.term)
-                .all()
-            )
-
-            # Group by primary category
-            grouped_terms = {}
-            for primary_category, term in taxonomy_terms:
-                if primary_category not in grouped_terms:
-                    grouped_terms[primary_category] = []
-                grouped_terms[primary_category].append(term)
-
-            # Also include terms that exist in documents but not in taxonomy (with a fallback category)
-            taxonomy_term_set = {term for _, term in taxonomy_terms}
-            orphaned_terms = [
-                term for term in canonical_terms_list if term not in taxonomy_term_set
-            ]
-
-            if orphaned_terms:
+            if canonical_terms_list:
                 logger.info(
-                    f"Found {len(orphaned_terms)} canonical terms in documents that don't exist in taxonomy"
+                    f"Found {len(canonical_terms_list)} canonical terms in document mappings"
                 )
-                if "Other" not in grouped_terms:
-                    grouped_terms["Other"] = []
-                grouped_terms["Other"].extend(sorted(orphaned_terms))
 
-            logger.info(
-                f"Returning {sum(len(terms) for terms in grouped_terms.values())} canonical terms across {len(grouped_terms)} categories"
-            )
-            return grouped_terms
+                # Get taxonomy information for these canonical terms
+                taxonomy_terms = (
+                    self.db.query(TaxonomyTerm.primary_category, TaxonomyTerm.term)
+                    .filter(TaxonomyTerm.term.in_(canonical_terms_list))
+                    .order_by(TaxonomyTerm.primary_category, TaxonomyTerm.term)
+                    .all()
+                )
+
+                # Group by primary category
+                grouped_terms = {}
+                for primary_category, term in taxonomy_terms:
+                    if primary_category not in grouped_terms:
+                        grouped_terms[primary_category] = []
+                    grouped_terms[primary_category].append(term)
+
+                # Also include terms that exist in documents but not in taxonomy (with a fallback category)
+                taxonomy_term_set = {term for _, term in taxonomy_terms}
+                orphaned_terms = [
+                    term
+                    for term in canonical_terms_list
+                    if term not in taxonomy_term_set
+                ]
+
+                if orphaned_terms:
+                    logger.info(
+                        f"Found {len(orphaned_terms)} canonical terms in documents that don't exist in taxonomy"
+                    )
+                    if "Other" not in grouped_terms:
+                        grouped_terms["Other"] = []
+                    grouped_terms["Other"].extend(sorted(orphaned_terms))
+
+                logger.info(
+                    f"Returning {sum(len(terms) for terms in grouped_terms.values())} canonical terms across {len(grouped_terms)} categories from document mappings"
+                )
+                return grouped_terms
+
+            else:
+                # Fallback: No canonical terms found in document mappings, return all taxonomy terms
+                logger.warning(
+                    "No canonical terms found in document mappings, falling back to all taxonomy terms"
+                )
+
+                taxonomy_terms = (
+                    self.db.query(TaxonomyTerm.primary_category, TaxonomyTerm.term)
+                    .order_by(TaxonomyTerm.primary_category, TaxonomyTerm.term)
+                    .all()
+                )
+
+                grouped_terms = {}
+                for primary_category, term in taxonomy_terms:
+                    if primary_category not in grouped_terms:
+                        grouped_terms[primary_category] = []
+                    grouped_terms[primary_category].append(term)
+
+                logger.info(
+                    f"Fallback: Returning {sum(len(terms) for terms in grouped_terms.values())} canonical terms across {len(grouped_terms)} categories from taxonomy table"
+                )
+                return grouped_terms
 
         except Exception as e:
-            logger.error(f"Error getting all canonical terms: {str(e)}")
-            return {}
+            logger.error(
+                f"Error getting canonical terms from document mappings: {str(e)}"
+            )
+
+            # Final fallback: Return all taxonomy terms if there's an error
+            try:
+                logger.info(
+                    "Attempting final fallback to all taxonomy terms due to error"
+                )
+                taxonomy_terms = (
+                    self.db.query(TaxonomyTerm.primary_category, TaxonomyTerm.term)
+                    .order_by(TaxonomyTerm.primary_category, TaxonomyTerm.term)
+                    .all()
+                )
+
+                grouped_terms = {}
+                for primary_category, term in taxonomy_terms:
+                    if primary_category not in grouped_terms:
+                        grouped_terms[primary_category] = []
+                    grouped_terms[primary_category].append(term)
+
+                logger.info(
+                    f"Final fallback: Returning {sum(len(terms) for terms in grouped_terms.values())} canonical terms across {len(grouped_terms)} categories"
+                )
+                return grouped_terms
+
+            except Exception as fallback_error:
+                logger.error(f"Final fallback also failed: {str(fallback_error)}")
+                return {}
