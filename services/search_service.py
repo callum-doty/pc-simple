@@ -341,15 +341,48 @@ class SearchService:
                 )
             if canonical_term:
                 logger.info(f"Applying canonical term filter for: {canonical_term}")
-                # Use jsonb_path_exists for a direct and efficient query
-                # Anchor the regex to prevent partial matches
-                pattern = f"^{re.escape(canonical_term)}$"
-                path_expr = '$.keyword_mappings[*] ? (@.mapped_canonical_term like_regex $term flag "i")'
-                final_query = final_query.filter(
+
+                # Try multiple approaches to find the canonical term
+                # 1. Exact match with case-insensitive regex (anchored)
+                pattern_exact = f"^{re.escape(canonical_term)}$"
+                path_expr_exact = '$.keyword_mappings[*] ? (@.mapped_canonical_term like_regex $term flag "i")'
+
+                # 2. Partial match for more flexible searching
+                pattern_partial = re.escape(canonical_term)
+                path_expr_partial = '$.keyword_mappings[*] ? (@.mapped_canonical_term like_regex $term flag "i")'
+
+                # 3. Also check verbatim terms in case the canonical term appears there
+                path_expr_verbatim = '$.keyword_mappings[*] ? (@.verbatim_term like_regex $term flag "i")'
+
+                # Log the patterns being used for debugging
+                logger.info(
+                    f"Search patterns - Exact: {pattern_exact}, Partial: {pattern_partial}"
+                )
+                logger.info(f"JSONPath expressions - Exact: {path_expr_exact}")
+                logger.info(f"JSONPath expressions - Partial: {path_expr_partial}")
+                logger.info(f"JSONPath expressions - Verbatim: {path_expr_verbatim}")
+
+                # Combine all three approaches with OR logic
+                canonical_filter = or_(
                     text(
-                        "jsonb_path_exists(documents.keywords, :path::jsonpath, :vars::jsonb)"
-                    )
-                ).params(path=path_expr, vars=json.dumps({"term": pattern}))
+                        "jsonb_path_exists(documents.keywords, :path1::jsonpath, :vars1::jsonb)"
+                    ),
+                    text(
+                        "jsonb_path_exists(documents.keywords, :path2::jsonpath, :vars2::jsonb)"
+                    ),
+                    text(
+                        "jsonb_path_exists(documents.keywords, :path3::jsonpath, :vars3::jsonb)"
+                    ),
+                )
+
+                final_query = final_query.filter(canonical_filter).params(
+                    path1=path_expr_exact,
+                    vars1=json.dumps({"term": pattern_exact}),
+                    path2=path_expr_partial,
+                    vars2=json.dumps({"term": pattern_partial}),
+                    path3=path_expr_verbatim,
+                    vars3=json.dumps({"term": pattern_partial}),
+                )
 
             # 3. Get total count
             total_count = final_query.with_entities(func.count(Document.id)).scalar()
