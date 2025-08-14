@@ -467,6 +467,9 @@ endblock %} {% block content %}
           const card = createDocumentCard(doc);
           searchResults.appendChild(card);
         });
+
+        // Start observing new images for lazy loading
+        observeImages();
       }
 
       function createDocumentCard(doc) {
@@ -500,11 +503,20 @@ endblock %} {% block content %}
           ).textContent = `Relevance: ${doc.relevance}`;
         }
 
+        // Implement lazy loading for preview images
         const previewImage = card.querySelector(".preview-image");
+
+        // Always start with placeholder
+        previewImage.src = "/static/placeholder.svg";
+
+        // Set up lazy loading attributes
         if (doc.preview_url) {
-          previewImage.src = doc.preview_url;
-        } else {
-          previewImage.src = "/static/placeholder.svg";
+          previewImage.dataset.lazySrc = doc.preview_url;
+          previewImage.classList.add("lazy-load");
+
+          // Add loading indicator
+          previewImage.style.backgroundColor = "#f8f9fa";
+          previewImage.style.border = "1px solid #dee2e6";
         }
 
         // Add event listener to fetch details on expand
@@ -612,6 +624,65 @@ endblock %} {% block content %}
                     ${message}
                 </div>
             `;
+      }
+
+      // Intersection Observer for lazy loading images
+      const imageObserver = new IntersectionObserver(
+        (entries, observer) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              const img = entry.target;
+              const lazySrc = img.dataset.lazySrc;
+
+              if (lazySrc) {
+                // Create a new image to preload
+                const tempImg = new Image();
+
+                // Add loading state
+                img.style.opacity = "0.6";
+                img.style.transition = "opacity 0.3s ease";
+
+                tempImg.onload = () => {
+                  // Image loaded successfully, update src
+                  img.src = lazySrc;
+                  img.style.opacity = "1";
+                  img.style.backgroundColor = "transparent";
+                  img.style.border = "none";
+                  img.classList.remove("lazy-load");
+                  delete img.dataset.lazySrc;
+                };
+
+                tempImg.onerror = () => {
+                  // Image failed to load, keep placeholder
+                  img.style.opacity = "1";
+                  img.style.backgroundColor = "transparent";
+                  img.style.border = "none";
+                  img.classList.remove("lazy-load");
+                  delete img.dataset.lazySrc;
+                };
+
+                // Start loading the image
+                tempImg.src = lazySrc;
+              }
+
+              // Stop observing this image
+              observer.unobserve(img);
+            }
+          });
+        },
+        {
+          root: searchResultsContainer,
+          rootMargin: "50px", // Start loading 50px before image comes into view
+          threshold: 0.1,
+        }
+      );
+
+      // Function to observe new images for lazy loading
+      function observeImages() {
+        const lazyImages = document.querySelectorAll(".lazy-load");
+        lazyImages.forEach((img) => {
+          imageObserver.observe(img);
+        });
       }
 
       // Load more results when scrolling near bottom
