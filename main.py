@@ -191,7 +191,7 @@ async def security_headers_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def authentication_middleware(request: Request, call_next):
-    """Check authentication for protected routes with bulletproof error handling"""
+    """Check authentication for protected routes with SECURE fail-closed handling"""
     # Skip authentication for certain paths
     skip_auth_paths = [
         "/login",
@@ -202,6 +202,7 @@ async def authentication_middleware(request: Request, call_next):
 
     # Check if authentication is required
     if not settings.require_app_auth:
+        logger.debug("Authentication disabled via REQUIRE_APP_AUTH=false")
         response = await call_next(request)
         return response
 
@@ -210,48 +211,74 @@ async def authentication_middleware(request: Request, call_next):
         response = await call_next(request)
         return response
 
-    # CRITICAL FIX: Check if SessionMiddleware was properly installed FIRST
-    if not session_middleware_installed:
-        logger.warning(
-            "SessionMiddleware failed to install - disabling authentication for this request. "
-            "This is a deployment configuration issue that needs to be resolved."
+    # SECURITY FIRST: Check if APP_PASSWORD is configured
+    if not settings.app_password:
+        logger.error(
+            "CRITICAL SECURITY ISSUE: APP_PASSWORD not configured but REQUIRE_APP_AUTH=true. "
+            "Denying access to protect the application."
         )
-        # Allow the request to proceed without authentication when sessions are broken
-        # This prevents the 500 error and allows the app to function
-        response = await call_next(request)
-        return response
+        if request.method == "GET" and not request.url.path.startswith("/api"):
+            return RedirectResponse(url="/login?error=config", status_code=302)
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail="Authentication not properly configured. Please contact administrator.",
+            )
 
-    # BULLETPROOF session validation with comprehensive error handling
+    # SECURITY FIRST: Check if SessionMiddleware was properly installed
+    if not session_middleware_installed:
+        logger.error(
+            "CRITICAL SECURITY ISSUE: SessionMiddleware failed to install. "
+            "This is a deployment configuration issue. Denying access for security."
+        )
+        if request.method == "GET" and not request.url.path.startswith("/api"):
+            return RedirectResponse(url="/login?error=session", status_code=302)
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail="Session management not available. Please contact administrator.",
+            )
+
+    # SECURE session validation with fail-closed error handling
     try:
         # First, ensure session is available before ANY access attempts
         if not hasattr(request, "session"):
-            logger.warning(
-                "SessionMiddleware installed but request.session not available - "
-                "allowing request to proceed without authentication"
+            logger.error(
+                "SECURITY ISSUE: SessionMiddleware installed but request.session not available. "
+                "Denying access for security."
             )
-            # Allow request to proceed rather than failing
-            response = await call_next(request)
-            return response
+            if request.method == "GET" and not request.url.path.startswith("/api"):
+                return RedirectResponse(url="/login?error=session", status_code=302)
+            else:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Session management not available. Please contact administrator.",
+                )
 
-        # Second, try to test session accessibility without calling security service yet
+        # Second, try to test session accessibility
         try:
             # Test basic session access
             _ = dict(request.session)
             logger.debug("Session is accessible")
         except Exception as session_test_error:
-            logger.warning(
-                f"Session accessibility test failed: {session_test_error} - allowing request to proceed"
+            logger.error(
+                f"SECURITY ISSUE: Session accessibility test failed: {session_test_error}. "
+                "Denying access for security."
             )
-            # Allow request to proceed rather than failing
-            response = await call_next(request)
-            return response
+            if request.method == "GET" and not request.url.path.startswith("/api"):
+                return RedirectResponse(url="/login?error=session", status_code=302)
+            else:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Session management error. Please contact administrator.",
+                )
 
-        # Third, NOW try the security service validation with additional protection
+        # Third, NOW try the security service validation
         try:
             is_valid = security_service.is_session_valid(request)
         except Exception as security_service_error:
             logger.error(f"Security service validation error: {security_service_error}")
-            # If security service fails, treat as invalid session
+            # FAIL CLOSED: If security service fails, deny access
             is_valid = False
 
         # If not authenticated, redirect to login
@@ -280,13 +307,15 @@ async def authentication_middleware(request: Request, call_next):
         logger.error(f"Request path: {request.url.path}")
         logger.error(f"Request method: {request.method}")
 
-        # CRITICAL FIX: Instead of failing, allow the request to proceed
-        # This prevents 500 errors when session management is broken
-        logger.warning(
-            "Allowing request to proceed due to authentication middleware error"
-        )
-        response = await call_next(request)
-        return response
+        # FAIL CLOSED: On unexpected errors, deny access for security
+        logger.error("SECURITY: Denying access due to authentication middleware error")
+        if request.method == "GET" and not request.url.path.startswith("/api"):
+            return RedirectResponse(url="/login?error=system", status_code=302)
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail="Authentication system error. Please contact administrator.",
+            )
 
 
 # Add performance monitoring middleware

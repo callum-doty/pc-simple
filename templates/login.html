@@ -104,6 +104,47 @@
             </div>
             {% endif %}
 
+            <!-- Handle URL error parameters -->
+            <script>
+              document.addEventListener("DOMContentLoaded", function () {
+                const urlParams = new URLSearchParams(window.location.search);
+                const errorType = urlParams.get("error");
+
+                if (errorType && !document.querySelector(".alert")) {
+                  let errorMessage = "";
+                  let alertClass = "alert-danger";
+
+                  switch (errorType) {
+                    case "config":
+                      errorMessage =
+                        '<i class="fas fa-cog me-2"></i>Authentication is not properly configured. Please contact the administrator.';
+                      break;
+                    case "session":
+                      errorMessage =
+                        '<i class="fas fa-server me-2"></i>Session management is not available. Please contact the administrator.';
+                      break;
+                    case "system":
+                      errorMessage =
+                        '<i class="fas fa-exclamation-triangle me-2"></i>System error occurred. Please try again or contact the administrator.';
+                      break;
+                    default:
+                      errorMessage =
+                        '<i class="fas fa-exclamation-triangle me-2"></i>An error occurred. Please try again.';
+                  }
+
+                  if (errorMessage) {
+                    const alertDiv = document.createElement("div");
+                    alertDiv.className = `alert ${alertClass}`;
+                    alertDiv.setAttribute("role", "alert");
+                    alertDiv.innerHTML = errorMessage;
+
+                    const form = document.getElementById("loginForm");
+                    form.parentNode.insertBefore(alertDiv, form);
+                  }
+                }
+              });
+            </script>
+
             <form method="post" action="/login" id="loginForm">
               <div class="mb-4">
                 <label for="password" class="form-label">
