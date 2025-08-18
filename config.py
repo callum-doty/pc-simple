@@ -53,6 +53,16 @@ class Settings(BaseSettings):
     max_file_size_mb: int = 100
     allowed_file_extensions: list = [".pdf", ".jpg", ".jpeg", ".png", ".txt", ".docx"]
 
+    # App-wide authentication settings
+    app_password: str = (
+        ""  # Password to access the entire app (set via APP_PASSWORD env var)
+    )
+    require_app_auth: bool = True  # Enable app-wide password protection
+    session_timeout_hours: int = 24  # Session timeout in hours
+    session_secret_key: str = (
+        ""  # Secret key for session encryption (set via SESSION_SECRET_KEY env var)
+    )
+
     # Render-specific settings
     is_render: bool = False
     render_disk_path: str = "/opt/render/project/storage"
@@ -113,6 +123,17 @@ class ProductionSettings(Settings):
             and not self.gemini_api_key
         ):
             raise ValueError("At least one AI API key must be set in production")
+
+        # Ensure password protection is properly configured
+        if self.require_app_auth:
+            if not self.app_password:
+                raise ValueError(
+                    "APP_PASSWORD must be set when REQUIRE_APP_AUTH is enabled"
+                )
+            if not self.session_secret_key:
+                raise ValueError(
+                    "SESSION_SECRET_KEY must be set when REQUIRE_APP_AUTH is enabled"
+                )
 
 
 class RenderSettings(ProductionSettings):

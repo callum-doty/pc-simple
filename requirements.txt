@@ -37,6 +37,7 @@ numpy==1.26.4
 
 # Security
 python-magic==0.4.27
+itsdangerous==2.2.0
 
 # Optional dependencies for development
 pytest==7.4.3

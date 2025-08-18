@@ -6,10 +6,12 @@ import os
 import logging
 from pathlib import Path
 from typing import Optional, List
-from fastapi import HTTPException, Header, UploadFile
+from fastapi import HTTPException, Header, UploadFile, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import magic
 import hashlib
+import secrets
+from datetime import datetime, timedelta
 
 from config import get_settings
 
@@ -282,6 +284,57 @@ class SecurityService:
             "Referrer-Policy": "strict-origin-when-cross-origin",
             "Content-Security-Policy": csp_policy,
         }
+
+    # Session management methods
+    def verify_app_password(self, password: str) -> bool:
+        """Verify the app-wide password"""
+        if not settings.require_app_auth:
+            return True
+
+        return password == settings.app_password
+
+    def create_session_token(self) -> str:
+        """Create a secure session token"""
+        return secrets.token_urlsafe(32)
+
+    def is_session_valid(self, request: Request) -> bool:
+        """Check if the current session is valid"""
+        if not settings.require_app_auth:
+            return True
+
+        session_token = request.session.get("auth_token")
+        session_timestamp = request.session.get("auth_timestamp")
+
+        if not session_token or not session_timestamp:
+            return False
+
+        # Check if session has expired
+        try:
+            auth_time = datetime.fromisoformat(session_timestamp)
+            expiry_time = auth_time + timedelta(hours=settings.session_timeout_hours)
+
+            if datetime.now() > expiry_time:
+                return False
+
+            return True
+        except (ValueError, TypeError):
+            return False
+
+    def create_session(self, request: Request) -> str:
+        """Create a new authenticated session"""
+        session_token = self.create_session_token()
+        request.session["auth_token"] = session_token
+        request.session["auth_timestamp"] = datetime.now().isoformat()
+        return session_token
+
+    def destroy_session(self, request: Request):
+        """Destroy the current session"""
+        request.session.clear()
+
+    def get_login_redirect_url(self, request: Request) -> str:
+        """Get the URL to redirect to after login"""
+        # Store the original URL they were trying to access
+        return request.url.path if request.url.path != "/login" else "/"
 
 
 # Global security service instance

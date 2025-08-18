@@ -16,8 +16,9 @@ from fastapi import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 from contextlib import asynccontextmanager
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -28,6 +29,7 @@ from typing import List, Optional
 import logging
 from sqlalchemy.orm import Session
 from pathlib import Path
+from datetime import datetime
 
 from config import get_settings
 from database import init_db, get_db
@@ -94,6 +96,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Add session middleware
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.session_secret_key,
+    max_age=settings.session_timeout_hours * 3600,  # Convert hours to seconds
+    same_site="lax",
+    https_only=not settings.debug,  # Use secure cookies in production
+)
+
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address, default_limits=["1000/hour"])
 app.state.limiter = limiter
@@ -114,6 +125,44 @@ async def security_headers_middleware(request: Request, call_next):
     for header, value in security_headers.items():
         response.headers[header] = value
 
+    return response
+
+
+# Add authentication middleware
+@app.middleware("http")
+async def authentication_middleware(request: Request, call_next):
+    """Check authentication for protected routes"""
+    # Skip authentication for certain paths
+    skip_auth_paths = [
+        "/login",
+        "/health",
+        "/static",
+        "/favicon.ico",
+    ]
+
+    # Check if authentication is required
+    if not settings.require_app_auth:
+        response = await call_next(request)
+        return response
+
+    # Skip authentication for allowed paths
+    if any(request.url.path.startswith(path) for path in skip_auth_paths):
+        response = await call_next(request)
+        return response
+
+    # Check if user is authenticated
+    if not security_service.is_session_valid(request):
+        # Store the original URL for redirect after login
+        if request.method == "GET" and not request.url.path.startswith("/api"):
+            # For HTML pages, redirect to login
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=302
+            )
+        else:
+            # For API calls, return 401
+            raise HTTPException(status_code=401, detail="Authentication required")
+
+    response = await call_next(request)
     return response
 
 
@@ -239,6 +288,69 @@ async def serve_preview(
 
 
 # Routes
+
+
+# Authentication routes
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request, next: str = "/"):
+    """Login page"""
+    # If already authenticated, redirect to intended page
+    if security_service.is_session_valid(request):
+        return RedirectResponse(url=next, status_code=302)
+
+    return templates.TemplateResponse("login.html", {"request": request, "next": next})
+
+
+@app.post("/login")
+@limiter.limit("10/minute")  # Rate limit login attempts
+async def login_submit(
+    request: Request,
+    password: str = Form(...),
+    remember_me: bool = Form(False),
+    next: str = Form("/"),
+):
+    """Process login form"""
+    try:
+        # Verify password
+        if not security_service.verify_app_password(password):
+            return templates.TemplateResponse(
+                "login.html",
+                {
+                    "request": request,
+                    "error": "Invalid password. Please try again.",
+                    "next": next,
+                },
+            )
+
+        # Create session
+        security_service.create_session(request)
+
+        # If remember me is checked, extend session
+        if remember_me:
+            # Extend session to 30 days
+            request.session["auth_timestamp"] = datetime.now().isoformat()
+            # Note: We could implement a separate "remember me" token system here
+
+        # Redirect to intended page
+        return RedirectResponse(url=next, status_code=302)
+
+    except Exception as e:
+        logger.error(f"Login error: {str(e)}")
+        return templates.TemplateResponse(
+            "login.html",
+            {
+                "request": request,
+                "error": "An error occurred during login. Please try again.",
+                "next": next,
+            },
+        )
+
+
+@app.get("/logout")
+async def logout(request: Request):
+    """Logout and destroy session"""
+    security_service.destroy_session(request)
+    return RedirectResponse(url="/login", status_code=302)
 
 
 @app.get("/", response_class=HTMLResponse)
