@@ -287,9 +287,6 @@ async def authentication_middleware(request: Request, call_next):
     except HTTPException:
         # Re-raise HTTP exceptions (like 401, 302 redirects) - these are expected
         raise
-    except RedirectResponse:
-        # Re-raise redirect responses - these are expected
-        raise
     except Exception as e:
         logger.error(f"Unexpected authentication middleware error: {e}")
         logger.error(f"Error type: {type(e).__name__}")
