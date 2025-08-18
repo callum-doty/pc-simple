@@ -29,7 +29,7 @@ from typing import List, Optional
 import logging
 from sqlalchemy.orm import Session
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from config import get_settings
 from database import init_db, get_db
@@ -98,6 +98,8 @@ app = FastAPI(
 
 # Add session middleware - MUST be added before other middleware that uses sessions
 session_secret = settings.session_secret_key
+
+# Validate session secret
 if not session_secret:
     if settings.debug:
         # Generate a temporary secret for development
@@ -105,26 +107,49 @@ if not session_secret:
 
         session_secret = secrets.token_urlsafe(32)
         logger.warning(
-            "Using temporary session secret for development. Set SESSION_SECRET_KEY for production."
+            "SESSION_SECRET_KEY not set. Using temporary session secret for development. "
+            "Set SESSION_SECRET_KEY environment variable for production."
         )
     else:
-        # In production, if no session secret is found, generate one as fallback
-        import secrets
-
-        session_secret = secrets.token_urlsafe(32)
+        # In production, this is a critical error
         logger.error(
-            "SESSION_SECRET_KEY not found in production! Using generated fallback."
+            "CRITICAL: SESSION_SECRET_KEY not found in production environment! "
+            "Session authentication will not work properly."
         )
+        raise ValueError(
+            "SESSION_SECRET_KEY must be set in production. "
+            "Add SESSION_SECRET_KEY to your environment variables."
+        )
+elif len(session_secret) < 32:
+    logger.warning(
+        f"SESSION_SECRET_KEY is too short ({len(session_secret)} chars). "
+        "Recommend at least 32 characters for security."
+    )
 
-# Add SessionMiddleware first - this is critical for session access
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=session_secret,
-    max_age=settings.session_timeout_hours * 3600,  # Convert hours to seconds
-    same_site="lax",
-    https_only=not settings.debug,  # Use secure cookies in production
-)
-logger.info(f"SessionMiddleware initialized with secret length: {len(session_secret)}")
+# Validate session timeout
+session_timeout_seconds = settings.session_timeout_hours * 3600
+if session_timeout_seconds <= 0:
+    logger.warning("Invalid session timeout, using default 24 hours")
+    session_timeout_seconds = 24 * 3600
+
+try:
+    # Add SessionMiddleware first - this is critical for session access
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=session_secret,
+        max_age=session_timeout_seconds,
+        same_site="lax",
+        https_only=not settings.debug,  # Use secure cookies in production
+    )
+    logger.info(
+        f"SessionMiddleware initialized successfully - "
+        f"Secret length: {len(session_secret)}, "
+        f"Timeout: {settings.session_timeout_hours}h, "
+        f"Secure cookies: {not settings.debug}"
+    )
+except Exception as e:
+    logger.error(f"Failed to initialize SessionMiddleware: {e}")
+    raise RuntimeError(f"SessionMiddleware initialization failed: {e}")
 
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address, default_limits=["1000/hour"])
@@ -384,6 +409,62 @@ async def home(request: Request):
 async def health_check():
     """Health check endpoint for Render"""
     return {"status": "healthy", "version": "2.0.0"}
+
+
+@app.get("/health/session")
+async def session_health_check(request: Request):
+    """Session health check endpoint for debugging"""
+    try:
+        # Check if SessionMiddleware is working
+        session_available = hasattr(request, "session")
+
+        health_info = {
+            "session_middleware_available": session_available,
+            "require_app_auth": settings.require_app_auth,
+            "session_timeout_hours": settings.session_timeout_hours,
+            "session_secret_configured": bool(settings.session_secret_key),
+            "session_secret_length": (
+                len(settings.session_secret_key) if settings.session_secret_key else 0
+            ),
+        }
+
+        if session_available:
+            # Try to access session data
+            try:
+                session_data = dict(request.session)
+                health_info["session_accessible"] = True
+                health_info["session_keys"] = list(session_data.keys())
+                health_info["has_auth_token"] = "auth_token" in session_data
+                health_info["has_auth_timestamp"] = "auth_timestamp" in session_data
+
+                if "auth_timestamp" in session_data:
+                    try:
+                        auth_time = datetime.fromisoformat(
+                            session_data["auth_timestamp"]
+                        )
+                        expiry_time = auth_time + timedelta(
+                            hours=settings.session_timeout_hours
+                        )
+                        health_info["session_expires_at"] = expiry_time.isoformat()
+                        health_info["session_expired"] = datetime.now() > expiry_time
+                    except Exception as e:
+                        health_info["timestamp_parse_error"] = str(e)
+
+            except Exception as e:
+                health_info["session_accessible"] = False
+                health_info["session_error"] = str(e)
+
+        return {
+            "status": "healthy" if session_available else "warning",
+            "session_health": health_info,
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "session_health": {"error": "Failed to check session health"},
+        }
 
 
 # Document Upload

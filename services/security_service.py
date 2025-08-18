@@ -300,15 +300,25 @@ class SecurityService:
     def is_session_valid(self, request: Request) -> bool:
         """Check if the current session is valid"""
         if not settings.require_app_auth:
+            logger.debug("App authentication disabled, allowing access")
             return True
 
         try:
             # Try to access the session - if SessionMiddleware is installed, this will work
+            if not hasattr(request, "session"):
+                logger.error(
+                    "CRITICAL: request.session not available. "
+                    "SessionMiddleware is not properly installed or configured."
+                )
+                return False
+
             session_token = request.session.get("auth_token")
             session_timestamp = request.session.get("auth_timestamp")
 
             if not session_token or not session_timestamp:
-                logger.debug("No session token or timestamp found")
+                logger.debug(
+                    "No session token or timestamp found - user not authenticated"
+                )
                 return False
 
             # Check if session has expired
@@ -319,16 +329,27 @@ class SecurityService:
                 )
 
                 if datetime.now() > expiry_time:
-                    logger.debug("Session has expired")
+                    logger.debug(
+                        f"Session has expired. Auth time: {auth_time}, "
+                        f"Expiry time: {expiry_time}, Current time: {datetime.now()}"
+                    )
+                    # Clear expired session
+                    self.destroy_session(request)
                     return False
 
+                logger.debug(f"Session is valid. Expires at: {expiry_time}")
                 return True
             except (ValueError, TypeError) as e:
-                logger.error(f"Error parsing session timestamp: {e}")
+                logger.error(
+                    f"Error parsing session timestamp '{session_timestamp}': {e}"
+                )
+                # Clear invalid session
+                self.destroy_session(request)
                 return False
         except AttributeError as e:
             logger.error(
-                f"Session validation error: SessionMiddleware must be installed to access request.session - {e}"
+                f"CRITICAL: SessionMiddleware error - request.session not accessible: {e}. "
+                f"Ensure SessionMiddleware is added to the FastAPI app before other middleware."
             )
             return False
         except Exception as e:
