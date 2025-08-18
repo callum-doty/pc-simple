@@ -98,6 +98,13 @@ app = FastAPI(
 
 # Add session middleware
 try:
+    # Debug logging for session configuration
+    logger.info(f"Initializing SessionMiddleware...")
+    logger.info(f"Debug mode: {settings.debug}")
+    logger.info(f"Require app auth: {settings.require_app_auth}")
+    logger.info(f"Session secret key present: {bool(settings.session_secret_key)}")
+    logger.info(f"App password present: {bool(settings.app_password)}")
+
     # Use session secret key or generate a temporary one for development
     session_secret = settings.session_secret_key
     if not session_secret:
@@ -110,9 +117,17 @@ try:
                 "Using temporary session secret for development. Set SESSION_SECRET_KEY for production."
             )
         else:
-            logger.error("SESSION_SECRET_KEY not set - session middleware disabled")
-            session_secret = None
+            # In production, if no session secret is found, generate one as fallback
+            # This should not happen if environment variables are set correctly
+            import secrets
 
+            session_secret = secrets.token_urlsafe(32)
+            logger.error(
+                "SESSION_SECRET_KEY not found in production! Using generated fallback. "
+                "Please check environment variable configuration."
+            )
+
+    # Always add SessionMiddleware if we have a secret
     if session_secret:
         app.add_middleware(
             SessionMiddleware,
@@ -121,13 +136,31 @@ try:
             same_site="lax",
             https_only=not settings.debug,  # Use secure cookies in production
         )
-        logger.info("SessionMiddleware initialized successfully")
-    else:
-        logger.warning(
-            "SessionMiddleware not initialized - authentication may not work"
+        logger.info(
+            f"SessionMiddleware initialized successfully with secret length: {len(session_secret)}"
         )
+    else:
+        logger.error(
+            "Failed to obtain session secret - SessionMiddleware not initialized"
+        )
+
 except Exception as e:
     logger.error(f"Failed to initialize SessionMiddleware: {e}")
+    # In case of any error, try to add a basic session middleware as fallback
+    try:
+        import secrets
+
+        fallback_secret = secrets.token_urlsafe(32)
+        app.add_middleware(
+            SessionMiddleware,
+            secret_key=fallback_secret,
+            max_age=24 * 3600,  # 24 hours
+            same_site="lax",
+            https_only=False,
+        )
+        logger.warning("Added fallback SessionMiddleware due to initialization error")
+    except Exception as fallback_error:
+        logger.error(f"Failed to add fallback SessionMiddleware: {fallback_error}")
 
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address, default_limits=["1000/hour"])
