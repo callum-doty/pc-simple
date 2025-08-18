@@ -303,11 +303,7 @@ class SecurityService:
             return True
 
         try:
-            # Check if session middleware is available
-            if not hasattr(request, "session") or "session" not in request.scope:
-                logger.warning("SessionMiddleware not available - sessions disabled")
-                return False
-
+            # Try to access the session - if SessionMiddleware is installed, this will work
             session_token = request.session.get("auth_token")
             session_timestamp = request.session.get("auth_timestamp")
 
@@ -327,25 +323,20 @@ class SecurityService:
                 return True
             except (ValueError, TypeError):
                 return False
-        except (AssertionError, AttributeError) as e:
-            logger.error(f"Session validation error: {e}")
+        except Exception as e:
+            logger.error(
+                f"Session validation error: SessionMiddleware must be installed to access request.session"
+            )
             return False
 
     def create_session(self, request: Request) -> str:
         """Create a new authenticated session"""
         try:
-            # Check if session middleware is available
-            if not hasattr(request, "session") or "session" not in request.scope:
-                logger.error("SessionMiddleware not available - cannot create session")
-                raise HTTPException(
-                    status_code=500, detail="Session management not available"
-                )
-
             session_token = self.create_session_token()
             request.session["auth_token"] = session_token
             request.session["auth_timestamp"] = datetime.now().isoformat()
             return session_token
-        except (AssertionError, AttributeError) as e:
+        except Exception as e:
             logger.error(f"Session creation error: {e}")
             raise HTTPException(
                 status_code=500, detail="Session management not available"
@@ -354,15 +345,8 @@ class SecurityService:
     def destroy_session(self, request: Request):
         """Destroy the current session"""
         try:
-            # Check if session middleware is available
-            if not hasattr(request, "session") or "session" not in request.scope:
-                logger.warning(
-                    "SessionMiddleware not available - cannot destroy session"
-                )
-                return
-
             request.session.clear()
-        except (AssertionError, AttributeError) as e:
+        except Exception as e:
             logger.error(f"Session destruction error: {e}")
             # Don't raise an exception for logout - just log the error
 
