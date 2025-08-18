@@ -189,10 +189,9 @@ async def security_headers_middleware(request: Request, call_next):
     return response
 
 
-# Add authentication middleware with improved session handling
 @app.middleware("http")
 async def authentication_middleware(request: Request, call_next):
-    """Check authentication for protected routes"""
+    """Check authentication for protected routes with bulletproof error handling"""
     # Skip authentication for certain paths
     skip_auth_paths = [
         "/login",
@@ -227,9 +226,9 @@ async def authentication_middleware(request: Request, call_next):
                 status_code=500, detail="Session management not available"
             )
 
-    # Enhanced session validation with better error handling
+    # BULLETPROOF session validation with comprehensive error handling
     try:
-        # Ensure session is available before checking validity
+        # First, ensure session is available before ANY access attempts
         if not hasattr(request, "session"):
             logger.error(
                 "CRITICAL: SessionMiddleware not properly configured - "
@@ -245,8 +244,32 @@ async def authentication_middleware(request: Request, call_next):
                     status_code=500, detail="Session management not available"
                 )
 
-        # Check if user is authenticated
-        if not security_service.is_session_valid(request):
+        # Second, try to test session accessibility without calling security service yet
+        try:
+            # Test basic session access
+            _ = dict(request.session)
+            logger.debug("Session is accessible")
+        except Exception as session_test_error:
+            logger.error(f"Session accessibility test failed: {session_test_error}")
+            # If session is not accessible, redirect to login
+            if request.method == "GET" and not request.url.path.startswith("/api"):
+                return RedirectResponse(
+                    url=f"/login?next={request.url.path}", status_code=302
+                )
+            else:
+                raise HTTPException(status_code=500, detail="Session not accessible")
+
+        # Third, NOW try the security service validation with additional protection
+        try:
+            is_valid = security_service.is_session_valid(request)
+        except Exception as security_service_error:
+            logger.error(f"Security service validation error: {security_service_error}")
+            # If security service fails, treat as invalid session
+            is_valid = False
+
+        # If not authenticated, redirect to login
+        if not is_valid:
+            logger.debug("User not authenticated, redirecting to login")
             # Store the original URL for redirect after login
             if request.method == "GET" and not request.url.path.startswith("/api"):
                 # For HTML pages, redirect to login
@@ -257,21 +280,33 @@ async def authentication_middleware(request: Request, call_next):
                 # For API calls, return 401
                 raise HTTPException(status_code=401, detail="Authentication required")
 
+        # If we get here, user is authenticated, proceed with request
         response = await call_next(request)
         return response
 
     except HTTPException:
-        # Re-raise HTTP exceptions (like 401, 302 redirects)
+        # Re-raise HTTP exceptions (like 401, 302 redirects) - these are expected
+        raise
+    except RedirectResponse:
+        # Re-raise redirect responses - these are expected
         raise
     except Exception as e:
-        logger.error(f"Authentication middleware error: {e}")
-        # For HTML pages, redirect to login on any error
+        logger.error(f"Unexpected authentication middleware error: {e}")
+        logger.error(f"Error type: {type(e).__name__}")
+        logger.error(f"Request path: {request.url.path}")
+        logger.error(f"Request method: {request.method}")
+
+        # For HTML pages, redirect to login on any unexpected error
         if request.method == "GET" and not request.url.path.startswith("/api"):
+            logger.info("Redirecting to login due to unexpected error")
             return RedirectResponse(
                 url=f"/login?next={request.url.path}", status_code=302
             )
         else:
-            raise HTTPException(status_code=500, detail="Authentication error")
+            logger.error("Raising 500 error for API request")
+            raise HTTPException(
+                status_code=500, detail=f"Authentication error: {str(e)}"
+            )
 
 
 # Add performance monitoring middleware
