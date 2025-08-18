@@ -308,6 +308,7 @@ class SecurityService:
             session_timestamp = request.session.get("auth_timestamp")
 
             if not session_token or not session_timestamp:
+                logger.debug("No session token or timestamp found")
                 return False
 
             # Check if session has expired
@@ -318,15 +319,20 @@ class SecurityService:
                 )
 
                 if datetime.now() > expiry_time:
+                    logger.debug("Session has expired")
                     return False
 
                 return True
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as e:
+                logger.error(f"Error parsing session timestamp: {e}")
                 return False
-        except Exception as e:
+        except AttributeError as e:
             logger.error(
-                f"Session validation error: SessionMiddleware must be installed to access request.session"
+                f"Session validation error: SessionMiddleware must be installed to access request.session - {e}"
             )
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected session validation error: {e}")
             return False
 
     def create_session(self, request: Request) -> str:
