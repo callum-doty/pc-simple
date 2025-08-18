@@ -97,13 +97,37 @@ app = FastAPI(
 )
 
 # Add session middleware
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=settings.session_secret_key,
-    max_age=settings.session_timeout_hours * 3600,  # Convert hours to seconds
-    same_site="lax",
-    https_only=not settings.debug,  # Use secure cookies in production
-)
+try:
+    # Use session secret key or generate a temporary one for development
+    session_secret = settings.session_secret_key
+    if not session_secret:
+        if settings.debug:
+            # Generate a temporary secret for development
+            import secrets
+
+            session_secret = secrets.token_urlsafe(32)
+            logger.warning(
+                "Using temporary session secret for development. Set SESSION_SECRET_KEY for production."
+            )
+        else:
+            logger.error("SESSION_SECRET_KEY not set - session middleware disabled")
+            session_secret = None
+
+    if session_secret:
+        app.add_middleware(
+            SessionMiddleware,
+            secret_key=session_secret,
+            max_age=settings.session_timeout_hours * 3600,  # Convert hours to seconds
+            same_site="lax",
+            https_only=not settings.debug,  # Use secure cookies in production
+        )
+        logger.info("SessionMiddleware initialized successfully")
+    else:
+        logger.warning(
+            "SessionMiddleware not initialized - authentication may not work"
+        )
+except Exception as e:
+    logger.error(f"Failed to initialize SessionMiddleware: {e}")
 
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address, default_limits=["1000/hour"])

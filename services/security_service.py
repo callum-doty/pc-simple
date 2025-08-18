@@ -302,34 +302,69 @@ class SecurityService:
         if not settings.require_app_auth:
             return True
 
-        session_token = request.session.get("auth_token")
-        session_timestamp = request.session.get("auth_timestamp")
-
-        if not session_token or not session_timestamp:
-            return False
-
-        # Check if session has expired
         try:
-            auth_time = datetime.fromisoformat(session_timestamp)
-            expiry_time = auth_time + timedelta(hours=settings.session_timeout_hours)
-
-            if datetime.now() > expiry_time:
+            # Check if session middleware is available
+            if not hasattr(request, "session") or "session" not in request.scope:
+                logger.warning("SessionMiddleware not available - sessions disabled")
                 return False
 
-            return True
-        except (ValueError, TypeError):
+            session_token = request.session.get("auth_token")
+            session_timestamp = request.session.get("auth_timestamp")
+
+            if not session_token or not session_timestamp:
+                return False
+
+            # Check if session has expired
+            try:
+                auth_time = datetime.fromisoformat(session_timestamp)
+                expiry_time = auth_time + timedelta(
+                    hours=settings.session_timeout_hours
+                )
+
+                if datetime.now() > expiry_time:
+                    return False
+
+                return True
+            except (ValueError, TypeError):
+                return False
+        except (AssertionError, AttributeError) as e:
+            logger.error(f"Session validation error: {e}")
             return False
 
     def create_session(self, request: Request) -> str:
         """Create a new authenticated session"""
-        session_token = self.create_session_token()
-        request.session["auth_token"] = session_token
-        request.session["auth_timestamp"] = datetime.now().isoformat()
-        return session_token
+        try:
+            # Check if session middleware is available
+            if not hasattr(request, "session") or "session" not in request.scope:
+                logger.error("SessionMiddleware not available - cannot create session")
+                raise HTTPException(
+                    status_code=500, detail="Session management not available"
+                )
+
+            session_token = self.create_session_token()
+            request.session["auth_token"] = session_token
+            request.session["auth_timestamp"] = datetime.now().isoformat()
+            return session_token
+        except (AssertionError, AttributeError) as e:
+            logger.error(f"Session creation error: {e}")
+            raise HTTPException(
+                status_code=500, detail="Session management not available"
+            )
 
     def destroy_session(self, request: Request):
         """Destroy the current session"""
-        request.session.clear()
+        try:
+            # Check if session middleware is available
+            if not hasattr(request, "session") or "session" not in request.scope:
+                logger.warning(
+                    "SessionMiddleware not available - cannot destroy session"
+                )
+                return
+
+            request.session.clear()
+        except (AssertionError, AttributeError) as e:
+            logger.error(f"Session destruction error: {e}")
+            # Don't raise an exception for logout - just log the error
 
     def get_login_redirect_url(self, request: Request) -> str:
         """Get the URL to redirect to after login"""
