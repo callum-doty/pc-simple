@@ -151,6 +151,15 @@ except Exception as e:
     logger.error(f"Failed to initialize SessionMiddleware: {e}")
     raise RuntimeError(f"SessionMiddleware initialization failed: {e}")
 
+# Add CORS middleware early in the stack (after SessionMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address, default_limits=["1000/hour"])
 app.state.limiter = limiter
@@ -174,7 +183,7 @@ async def security_headers_middleware(request: Request, call_next):
     return response
 
 
-# Add authentication middleware
+# Add authentication middleware with improved session handling
 @app.middleware("http")
 async def authentication_middleware(request: Request, call_next):
     """Check authentication for protected routes"""
@@ -196,20 +205,51 @@ async def authentication_middleware(request: Request, call_next):
         response = await call_next(request)
         return response
 
-    # Check if user is authenticated
-    if not security_service.is_session_valid(request):
-        # Store the original URL for redirect after login
-        if request.method == "GET" and not request.url.path.startswith("/api"):
+    # Enhanced session validation with better error handling
+    try:
+        # Ensure session is available before checking validity
+        if not hasattr(request, "session"):
+            logger.error(
+                "CRITICAL: SessionMiddleware not properly configured - "
+                "request.session not available in authentication middleware"
+            )
             # For HTML pages, redirect to login
+            if request.method == "GET" and not request.url.path.startswith("/api"):
+                return RedirectResponse(
+                    url=f"/login?next={request.url.path}", status_code=302
+                )
+            else:
+                raise HTTPException(
+                    status_code=500, detail="Session management not available"
+                )
+
+        # Check if user is authenticated
+        if not security_service.is_session_valid(request):
+            # Store the original URL for redirect after login
+            if request.method == "GET" and not request.url.path.startswith("/api"):
+                # For HTML pages, redirect to login
+                return RedirectResponse(
+                    url=f"/login?next={request.url.path}", status_code=302
+                )
+            else:
+                # For API calls, return 401
+                raise HTTPException(status_code=401, detail="Authentication required")
+
+        response = await call_next(request)
+        return response
+
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 401, 302 redirects)
+        raise
+    except Exception as e:
+        logger.error(f"Authentication middleware error: {e}")
+        # For HTML pages, redirect to login on any error
+        if request.method == "GET" and not request.url.path.startswith("/api"):
             return RedirectResponse(
                 url=f"/login?next={request.url.path}", status_code=302
             )
         else:
-            # For API calls, return 401
-            raise HTTPException(status_code=401, detail="Authentication required")
-
-    response = await call_next(request)
-    return response
+            raise HTTPException(status_code=500, detail="Authentication error")
 
 
 # Add performance monitoring middleware
@@ -231,15 +271,6 @@ async def performance_monitoring_middleware(request: Request, call_next):
 
     return response
 
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")

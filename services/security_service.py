@@ -312,6 +312,17 @@ class SecurityService:
                 )
                 return False
 
+            # Additional check to ensure session is actually accessible
+            try:
+                # Test session access by trying to read it
+                _ = dict(request.session)
+            except Exception as e:
+                logger.error(
+                    f"CRITICAL: Session object exists but is not accessible: {e}. "
+                    "This indicates a SessionMiddleware timing or configuration issue."
+                )
+                return False
+
             session_token = request.session.get("auth_token")
             session_timestamp = request.session.get("auth_timestamp")
 
