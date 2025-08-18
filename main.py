@@ -99,26 +99,26 @@ app = FastAPI(
 # Add session middleware - MUST be added before other middleware that uses sessions
 session_secret = settings.session_secret_key
 
-# Validate session secret
+# Validate session secret with more robust handling
 if not session_secret:
-    if settings.debug:
-        # Generate a temporary secret for development
+    if settings.debug or not settings.require_app_auth:
+        # Generate a temporary secret for development or when auth is disabled
         import secrets
 
         session_secret = secrets.token_urlsafe(32)
         logger.warning(
-            "SESSION_SECRET_KEY not set. Using temporary session secret for development. "
+            "SESSION_SECRET_KEY not set. Using temporary session secret. "
             "Set SESSION_SECRET_KEY environment variable for production."
         )
     else:
-        # In production, this is a critical error
+        # In production with auth enabled, generate a temporary secret but warn
+        import secrets
+
+        session_secret = secrets.token_urlsafe(32)
         logger.error(
             "CRITICAL: SESSION_SECRET_KEY not found in production environment! "
-            "Session authentication will not work properly."
-        )
-        raise ValueError(
-            "SESSION_SECRET_KEY must be set in production. "
-            "Add SESSION_SECRET_KEY to your environment variables."
+            "Using temporary session secret. This is NOT secure for production. "
+            "Set SESSION_SECRET_KEY environment variable immediately."
         )
 elif len(session_secret) < 32:
     logger.warning(
@@ -132,6 +132,9 @@ if session_timeout_seconds <= 0:
     logger.warning("Invalid session timeout, using default 24 hours")
     session_timeout_seconds = 24 * 3600
 
+# Global flag to track if SessionMiddleware is properly installed
+session_middleware_installed = False
+
 try:
     # Add SessionMiddleware first - this is critical for session access
     app.add_middleware(
@@ -141,6 +144,7 @@ try:
         same_site="lax",
         https_only=not settings.debug,  # Use secure cookies in production
     )
+    session_middleware_installed = True
     logger.info(
         f"SessionMiddleware initialized successfully - "
         f"Secret length: {len(session_secret)}, "
@@ -149,7 +153,9 @@ try:
     )
 except Exception as e:
     logger.error(f"Failed to initialize SessionMiddleware: {e}")
-    raise RuntimeError(f"SessionMiddleware initialization failed: {e}")
+    session_middleware_installed = False
+    # Don't raise the error - let the app start but disable session-dependent features
+    logger.warning("Application will start without session support")
 
 # Add CORS middleware early in the stack (after SessionMiddleware)
 app.add_middleware(
@@ -204,6 +210,22 @@ async def authentication_middleware(request: Request, call_next):
     if any(request.url.path.startswith(path) for path in skip_auth_paths):
         response = await call_next(request)
         return response
+
+    # Check if SessionMiddleware was properly installed
+    if not session_middleware_installed:
+        logger.error(
+            "CRITICAL: SessionMiddleware failed to install - "
+            "authentication cannot work properly"
+        )
+        # For HTML pages, redirect to login (which will also fail, but gracefully)
+        if request.method == "GET" and not request.url.path.startswith("/api"):
+            return RedirectResponse(
+                url=f"/login?next={request.url.path}", status_code=302
+            )
+        else:
+            raise HTTPException(
+                status_code=500, detail="Session management not available"
+            )
 
     # Enhanced session validation with better error handling
     try:
@@ -450,6 +472,7 @@ async def session_health_check(request: Request):
         session_available = hasattr(request, "session")
 
         health_info = {
+            "session_middleware_installed": session_middleware_installed,
             "session_middleware_available": session_available,
             "require_app_auth": settings.require_app_auth,
             "session_timeout_hours": settings.session_timeout_hours,
@@ -485,8 +508,16 @@ async def session_health_check(request: Request):
                 health_info["session_accessible"] = False
                 health_info["session_error"] = str(e)
 
+        # Determine overall status
+        if session_middleware_installed and session_available:
+            status = "healthy"
+        elif session_middleware_installed and not session_available:
+            status = "warning"
+        else:
+            status = "error"
+
         return {
-            "status": "healthy" if session_available else "warning",
+            "status": status,
             "session_health": health_info,
         }
 
