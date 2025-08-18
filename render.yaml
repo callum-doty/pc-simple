@@ -62,6 +62,12 @@ services:
         value: "false"
       - key: API_KEY
         value: ""
+      - key: APP_PASSWORD
+        sync: false
+      - key: SESSION_SECRET_KEY
+        generateValue: true
+      - key: REQUIRE_APP_AUTH
+        value: "true"
 
   # Celery Background Worker
   - type: worker
