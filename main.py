@@ -225,55 +225,65 @@ async def authentication_middleware(request: Request, call_next):
                 detail="Authentication not properly configured. Please contact administrator.",
             )
 
-    # SECURITY FIRST: Check if SessionMiddleware was properly installed
-    if not session_middleware_installed:
+    # CRITICAL FIX: Handle SessionMiddleware issues without creating redirect loops
+    try:
+        # Test if we can access request.session at all
+        if not hasattr(request, "session"):
+            raise AssertionError(
+                "SessionMiddleware not installed - request.session not available"
+            )
+
+        # Test basic session access - this will raise AssertionError if SessionMiddleware failed
+        _ = dict(request.session)
+
+    except (AssertionError, AttributeError) as session_error:
         logger.error(
-            "CRITICAL SECURITY ISSUE: SessionMiddleware failed to install. "
-            "This is a deployment configuration issue. Denying access for security."
+            f"CRITICAL SESSION ISSUE: {session_error}. "
+            "SessionMiddleware failed to install properly on Render."
         )
+
+        # PREVENT REDIRECT LOOP: For session errors, show a static error page instead of redirecting
         if request.method == "GET" and not request.url.path.startswith("/api"):
-            return RedirectResponse(url="/login?error=session", status_code=302)
+            # Return a simple HTML error page instead of redirecting
+            error_html = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Service Unavailable - Document Catalog</title>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <style>
+                    body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
+                    .error-container { background: white; padding: 40px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto; }
+                    .error-icon { font-size: 48px; color: #dc3545; margin-bottom: 20px; }
+                    h1 { color: #333; margin-bottom: 20px; }
+                    p { color: #666; line-height: 1.6; margin-bottom: 20px; }
+                    .error-code { background: #f8f9fa; padding: 10px; border-radius: 5px; font-family: monospace; color: #495057; margin: 20px 0; }
+                </style>
+            </head>
+            <body>
+                <div class="error-container">
+                    <div class="error-icon">⚠️</div>
+                    <h1>Service Temporarily Unavailable</h1>
+                    <p>The Document Catalog application is experiencing a configuration issue and cannot start properly.</p>
+                    <div class="error-code">Session management system failed to initialize</div>
+                    <p>This is typically a deployment configuration issue. Please contact the administrator or try again in a few minutes.</p>
+                    <p><strong>Error:</strong> SessionMiddleware installation failed</p>
+                </div>
+            </body>
+            </html>
+            """
+            return HTMLResponse(content=error_html, status_code=503)
         else:
+            # For API calls, return JSON error
             raise HTTPException(
                 status_code=503,
-                detail="Session management not available. Please contact administrator.",
+                detail="Session management system failed to initialize. This is a deployment configuration issue.",
             )
 
     # SECURE session validation with fail-closed error handling
     try:
-        # First, ensure session is available before ANY access attempts
-        if not hasattr(request, "session"):
-            logger.error(
-                "SECURITY ISSUE: SessionMiddleware installed but request.session not available. "
-                "Denying access for security."
-            )
-            if request.method == "GET" and not request.url.path.startswith("/api"):
-                return RedirectResponse(url="/login?error=session", status_code=302)
-            else:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Session management not available. Please contact administrator.",
-                )
-
-        # Second, try to test session accessibility
-        try:
-            # Test basic session access
-            _ = dict(request.session)
-            logger.debug("Session is accessible")
-        except Exception as session_test_error:
-            logger.error(
-                f"SECURITY ISSUE: Session accessibility test failed: {session_test_error}. "
-                "Denying access for security."
-            )
-            if request.method == "GET" and not request.url.path.startswith("/api"):
-                return RedirectResponse(url="/login?error=session", status_code=302)
-            else:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Session management error. Please contact administrator.",
-                )
-
-        # Third, NOW try the security service validation
+        # Now try the security service validation
         try:
             is_valid = security_service.is_session_valid(request)
         except Exception as security_service_error:
@@ -307,10 +317,34 @@ async def authentication_middleware(request: Request, call_next):
         logger.error(f"Request path: {request.url.path}")
         logger.error(f"Request method: {request.method}")
 
-        # FAIL CLOSED: On unexpected errors, deny access for security
-        logger.error("SECURITY: Denying access due to authentication middleware error")
+        # PREVENT REDIRECT LOOPS: For unexpected errors, show error page instead of redirecting
         if request.method == "GET" and not request.url.path.startswith("/api"):
-            return RedirectResponse(url="/login?error=system", status_code=302)
+            error_html = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Authentication Error - Document Catalog</title>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <style>
+                    body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
+                    .error-container { background: white; padding: 40px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto; }
+                    .error-icon { font-size: 48px; color: #dc3545; margin-bottom: 20px; }
+                    h1 { color: #333; margin-bottom: 20px; }
+                    p { color: #666; line-height: 1.6; margin-bottom: 20px; }
+                </style>
+            </head>
+            <body>
+                <div class="error-container">
+                    <div class="error-icon">🔒</div>
+                    <h1>Authentication System Error</h1>
+                    <p>The authentication system encountered an unexpected error and cannot process your request.</p>
+                    <p>Please try again in a few minutes or contact the administrator if the problem persists.</p>
+                </div>
+            </body>
+            </html>
+            """
+            return HTMLResponse(content=error_html, status_code=503)
         else:
             raise HTTPException(
                 status_code=503,
