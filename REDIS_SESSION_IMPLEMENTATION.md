@@ -253,7 +253,7 @@ Failed to initialize session encryption
 
 ```python
 # requirements.txt additions
-cryptography==41.0.8  # For session encryption
+cryptography==41.0.7  # For session encryption
 ```
 
 ## Files Created/Modified
