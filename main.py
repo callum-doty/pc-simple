@@ -137,6 +137,45 @@ session_middleware_installed = False
 session_middleware_error = None
 
 
+def test_session_middleware_functionality():
+    """Test if SessionMiddleware is actually working by creating a test request"""
+    try:
+        from fastapi.testclient import TestClient
+        from starlette.requests import Request
+        from starlette.responses import Response
+
+        # Create a minimal test app to verify session functionality
+        test_app = FastAPI()
+
+        # Add the same SessionMiddleware configuration that we just added to main app
+        test_app.add_middleware(
+            SessionMiddleware,
+            secret_key=session_secret,
+            max_age=session_timeout_seconds,
+        )
+
+        @test_app.get("/test-session")
+        async def test_session_endpoint(request: Request):
+            # Try to access and modify session
+            request.session["test"] = "working"
+            return {"session_test": request.session.get("test")}
+
+        # Test the session functionality
+        with TestClient(test_app) as client:
+            response = client.get("/test-session")
+            if (
+                response.status_code == 200
+                and response.json().get("session_test") == "working"
+            ):
+                return True
+            else:
+                return False
+
+    except Exception as e:
+        logger.error(f"Session functionality test failed: {e}")
+        return False
+
+
 def initialize_session_middleware():
     """Initialize SessionMiddleware with comprehensive error handling and validation"""
     global session_middleware_installed, session_middleware_error
@@ -191,22 +230,66 @@ def initialize_session_middleware():
         for i, config in enumerate(middleware_configs):
             try:
                 logger.info(f"Attempting SessionMiddleware configuration {i+1}/3")
+
+                # Clear any existing middleware stack to avoid conflicts
+                if hasattr(app, "user_middleware"):
+                    # Remove any previously added SessionMiddleware
+                    app.user_middleware = [
+                        middleware
+                        for middleware in app.user_middleware
+                        if middleware.cls != SessionMiddleware
+                    ]
+
+                # Add the SessionMiddleware
                 app.add_middleware(SessionMiddleware, **config)
-                session_middleware_installed = True
-                logger.info(
-                    f"SessionMiddleware initialized successfully with config {i+1}"
-                )
-                return True
+
+                # Test if the middleware actually works
+                logger.info(f"Testing SessionMiddleware functionality for config {i+1}")
+                if test_session_middleware_functionality():
+                    session_middleware_installed = True
+                    logger.info(
+                        f"SessionMiddleware initialized and tested successfully with config {i+1}"
+                    )
+                    return True
+                else:
+                    logger.warning(
+                        f"SessionMiddleware config {i+1} added but functionality test failed"
+                    )
+                    # Remove the failed middleware
+                    if hasattr(app, "user_middleware"):
+                        app.user_middleware = [
+                            middleware
+                            for middleware in app.user_middleware
+                            if middleware.cls != SessionMiddleware
+                        ]
+                    continue
+
             except Exception as config_error:
-                logger.warning(f"Configuration {i+1} failed: {config_error}")
+                logger.warning(
+                    f"Configuration {i+1} failed during setup: {config_error}"
+                )
+                # Clean up any partial middleware addition
+                if hasattr(app, "user_middleware"):
+                    app.user_middleware = [
+                        middleware
+                        for middleware in app.user_middleware
+                        if middleware.cls != SessionMiddleware
+                    ]
                 if i < len(middleware_configs) - 1:
                     continue
                 else:
                     raise config_error
 
+        # If we get here, all configurations failed
+        raise Exception(
+            "All SessionMiddleware configurations failed functionality tests"
+        )
+
     except Exception as e:
         session_middleware_error = str(e)
-        logger.error(f"CRITICAL: All SessionMiddleware configurations failed: {e}")
+        logger.error(
+            f"CRITICAL: SessionMiddleware initialization completely failed: {e}"
+        )
         logger.error(f"Session secret present: {bool(session_secret)}")
         logger.error(
             f"Session secret length: {len(session_secret) if session_secret else 0}"
@@ -221,31 +304,89 @@ def initialize_session_middleware():
         if settings.environment == "production" and settings.require_app_auth:
             logger.error(
                 "FATAL: SessionMiddleware failed to initialize in production with auth enabled. "
-                "This is a critical security issue. Application cannot start safely."
+                "This is a critical security issue. Application will run with authentication disabled."
             )
-            # Don't raise here - let the app start but show clear error messages
 
-        logger.warning("Application will start without session support")
+        logger.warning(
+            "Application will start without session support - adding mock session middleware"
+        )
         return False
 
 
 # Initialize session middleware
 session_init_success = initialize_session_middleware()
 
-# If session middleware failed, add a fallback middleware that disables authentication
+# If session middleware failed, add a proper mock session middleware
 if not session_init_success:
-    logger.warning(
-        "Adding fallback middleware to disable authentication due to session failure"
-    )
+    logger.warning("Adding mock session middleware due to SessionMiddleware failure")
+
+    class MockSessionMiddleware:
+        """Mock session middleware that provides a working session interface"""
+
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] == "http":
+                # Create a mock session that behaves like a real session
+                mock_session = MockSession()
+                scope["session"] = mock_session
+
+            await self.app(scope, receive, send)
+
+    class MockSession(dict):
+        """Mock session that behaves like a real session but doesn't persist"""
+
+        def __init__(self):
+            super().__init__()
+            self._modified = False
+
+        def __setitem__(self, key, value):
+            super().__setitem__(key, value)
+            self._modified = True
+
+        def __delitem__(self, key):
+            super().__delitem__(key)
+            self._modified = True
+
+        def clear(self):
+            super().clear()
+            self._modified = True
+
+        def pop(self, key, default=None):
+            self._modified = True
+            return super().pop(key, default)
+
+        def popitem(self):
+            self._modified = True
+            return super().popitem()
+
+        def setdefault(self, key, default=None):
+            if key not in self:
+                self._modified = True
+            return super().setdefault(key, default)
+
+        def update(self, *args, **kwargs):
+            self._modified = True
+            super().update(*args, **kwargs)
+
+    # Add the mock session middleware
+    app.add_middleware(MockSessionMiddleware)
 
     @app.middleware("http")
     async def session_fallback_middleware(request: Request, call_next):
-        """Fallback middleware when SessionMiddleware fails"""
-        # Add a fake session object to prevent errors
+        """Ensure request.session is always available"""
+        # The MockSessionMiddleware should have already set this, but double-check
         if not hasattr(request, "session"):
-            request.session = {}
+            request.session = MockSession()
 
         response = await call_next(request)
+
+        # Add warning header to indicate mock session is being used
+        response.headers["X-Session-Warning"] = (
+            "Mock session in use - sessions will not persist"
+        )
+
         return response
 
 
