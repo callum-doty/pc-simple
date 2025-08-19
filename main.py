@@ -761,6 +761,16 @@ async def logout(request: Request):
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Home page - redirect to search"""
+    # Check authentication if required
+    if settings.require_app_auth and session_middleware_installed:
+        try:
+            if not security_service.is_session_valid(request):
+                return RedirectResponse(url="/login", status_code=302)
+        except Exception as e:
+            logger.error(f"Authentication check error on home page: {e}")
+            # If there's an error checking auth, redirect to login to be safe
+            return RedirectResponse(url="/login", status_code=302)
+
     return templates.TemplateResponse("search.html", {"request": request})
 
 
