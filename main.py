@@ -18,7 +18,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.sessions import SessionMiddleware
+
+# from starlette.middleware.sessions import SessionMiddleware  # Replaced with Redis-based solution
 from contextlib import asynccontextmanager
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -132,14 +133,21 @@ if session_timeout_seconds <= 0:
     logger.warning("Invalid session timeout, using default 24 hours")
     session_timeout_seconds = 24 * 3600
 
-# Global flag to track if SessionMiddleware is properly installed
-session_middleware_installed = False
+# Import Redis session middleware
+from services.redis_session_middleware import (
+    RedisSessionMiddleware,
+    FallbackSessionMiddleware,
+)
+from services.redis_session_service import redis_session_service
+
+# Global flag to track if Redis session middleware is properly installed
+redis_session_middleware_installed = False
 session_middleware_error = None
 
 
-def initialize_session_middleware():
-    """Initialize SessionMiddleware with simple, reliable configuration"""
-    global session_middleware_installed, session_middleware_error
+def initialize_redis_session_middleware():
+    """Initialize Redis-based session middleware"""
+    global redis_session_middleware_installed, session_middleware_error
 
     try:
         # Validate session secret before attempting to initialize
@@ -158,13 +166,20 @@ def initialize_session_middleware():
             )
 
         logger.info(
-            f"Initializing SessionMiddleware - "
+            f"Initializing Redis Session Middleware - "
             f"Secret length: {len(session_secret)}, "
             f"Timeout: {settings.session_timeout_hours}h, "
             f"Environment: {settings.environment}"
         )
 
-        # Use a single, simple configuration that works reliably on Render
+        # Check Redis health first
+        redis_health = redis_session_service.health_check()
+        if redis_health["status"] != "healthy":
+            raise ValueError(
+                f"Redis session service not healthy: {redis_health.get('error', 'Unknown error')}"
+            )
+
+        # Configure Redis session middleware
         config = {
             "secret_key": session_secret,
             "max_age": session_timeout_seconds,
@@ -172,16 +187,16 @@ def initialize_session_middleware():
             "https_only": not settings.debug,
         }
 
-        # Add the SessionMiddleware
-        app.add_middleware(SessionMiddleware, **config)
+        # Add the Redis session middleware
+        app.add_middleware(RedisSessionMiddleware, **config)
 
-        session_middleware_installed = True
-        logger.info("SessionMiddleware initialized successfully")
+        redis_session_middleware_installed = True
+        logger.info("Redis Session Middleware initialized successfully")
         return True
 
     except Exception as e:
         session_middleware_error = str(e)
-        logger.error(f"CRITICAL: SessionMiddleware initialization failed: {e}")
+        logger.error(f"CRITICAL: Redis Session Middleware initialization failed: {e}")
         logger.error(f"Session secret present: {bool(session_secret)}")
         logger.error(
             f"Session secret length: {len(session_secret) if session_secret else 0}"
@@ -190,96 +205,26 @@ def initialize_session_middleware():
         logger.error(f"Environment: {settings.environment}")
         logger.error(f"Debug mode: {settings.debug}")
 
-        session_middleware_installed = False
-
-        # In production, this is a critical error that should prevent startup
-        if settings.environment == "production" and settings.require_app_auth:
-            logger.error(
-                "FATAL: SessionMiddleware failed to initialize in production with auth enabled. "
-                "This is a critical security issue. Application will run with authentication disabled."
-            )
+        redis_session_middleware_installed = False
 
         logger.warning(
-            "Application will start without session support - adding mock session middleware"
+            "Redis session middleware failed - falling back to in-memory session middleware"
         )
         return False
 
 
-# Initialize session middleware
-session_init_success = initialize_session_middleware()
+# Initialize Redis session middleware
+session_init_success = initialize_redis_session_middleware()
 
-# If session middleware failed, add a proper mock session middleware
+# If Redis session middleware failed, add fallback session middleware
 if not session_init_success:
-    logger.warning("Adding mock session middleware due to SessionMiddleware failure")
+    logger.warning("Adding fallback session middleware due to Redis session failure")
 
-    class MockSessionMiddleware:
-        """Mock session middleware that provides a working session interface"""
+    # Add the fallback session middleware
+    app.add_middleware(FallbackSessionMiddleware)
 
-        def __init__(self, app):
-            self.app = app
-
-        async def __call__(self, scope, receive, send):
-            if scope["type"] == "http":
-                # Create a mock session that behaves like a real session
-                mock_session = MockSession()
-                scope["session"] = mock_session
-
-            await self.app(scope, receive, send)
-
-    class MockSession(dict):
-        """Mock session that behaves like a real session but doesn't persist"""
-
-        def __init__(self):
-            super().__init__()
-            self._modified = False
-
-        def __setitem__(self, key, value):
-            super().__setitem__(key, value)
-            self._modified = True
-
-        def __delitem__(self, key):
-            super().__delitem__(key)
-            self._modified = True
-
-        def clear(self):
-            super().clear()
-            self._modified = True
-
-        def pop(self, key, default=None):
-            self._modified = True
-            return super().pop(key, default)
-
-        def popitem(self):
-            self._modified = True
-            return super().popitem()
-
-        def setdefault(self, key, default=None):
-            if key not in self:
-                self._modified = True
-            return super().setdefault(key, default)
-
-        def update(self, *args, **kwargs):
-            self._modified = True
-            super().update(*args, **kwargs)
-
-    # Add the mock session middleware
-    app.add_middleware(MockSessionMiddleware)
-
-    @app.middleware("http")
-    async def session_fallback_middleware(request: Request, call_next):
-        """Ensure request.session is always available"""
-        # The MockSessionMiddleware should have already set this, but double-check
-        if not hasattr(request, "session"):
-            request.session = MockSession()
-
-        response = await call_next(request)
-
-        # Add warning header to indicate mock session is being used
-        response.headers["X-Session-Warning"] = (
-            "Mock session in use - sessions will not persist"
-        )
-
-        return response
+    # Set flag to indicate we're using fallback
+    redis_session_middleware_installed = False
 
 
 # Add CORS middleware early in the stack (after SessionMiddleware)
@@ -325,10 +270,10 @@ async def authentication_middleware(request: Request, call_next):
         "/favicon.ico",
     ]
 
-    # EMERGENCY FALLBACK: If SessionMiddleware failed to initialize, disable authentication temporarily
-    if not session_middleware_installed:
+    # EMERGENCY FALLBACK: If Redis session middleware failed to initialize, disable authentication temporarily
+    if not redis_session_middleware_installed:
         logger.warning(
-            f"EMERGENCY FALLBACK: SessionMiddleware failed, disabling authentication for request: {request.url.path}"
+            f"EMERGENCY FALLBACK: Redis session middleware failed, disabling authentication for request: {request.url.path}"
         )
         # Add a warning header to indicate the security issue
         response = await call_next(request)
@@ -556,7 +501,7 @@ async def serve_preview(
 async def login_page(request: Request, next: str = "/"):
     """Login page"""
     # If sessions are not available, show a message
-    if not session_middleware_installed:
+    if not redis_session_middleware_installed:
         return templates.TemplateResponse(
             "login.html",
             {
@@ -587,7 +532,7 @@ async def login_submit(
     """Process login form"""
     try:
         # Check if sessions are available
-        if not session_middleware_installed:
+        if not redis_session_middleware_installed:
             return templates.TemplateResponse(
                 "login.html",
                 {
@@ -654,7 +599,7 @@ async def logout(request: Request):
 async def home(request: Request):
     """Home page - redirect to search"""
     # Check authentication if required
-    if settings.require_app_auth and session_middleware_installed:
+    if settings.require_app_auth and redis_session_middleware_installed:
         try:
             if not security_service.is_session_valid(request):
                 return RedirectResponse(url="/login", status_code=302)
@@ -681,7 +626,7 @@ async def session_health_check(request: Request):
 
         # Basic health info
         health_info = {
-            "session_middleware_installed": session_middleware_installed,
+            "redis_session_middleware_installed": redis_session_middleware_installed,
             "session_middleware_available": session_available,
             "session_middleware_error": session_middleware_error,
             "require_app_auth": settings.require_app_auth,
@@ -689,6 +634,13 @@ async def session_health_check(request: Request):
             "session_secret_configured": bool(settings.session_secret_key),
             "app_password_configured": bool(settings.app_password),
         }
+
+        # Add Redis session service health
+        try:
+            redis_health = redis_session_service.health_check()
+            health_info["redis_session_service"] = redis_health
+        except Exception as e:
+            health_info["redis_session_service"] = {"status": "error", "error": str(e)}
 
         # Simple session accessibility test
         if session_available:
@@ -701,7 +653,7 @@ async def session_health_check(request: Request):
                 health_info["session_error"] = str(e)
 
         # Determine overall status
-        if session_middleware_installed and session_available:
+        if redis_session_middleware_installed and session_available:
             status = "healthy"
         else:
             status = "error"
