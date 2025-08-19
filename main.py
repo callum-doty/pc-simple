@@ -137,47 +137,8 @@ session_middleware_installed = False
 session_middleware_error = None
 
 
-def test_session_middleware_functionality():
-    """Test if SessionMiddleware is actually working by creating a test request"""
-    try:
-        from fastapi.testclient import TestClient
-        from starlette.requests import Request
-        from starlette.responses import Response
-
-        # Create a minimal test app to verify session functionality
-        test_app = FastAPI()
-
-        # Add the same SessionMiddleware configuration that we just added to main app
-        test_app.add_middleware(
-            SessionMiddleware,
-            secret_key=session_secret,
-            max_age=session_timeout_seconds,
-        )
-
-        @test_app.get("/test-session")
-        async def test_session_endpoint(request: Request):
-            # Try to access and modify session
-            request.session["test"] = "working"
-            return {"session_test": request.session.get("test")}
-
-        # Test the session functionality
-        with TestClient(test_app) as client:
-            response = client.get("/test-session")
-            if (
-                response.status_code == 200
-                and response.json().get("session_test") == "working"
-            ):
-                return True
-            else:
-                return False
-
-    except Exception as e:
-        logger.error(f"Session functionality test failed: {e}")
-        return False
-
-
 def initialize_session_middleware():
-    """Initialize SessionMiddleware with comprehensive error handling and validation"""
+    """Initialize SessionMiddleware with simple, reliable configuration"""
     global session_middleware_installed, session_middleware_error
 
     try:
@@ -200,96 +161,27 @@ def initialize_session_middleware():
             f"Initializing SessionMiddleware - "
             f"Secret length: {len(session_secret)}, "
             f"Timeout: {settings.session_timeout_hours}h, "
-            f"Secure cookies: {not settings.debug}, "
             f"Environment: {settings.environment}"
         )
 
-        # Try different SessionMiddleware configurations for Render compatibility
-        middleware_configs = [
-            # Standard configuration
-            {
-                "secret_key": session_secret,
-                "max_age": session_timeout_seconds,
-                "same_site": "lax",
-                "https_only": not settings.debug,
-            },
-            # Fallback configuration for Render
-            {
-                "secret_key": session_secret,
-                "max_age": session_timeout_seconds,
-                "same_site": "none",
-                "https_only": True,
-            },
-            # Minimal configuration
-            {
-                "secret_key": session_secret,
-                "max_age": session_timeout_seconds,
-            },
-        ]
+        # Use a single, simple configuration that works reliably on Render
+        config = {
+            "secret_key": session_secret,
+            "max_age": session_timeout_seconds,
+            "same_site": "lax",
+            "https_only": not settings.debug,
+        }
 
-        for i, config in enumerate(middleware_configs):
-            try:
-                logger.info(f"Attempting SessionMiddleware configuration {i+1}/3")
+        # Add the SessionMiddleware
+        app.add_middleware(SessionMiddleware, **config)
 
-                # Clear any existing middleware stack to avoid conflicts
-                if hasattr(app, "user_middleware"):
-                    # Remove any previously added SessionMiddleware
-                    app.user_middleware = [
-                        middleware
-                        for middleware in app.user_middleware
-                        if middleware.cls != SessionMiddleware
-                    ]
-
-                # Add the SessionMiddleware
-                app.add_middleware(SessionMiddleware, **config)
-
-                # Test if the middleware actually works
-                logger.info(f"Testing SessionMiddleware functionality for config {i+1}")
-                if test_session_middleware_functionality():
-                    session_middleware_installed = True
-                    logger.info(
-                        f"SessionMiddleware initialized and tested successfully with config {i+1}"
-                    )
-                    return True
-                else:
-                    logger.warning(
-                        f"SessionMiddleware config {i+1} added but functionality test failed"
-                    )
-                    # Remove the failed middleware
-                    if hasattr(app, "user_middleware"):
-                        app.user_middleware = [
-                            middleware
-                            for middleware in app.user_middleware
-                            if middleware.cls != SessionMiddleware
-                        ]
-                    continue
-
-            except Exception as config_error:
-                logger.warning(
-                    f"Configuration {i+1} failed during setup: {config_error}"
-                )
-                # Clean up any partial middleware addition
-                if hasattr(app, "user_middleware"):
-                    app.user_middleware = [
-                        middleware
-                        for middleware in app.user_middleware
-                        if middleware.cls != SessionMiddleware
-                    ]
-                if i < len(middleware_configs) - 1:
-                    continue
-                else:
-                    raise config_error
-
-        # If we get here, all configurations failed
-        raise Exception(
-            "All SessionMiddleware configurations failed functionality tests"
-        )
+        session_middleware_installed = True
+        logger.info("SessionMiddleware initialized successfully")
+        return True
 
     except Exception as e:
         session_middleware_error = str(e)
-        logger.error(
-            f"CRITICAL: SessionMiddleware initialization completely failed: {e}"
-        )
+        logger.error(f"CRITICAL: SessionMiddleware initialization failed: {e}")
         logger.error(f"Session secret present: {bool(session_secret)}")
         logger.error(
             f"Session secret length: {len(session_secret) if session_secret else 0}"
@@ -782,58 +674,28 @@ async def health_check():
 
 @app.get("/health/session")
 async def session_health_check(request: Request):
-    """Enhanced session health check endpoint for debugging"""
+    """Simplified session health check endpoint"""
     try:
         # Check if SessionMiddleware is working
         session_available = hasattr(request, "session")
 
+        # Basic health info
         health_info = {
             "session_middleware_installed": session_middleware_installed,
             "session_middleware_available": session_available,
             "session_middleware_error": session_middleware_error,
             "require_app_auth": settings.require_app_auth,
-            "session_timeout_hours": settings.session_timeout_hours,
-            "session_secret_configured": bool(settings.session_secret_key),
-            "session_secret_length": (
-                len(settings.session_secret_key) if settings.session_secret_key else 0
-            ),
             "environment": settings.environment,
-            "debug_mode": settings.debug,
+            "session_secret_configured": bool(settings.session_secret_key),
             "app_password_configured": bool(settings.app_password),
         }
 
-        # Add environment variable diagnostics
-        env_vars = {
-            "SESSION_SECRET_KEY": bool(os.getenv("SESSION_SECRET_KEY")),
-            "APP_PASSWORD": bool(os.getenv("APP_PASSWORD")),
-            "REQUIRE_APP_AUTH": os.getenv("REQUIRE_APP_AUTH"),
-            "ENVIRONMENT": os.getenv("ENVIRONMENT"),
-            "RENDER": bool(os.getenv("RENDER")),
-        }
-        health_info["environment_variables"] = env_vars
-
+        # Simple session accessibility test
         if session_available:
-            # Try to access session data
             try:
-                session_data = dict(request.session)
+                # Just try to access the session without detailed inspection
+                _ = dict(request.session)
                 health_info["session_accessible"] = True
-                health_info["session_keys"] = list(session_data.keys())
-                health_info["has_auth_token"] = "auth_token" in session_data
-                health_info["has_auth_timestamp"] = "auth_timestamp" in session_data
-
-                if "auth_timestamp" in session_data:
-                    try:
-                        auth_time = datetime.fromisoformat(
-                            session_data["auth_timestamp"]
-                        )
-                        expiry_time = auth_time + timedelta(
-                            hours=settings.session_timeout_hours
-                        )
-                        health_info["session_expires_at"] = expiry_time.isoformat()
-                        health_info["session_expired"] = datetime.now() > expiry_time
-                    except Exception as e:
-                        health_info["timestamp_parse_error"] = str(e)
-
             except Exception as e:
                 health_info["session_accessible"] = False
                 health_info["session_error"] = str(e)
@@ -841,27 +703,8 @@ async def session_health_check(request: Request):
         # Determine overall status
         if session_middleware_installed and session_available:
             status = "healthy"
-        elif session_middleware_installed and not session_available:
-            status = "warning"
         else:
             status = "error"
-
-        # Add recommendations based on status
-        recommendations = []
-        if not session_middleware_installed:
-            recommendations.append(
-                "SessionMiddleware failed to initialize - check logs for details"
-            )
-        if session_middleware_error:
-            recommendations.append(f"Session error: {session_middleware_error}")
-        if not settings.session_secret_key:
-            recommendations.append("SESSION_SECRET_KEY environment variable not set")
-        if settings.require_app_auth and not settings.app_password:
-            recommendations.append(
-                "APP_PASSWORD environment variable not set but authentication is required"
-            )
-
-        health_info["recommendations"] = recommendations
 
         return {
             "status": status,
@@ -873,7 +716,6 @@ async def session_health_check(request: Request):
         return {
             "status": "error",
             "error": str(e),
-            "session_health": {"error": "Failed to check session health"},
             "timestamp": datetime.now().isoformat(),
         }
 
