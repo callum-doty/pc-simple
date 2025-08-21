@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     s3_region: str = "us-east-1"
     s3_endpoint_url: str = ""
 
+    # Direct URL settings for performance optimization
+    use_direct_urls: bool = True  # Use direct Backblaze URLs instead of proxy
+    preview_url_expires_hours: int = 24  # Preview URLs expire after 24 hours
+    download_url_expires_hours: int = 1  # Download URLs expire after 1 hour
+
     class Config:
         env_file = ".env"
         case_sensitive = False

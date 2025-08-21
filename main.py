@@ -470,8 +470,8 @@ async def serve_preview(
     filename: str,
     storage_service: StorageService = Depends(get_storage_service),
 ):
-    """Serve preview images by streaming from the storage service - PUBLIC"""
-    from fastapi.responses import StreamingResponse
+    """Serve preview images - redirects to direct URLs for S3, streams for local storage"""
+    from fastapi.responses import StreamingResponse, RedirectResponse
     import io
 
     # Sanitize filename to prevent path traversal (but no auth required for previews)
@@ -479,6 +479,14 @@ async def serve_preview(
     preview_path = f"previews/{safe_filename}"
 
     try:
+        # For S3 storage, redirect to direct URL for optimal performance
+        if storage_service.storage_type == "s3" and settings.use_direct_urls:
+            direct_url = await storage_service.get_file_url(preview_path)
+            if direct_url:
+                logger.debug(f"Redirecting preview {safe_filename} to direct URL")
+                return RedirectResponse(url=direct_url, status_code=302)
+
+        # For local storage or when direct URLs are disabled, stream the file
         file_content = await storage_service.get_file(preview_path)
         if file_content:
             return StreamingResponse(io.BytesIO(file_content), media_type="image/png")
@@ -615,6 +623,59 @@ async def home(request: Request):
 async def health_check():
     """Health check endpoint for Render"""
     return {"status": "healthy", "version": "2.0.0"}
+
+
+@app.get("/health/storage")
+async def storage_health_check(
+    storage_service: StorageService = Depends(get_storage_service),
+):
+    """Storage and direct URL optimization health check"""
+    try:
+        health_info = {
+            "storage_type": storage_service.storage_type,
+            "direct_urls_enabled": settings.use_direct_urls,
+            "preview_url_expires_hours": settings.preview_url_expires_hours,
+            "download_url_expires_hours": settings.download_url_expires_hours,
+            "timestamp": datetime.now().isoformat(),
+        }
+
+        # Test direct URL generation if using S3
+        if storage_service.storage_type == "s3":
+            try:
+                # Test presigned URL generation with a dummy key
+                test_url = storage_service._get_s3_presigned_url(
+                    "test/dummy.pdf", expires_in=60
+                )
+                health_info["s3_presigned_url_generation"] = (
+                    "working" if test_url else "failed"
+                )
+                health_info["s3_bucket"] = settings.s3_bucket
+                health_info["s3_region"] = settings.s3_region
+            except Exception as e:
+                health_info["s3_presigned_url_generation"] = f"error: {str(e)}"
+
+        # Overall status
+        if storage_service.storage_type == "s3" and settings.use_direct_urls:
+            if health_info.get("s3_presigned_url_generation") == "working":
+                status = "optimized"
+            else:
+                status = "degraded"
+        else:
+            status = "basic"
+
+        return {
+            "status": status,
+            "optimization_active": storage_service.storage_type == "s3"
+            and settings.use_direct_urls,
+            "storage_health": health_info,
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat(),
+        }
 
 
 @app.get("/health/session")
@@ -860,8 +921,8 @@ async def download_document(
     document_service: DocumentService = Depends(get_document_service),
     storage_service: StorageService = Depends(get_storage_service),
 ):
-    """Download a document file"""
-    from fastapi.responses import StreamingResponse
+    """Download a document file - redirects to direct URLs for S3, streams for local storage"""
+    from fastapi.responses import StreamingResponse, RedirectResponse
     import io
 
     try:
@@ -869,6 +930,16 @@ async def download_document(
         if not document:
             raise HTTPException(status_code=404, detail="Document not found")
 
+        # For S3 storage, redirect to direct URL for optimal performance
+        if storage_service.storage_type == "s3" and settings.use_direct_urls:
+            direct_url = await storage_service.get_file_url(
+                document.file_path, content_type="application/pdf"
+            )
+            if direct_url:
+                logger.debug(f"Redirecting download {document.filename} to direct URL")
+                return RedirectResponse(url=direct_url, status_code=302)
+
+        # For local storage or when direct URLs are disabled, stream the file
         file_content = await storage_service.get_file(document.file_path)
         if not file_content:
             raise HTTPException(status_code=404, detail="File not found in storage")

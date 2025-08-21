@@ -272,11 +272,18 @@ class StorageService:
             return False
 
     async def get_file_url(
-        self, file_path: str, expires_in: int = 3600, content_type: Optional[str] = None
+        self, file_path: str, expires_in: int = None, content_type: Optional[str] = None
     ) -> Optional[str]:
-        """Get URL for file access"""
+        """Get URL for file access with configurable expiration"""
         try:
             if self.storage_type == "s3":
+                # Use configured expiration times if not specified
+                if expires_in is None:
+                    if "previews" in file_path:
+                        expires_in = settings.preview_url_expires_hours * 3600
+                    else:
+                        expires_in = settings.download_url_expires_hours * 3600
+
                 return self._get_s3_presigned_url(
                     file_path, expires_in, content_type=content_type
                 )
@@ -299,12 +306,8 @@ class StorageService:
     def _get_s3_presigned_url(
         self, s3_key: str, expires_in: int, content_type: Optional[str] = None
     ) -> Optional[str]:
-        """Get presigned URL for S3 file"""
+        """Get presigned URL for S3 file - always returns direct Backblaze URLs for optimal performance"""
         try:
-            # For previews, we now want to return a local URL to proxy the request
-            if "previews" in s3_key:
-                return f"/previews/{Path(s3_key).name}"
-
             params = {"Bucket": settings.s3_bucket, "Key": s3_key}
             if content_type:
                 params["ResponseContentType"] = content_type
@@ -313,6 +316,9 @@ class StorageService:
                 "get_object",
                 Params=params,
                 ExpiresIn=expires_in,
+            )
+            logger.debug(
+                f"Generated direct presigned URL for {s3_key} (expires in {expires_in}s)"
             )
             return url
         except Exception as e:
