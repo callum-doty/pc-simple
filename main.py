@@ -245,6 +245,16 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
 
+# Helper function for non-cacheable redirects
+def create_redirect(url: str, status_code: int = 302) -> RedirectResponse:
+    """Create a redirect response with cache prevention headers"""
+    response = RedirectResponse(url=url, status_code=status_code)
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, private"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
 # Add security headers middleware
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
@@ -288,9 +298,7 @@ async def authentication_middleware(request: Request, call_next):
         )
         if request.method == "GET" and not request.url.path.startswith("/api"):
             # For web requests, redirect to login with error
-            return RedirectResponse(
-                url="/login?error=session_unavailable", status_code=302
-            )
+            return create_redirect("/login?error=session_unavailable")
         else:
             # For API requests, return 503
             raise HTTPException(
@@ -304,7 +312,7 @@ async def authentication_middleware(request: Request, call_next):
             "CRITICAL: APP_PASSWORD not configured but REQUIRE_APP_AUTH=true. Denying access."
         )
         if request.method == "GET" and not request.url.path.startswith("/api"):
-            return RedirectResponse(url="/login?error=config", status_code=302)
+            return create_redirect("/login?error=config")
         else:
             raise HTTPException(
                 status_code=503,
@@ -326,7 +334,7 @@ async def authentication_middleware(request: Request, call_next):
             f"CRITICAL: Session not accessible: {session_error}. Denying access to: {request.url.path}"
         )
         if request.method == "GET" and not request.url.path.startswith("/api"):
-            return RedirectResponse(url="/login?error=session_failed", status_code=302)
+            return create_redirect("/login?error=session_failed")
         else:
             raise HTTPException(
                 status_code=503,
@@ -341,9 +349,7 @@ async def authentication_middleware(request: Request, call_next):
             logger.debug("User not authenticated, denying access")
             if request.method == "GET" and not request.url.path.startswith("/api"):
                 # For HTML pages, redirect to login
-                return RedirectResponse(
-                    url=f"/login?next={request.url.path}", status_code=302
-                )
+                return create_redirect(f"/login?next={request.url.path}")
             else:
                 # For API calls, return 401
                 raise HTTPException(status_code=401, detail="Authentication required")
@@ -361,7 +367,7 @@ async def authentication_middleware(request: Request, call_next):
         logger.error(f"Request path: {request.url.path}")
 
         if request.method == "GET" and not request.url.path.startswith("/api"):
-            return RedirectResponse(url="/login?error=auth_failed", status_code=302)
+            return create_redirect("/login?error=auth_failed")
         else:
             raise HTTPException(
                 status_code=503,
@@ -533,7 +539,7 @@ async def login_page(request: Request, next: str = "/", error: str = None):
     try:
         if security_service.is_session_valid(request):
             logger.info(f"User already authenticated, redirecting to {next}")
-            return RedirectResponse(url=next, status_code=302)
+            return create_redirect(next)
     except Exception as e:
         logger.warning(f"Session validation error in login page: {e}")
         # Don't redirect on error, just show the login page
@@ -593,7 +599,7 @@ async def login_submit(
                 # Note: We could implement a separate "remember me" token system here
 
             # Redirect to intended page
-            return RedirectResponse(url=next, status_code=302)
+            return create_redirect(next)
         except Exception as session_error:
             logger.error(f"Session creation error: {session_error}")
             return templates.TemplateResponse(
@@ -621,7 +627,7 @@ async def login_submit(
 async def logout(request: Request):
     """Logout and destroy session"""
     security_service.destroy_session(request)
-    return RedirectResponse(url="/login", status_code=302)
+    return create_redirect("/login")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -631,11 +637,11 @@ async def home(request: Request):
     if settings.require_app_auth and redis_session_middleware_installed:
         try:
             if not security_service.is_session_valid(request):
-                return RedirectResponse(url="/login", status_code=302)
+                return create_redirect("/login")
         except Exception as e:
             logger.error(f"Authentication check error on home page: {e}")
             # If there's an error checking auth, redirect to login to be safe
-            return RedirectResponse(url="/login", status_code=302)
+            return create_redirect("/login")
 
     return templates.TemplateResponse("search.html", {"request": request})
 
