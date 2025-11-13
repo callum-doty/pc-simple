@@ -214,7 +214,38 @@ def initialize_redis_session_middleware():
         return False
 
 
-# Initialize Redis session middleware
+# Initialize rate limiter (do this before adding middleware)
+limiter = Limiter(key_func=get_remote_address, default_limits=["1000/hour"])
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CRITICAL: Middleware added via app.add_middleware() executes in REVERSE order
+# Last added = First executed. So we add in reverse order of desired execution:
+
+# Add rate limiting middleware FIRST (will execute LAST)
+app.add_middleware(SlowAPIMiddleware)
+
+# Add CORS middleware SECOND (will execute SECOND-TO-LAST)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Add authentication middleware THIRD (will execute SECOND)
+# This will check auth AFTER session is loaded
+logger.info(
+    f"Adding Authentication Middleware - redis_session_installed: {redis_session_middleware_installed}"
+)
+app.add_middleware(
+    AuthenticationMiddleware,
+    redis_session_middleware_installed=redis_session_middleware_installed,
+)
+
+# Initialize and add Redis session middleware LAST (will execute FIRST)
+# This ensures session is loaded before authentication checks
 session_init_success = initialize_redis_session_middleware()
 
 # If Redis session middleware failed, add fallback session middleware
@@ -226,33 +257,6 @@ if not session_init_success:
 
     # Set flag to indicate we're using fallback
     redis_session_middleware_installed = False
-
-# Add authentication middleware AFTER session middleware (critical for proper execution order)
-# This ensures the session is loaded before authentication checks run
-logger.info(
-    f"Adding Authentication Middleware - redis_session_installed: {redis_session_middleware_installed}"
-)
-app.add_middleware(
-    AuthenticationMiddleware,
-    redis_session_middleware_installed=redis_session_middleware_installed,
-)
-
-# Add CORS middleware early in the stack (after SessionMiddleware and AuthenticationMiddleware)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Initialize rate limiter
-limiter = Limiter(key_func=get_remote_address, default_limits=["1000/hour"])
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-# Add rate limiting middleware
-app.add_middleware(SlowAPIMiddleware)
 
 
 # Helper function for non-cacheable redirects
