@@ -146,8 +146,8 @@ redis_session_middleware_installed = False
 session_middleware_error = None
 
 
-def initialize_redis_session_middleware():
-    """Initialize Redis-based session middleware"""
+def prepare_redis_session_middleware():
+    """Prepare Redis session middleware config (but don't add it yet)"""
     global redis_session_middleware_installed, session_middleware_error
 
     try:
@@ -167,7 +167,7 @@ def initialize_redis_session_middleware():
             )
 
         logger.info(
-            f"Initializing Redis Session Middleware - "
+            f"Preparing Redis Session Middleware - "
             f"Secret length: {len(session_secret)}, "
             f"Timeout: {settings.session_timeout_hours}h, "
             f"Environment: {settings.environment}"
@@ -188,16 +188,13 @@ def initialize_redis_session_middleware():
             "https_only": not settings.debug,
         }
 
-        # Add the Redis session middleware
-        app.add_middleware(RedisSessionMiddleware, **config)
-
         redis_session_middleware_installed = True
-        logger.info("Redis Session Middleware initialized successfully")
-        return True
+        logger.info("Redis Session Middleware config prepared successfully")
+        return True, config
 
     except Exception as e:
         session_middleware_error = str(e)
-        logger.error(f"CRITICAL: Redis Session Middleware initialization failed: {e}")
+        logger.error(f"CRITICAL: Redis Session Middleware preparation failed: {e}")
         logger.error(f"Session secret present: {bool(session_secret)}")
         logger.error(
             f"Session secret length: {len(session_secret) if session_secret else 0}"
@@ -209,9 +206,9 @@ def initialize_redis_session_middleware():
         redis_session_middleware_installed = False
 
         logger.warning(
-            "Redis session middleware failed - falling back to in-memory session middleware"
+            "Redis session middleware preparation failed - will use fallback"
         )
-        return False
+        return False, None
 
 
 # Initialize rate limiter (do this before adding middleware)
@@ -234,20 +231,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Redis session middleware FIRST so we know if it succeeded
-# This sets the redis_session_middleware_installed flag
-session_init_success = initialize_redis_session_middleware()
+# Prepare Redis session middleware config (but don't add it yet)
+session_init_success, session_config = prepare_redis_session_middleware()
 
-# If Redis session middleware failed, add fallback session middleware
-if not session_init_success:
-    logger.warning("Adding fallback session middleware due to Redis session failure")
-    # Add the fallback session middleware
-    app.add_middleware(FallbackSessionMiddleware)
-    # Set flag to indicate we're using fallback
-    redis_session_middleware_installed = False
-
-# NOW add authentication middleware AFTER we know the session middleware status
-# This middleware will execute SECOND (after session loads)
+# Add authentication middleware THIRD (will execute SECOND, after session loads)
 logger.info(
     f"Adding Authentication Middleware - redis_session_installed: {redis_session_middleware_installed}"
 )
@@ -255,6 +242,16 @@ app.add_middleware(
     AuthenticationMiddleware,
     redis_session_middleware_installed=redis_session_middleware_installed,
 )
+
+# Add session middleware LAST (will execute FIRST)
+# This is CRITICAL - middleware added last executes first!
+if session_init_success and session_config:
+    logger.info("Adding Redis Session Middleware (will execute FIRST)")
+    app.add_middleware(RedisSessionMiddleware, **session_config)
+else:
+    logger.warning("Adding fallback session middleware due to Redis session failure")
+    app.add_middleware(FallbackSessionMiddleware)
+    redis_session_middleware_installed = False
 
 
 # Helper function for non-cacheable redirects
