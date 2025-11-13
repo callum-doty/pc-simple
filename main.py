@@ -495,25 +495,48 @@ async def serve_preview(
 
 # Authentication routes
 @app.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request, next: str = "/"):
-    """Login page"""
-    # If sessions are not available, show a message
+async def login_page(request: Request, next: str = "/", error: str = None):
+    """Login page - session-independent when middleware unavailable"""
+    # If sessions are not available, show error message
     if not redis_session_middleware_installed:
+        error_message = (
+            "Session management is not available. Please check server configuration."
+        )
+        if error == "session_unavailable":
+            error_message = (
+                "Session system is unavailable. Please contact administrator."
+            )
+        elif error == "session_failed":
+            error_message = "Session system failed. Please contact administrator."
+        elif error == "config":
+            error_message = (
+                "Authentication not properly configured. Please contact administrator."
+            )
+
         return templates.TemplateResponse(
             "login.html",
             {
                 "request": request,
                 "next": next,
-                "error": "Session management is not available. Please check server configuration.",
+                "error": error_message,
             },
         )
 
-    # If already authenticated, redirect to intended page
+    # If sessions ARE available, check if user is already authenticated
     try:
         if security_service.is_session_valid(request):
             return RedirectResponse(url=next, status_code=302)
     except Exception as e:
         logger.warning(f"Session validation error in login page: {e}")
+        # Don't redirect on error, just show the login page
+        return templates.TemplateResponse(
+            "login.html",
+            {
+                "request": request,
+                "next": next,
+                "error": "Session error occurred. Please try logging in again.",
+            },
+        )
 
     return templates.TemplateResponse("login.html", {"request": request, "next": next})
 
