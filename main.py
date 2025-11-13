@@ -139,6 +139,7 @@ from services.redis_session_middleware import (
     FallbackSessionMiddleware,
 )
 from services.redis_session_service import redis_session_service
+from services.authentication_middleware import AuthenticationMiddleware
 
 # Global flag to track if Redis session middleware is properly installed
 redis_session_middleware_installed = False
@@ -226,8 +227,17 @@ if not session_init_success:
     # Set flag to indicate we're using fallback
     redis_session_middleware_installed = False
 
+# Add authentication middleware AFTER session middleware (critical for proper execution order)
+# This ensures the session is loaded before authentication checks run
+logger.info(
+    f"Adding Authentication Middleware - redis_session_installed: {redis_session_middleware_installed}"
+)
+app.add_middleware(
+    AuthenticationMiddleware,
+    redis_session_middleware_installed=redis_session_middleware_installed,
+)
 
-# Add CORS middleware early in the stack (after SessionMiddleware)
+# Add CORS middleware early in the stack (after SessionMiddleware and AuthenticationMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -267,112 +277,6 @@ async def security_headers_middleware(request: Request, call_next):
         response.headers[header] = value
 
     return response
-
-
-@app.middleware("http")
-async def authentication_middleware(request: Request, call_next):
-    """Check authentication for protected routes with SECURE fail-closed handling"""
-    # Whitelist of paths that don't require authentication
-    skip_auth_paths = [
-        "/login",
-        "/health",
-        "/static",
-        "/favicon.ico",
-    ]
-
-    # Skip authentication for whitelisted paths
-    if any(request.url.path.startswith(path) for path in skip_auth_paths):
-        response = await call_next(request)
-        return response
-
-    # Check if authentication is required
-    if not settings.require_app_auth:
-        logger.debug("Authentication disabled via REQUIRE_APP_AUTH=false")
-        response = await call_next(request)
-        return response
-
-    # FAIL-CLOSED: If Redis session middleware failed to initialize, deny access
-    if not redis_session_middleware_installed:
-        logger.error(
-            f"CRITICAL: Session middleware not available. Denying access to: {request.url.path}"
-        )
-        if request.method == "GET" and not request.url.path.startswith("/api"):
-            # For web requests, redirect to login with error
-            return create_redirect("/login?error=session_unavailable")
-        else:
-            # For API requests, return 503
-            raise HTTPException(
-                status_code=503,
-                detail="Session management unavailable. Please contact administrator.",
-            )
-
-    # FAIL-CLOSED: Check if APP_PASSWORD is configured
-    if not settings.app_password:
-        logger.error(
-            "CRITICAL: APP_PASSWORD not configured but REQUIRE_APP_AUTH=true. Denying access."
-        )
-        if request.method == "GET" and not request.url.path.startswith("/api"):
-            return create_redirect("/login?error=config")
-        else:
-            raise HTTPException(
-                status_code=503,
-                detail="Authentication not properly configured. Please contact administrator.",
-            )
-
-    # FAIL-CLOSED: Validate session is accessible
-    try:
-        if not hasattr(request, "session"):
-            raise AssertionError(
-                "SessionMiddleware not installed - request.session not available"
-            )
-
-        # Test session access
-        _ = dict(request.session)
-
-    except (AssertionError, AttributeError) as session_error:
-        logger.error(
-            f"CRITICAL: Session not accessible: {session_error}. Denying access to: {request.url.path}"
-        )
-        if request.method == "GET" and not request.url.path.startswith("/api"):
-            return create_redirect("/login?error=session_failed")
-        else:
-            raise HTTPException(
-                status_code=503,
-                detail="Session system failed. Please contact administrator.",
-            )
-
-    # Validate authentication
-    try:
-        is_valid = security_service.is_session_valid(request)
-
-        if not is_valid:
-            logger.debug("User not authenticated, denying access")
-            if request.method == "GET" and not request.url.path.startswith("/api"):
-                # For HTML pages, redirect to login
-                return create_redirect(f"/login?next={request.url.path}")
-            else:
-                # For API calls, return 401
-                raise HTTPException(status_code=401, detail="Authentication required")
-
-        # User is authenticated, proceed with request
-        response = await call_next(request)
-        return response
-
-    except HTTPException:
-        # Re-raise HTTP exceptions (like 401, 302 redirects)
-        raise
-    except Exception as e:
-        # FAIL-CLOSED: Any unexpected error denies access
-        logger.error(f"Authentication error: {e}")
-        logger.error(f"Request path: {request.url.path}")
-
-        if request.method == "GET" and not request.url.path.startswith("/api"):
-            return create_redirect("/login?error=auth_failed")
-        else:
-            raise HTTPException(
-                status_code=503,
-                detail="Authentication system error. Please contact administrator.",
-            )
 
 
 # Add performance monitoring middleware
