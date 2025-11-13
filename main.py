@@ -497,8 +497,13 @@ async def serve_preview(
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, next: str = "/", error: str = None):
     """Login page - session-independent when middleware unavailable"""
+    logger.info(
+        f"Login page accessed - redis_session_middleware_installed: {redis_session_middleware_installed}, error: {error}"
+    )
+
     # If sessions are not available, show error message
     if not redis_session_middleware_installed:
+        logger.info("Showing login page with session unavailable error")
         error_message = (
             "Session management is not available. Please check server configuration."
         )
@@ -513,6 +518,7 @@ async def login_page(request: Request, next: str = "/", error: str = None):
                 "Authentication not properly configured. Please contact administrator."
             )
 
+        logger.info(f"Returning template with error: {error_message}")
         return templates.TemplateResponse(
             "login.html",
             {
@@ -523,8 +529,10 @@ async def login_page(request: Request, next: str = "/", error: str = None):
         )
 
     # If sessions ARE available, check if user is already authenticated
+    logger.info("Redis session middleware is installed, checking session validity")
     try:
         if security_service.is_session_valid(request):
+            logger.info(f"User already authenticated, redirecting to {next}")
             return RedirectResponse(url=next, status_code=302)
     except Exception as e:
         logger.warning(f"Session validation error in login page: {e}")
@@ -538,6 +546,7 @@ async def login_page(request: Request, next: str = "/", error: str = None):
             },
         )
 
+    logger.info("Showing normal login page")
     return templates.TemplateResponse("login.html", {"request": request, "next": next})
 
 
