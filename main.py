@@ -262,7 +262,7 @@ async def security_headers_middleware(request: Request, call_next):
 @app.middleware("http")
 async def authentication_middleware(request: Request, call_next):
     """Check authentication for protected routes with SECURE fail-closed handling"""
-    # Skip authentication for certain paths
+    # Whitelist of paths that don't require authentication
     skip_auth_paths = [
         "/login",
         "/health",
@@ -270,16 +270,9 @@ async def authentication_middleware(request: Request, call_next):
         "/favicon.ico",
     ]
 
-    # EMERGENCY FALLBACK: If Redis session middleware failed to initialize, disable authentication temporarily
-    if not redis_session_middleware_installed:
-        logger.warning(
-            f"EMERGENCY FALLBACK: Redis session middleware failed, disabling authentication for request: {request.url.path}"
-        )
-        # Add a warning header to indicate the security issue
+    # Skip authentication for whitelisted paths
+    if any(request.url.path.startswith(path) for path in skip_auth_paths):
         response = await call_next(request)
-        response.headers["X-Security-Warning"] = (
-            "Authentication disabled due to session middleware failure"
-        )
         return response
 
     # Check if authentication is required
@@ -288,16 +281,27 @@ async def authentication_middleware(request: Request, call_next):
         response = await call_next(request)
         return response
 
-    # Skip authentication for allowed paths
-    if any(request.url.path.startswith(path) for path in skip_auth_paths):
-        response = await call_next(request)
-        return response
+    # FAIL-CLOSED: If Redis session middleware failed to initialize, deny access
+    if not redis_session_middleware_installed:
+        logger.error(
+            f"CRITICAL: Session middleware not available. Denying access to: {request.url.path}"
+        )
+        if request.method == "GET" and not request.url.path.startswith("/api"):
+            # For web requests, redirect to login with error
+            return RedirectResponse(
+                url="/login?error=session_unavailable", status_code=302
+            )
+        else:
+            # For API requests, return 503
+            raise HTTPException(
+                status_code=503,
+                detail="Session management unavailable. Please contact administrator.",
+            )
 
-    # SECURITY FIRST: Check if APP_PASSWORD is configured
+    # FAIL-CLOSED: Check if APP_PASSWORD is configured
     if not settings.app_password:
         logger.error(
-            "CRITICAL SECURITY ISSUE: APP_PASSWORD not configured but REQUIRE_APP_AUTH=true. "
-            "Denying access to protect the application."
+            "CRITICAL: APP_PASSWORD not configured but REQUIRE_APP_AUTH=true. Denying access."
         )
         if request.method == "GET" and not request.url.path.startswith("/api"):
             return RedirectResponse(url="/login?error=config", status_code=302)
@@ -307,47 +311,34 @@ async def authentication_middleware(request: Request, call_next):
                 detail="Authentication not properly configured. Please contact administrator.",
             )
 
-    # CRITICAL FIX: Handle SessionMiddleware issues without creating redirect loops
+    # FAIL-CLOSED: Validate session is accessible
     try:
-        # Test if we can access request.session at all
         if not hasattr(request, "session"):
             raise AssertionError(
                 "SessionMiddleware not installed - request.session not available"
             )
 
-        # Test basic session access - this will raise AssertionError if SessionMiddleware failed
+        # Test session access
         _ = dict(request.session)
 
     except (AssertionError, AttributeError) as session_error:
         logger.error(
-            f"CRITICAL SESSION ISSUE: {session_error}. "
-            "SessionMiddleware failed to install properly on Render."
+            f"CRITICAL: Session not accessible: {session_error}. Denying access to: {request.url.path}"
         )
+        if request.method == "GET" and not request.url.path.startswith("/api"):
+            return RedirectResponse(url="/login?error=session_failed", status_code=302)
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail="Session system failed. Please contact administrator.",
+            )
 
-        # EMERGENCY FALLBACK: Allow access but log the security issue
-        logger.warning(
-            f"EMERGENCY FALLBACK: Allowing access to {request.url.path} due to session failure"
-        )
-        response = await call_next(request)
-        response.headers["X-Security-Warning"] = (
-            "Session middleware failed - authentication bypassed"
-        )
-        return response
-
-    # SECURE session validation with fail-closed error handling
+    # Validate authentication
     try:
-        # Now try the security service validation
-        try:
-            is_valid = security_service.is_session_valid(request)
-        except Exception as security_service_error:
-            logger.error(f"Security service validation error: {security_service_error}")
-            # FAIL CLOSED: If security service fails, deny access
-            is_valid = False
+        is_valid = security_service.is_session_valid(request)
 
-        # If not authenticated, redirect to login
         if not is_valid:
-            logger.debug("User not authenticated, redirecting to login")
-            # Store the original URL for redirect after login
+            logger.debug("User not authenticated, denying access")
             if request.method == "GET" and not request.url.path.startswith("/api"):
                 # For HTML pages, redirect to login
                 return RedirectResponse(
@@ -357,28 +348,25 @@ async def authentication_middleware(request: Request, call_next):
                 # For API calls, return 401
                 raise HTTPException(status_code=401, detail="Authentication required")
 
-        # If we get here, user is authenticated, proceed with request
+        # User is authenticated, proceed with request
         response = await call_next(request)
         return response
 
     except HTTPException:
-        # Re-raise HTTP exceptions (like 401, 302 redirects) - these are expected
+        # Re-raise HTTP exceptions (like 401, 302 redirects)
         raise
     except Exception as e:
-        logger.error(f"Unexpected authentication middleware error: {e}")
-        logger.error(f"Error type: {type(e).__name__}")
+        # FAIL-CLOSED: Any unexpected error denies access
+        logger.error(f"Authentication error: {e}")
         logger.error(f"Request path: {request.url.path}")
-        logger.error(f"Request method: {request.method}")
 
-        # EMERGENCY FALLBACK: Allow access but log the error
-        logger.warning(
-            f"EMERGENCY FALLBACK: Allowing access to {request.url.path} due to authentication error"
-        )
-        response = await call_next(request)
-        response.headers["X-Security-Warning"] = (
-            "Authentication error - access allowed as fallback"
-        )
-        return response
+        if request.method == "GET" and not request.url.path.startswith("/api"):
+            return RedirectResponse(url="/login?error=auth_failed", status_code=302)
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail="Authentication system error. Please contact administrator.",
+            )
 
 
 # Add performance monitoring middleware
@@ -470,11 +458,12 @@ async def serve_preview(
     filename: str,
     storage_service: StorageService = Depends(get_storage_service),
 ):
-    """Serve preview images - redirects to direct URLs for S3, streams for local storage"""
+    """Serve preview images - PROTECTED by authentication middleware"""
     from fastapi.responses import StreamingResponse, RedirectResponse
     import io
 
-    # Sanitize filename to prevent path traversal (but no auth required for previews)
+    # Sanitize filename to prevent path traversal
+    # Note: Authentication is enforced by authentication_middleware
     safe_filename = security_service.sanitize_filename(filename)
     preview_path = f"previews/{safe_filename}"
 
