@@ -234,8 +234,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Add authentication middleware THIRD (will execute SECOND)
-# This will check auth AFTER session is loaded
+# Initialize Redis session middleware FIRST so we know if it succeeded
+# This sets the redis_session_middleware_installed flag
+session_init_success = initialize_redis_session_middleware()
+
+# If Redis session middleware failed, add fallback session middleware
+if not session_init_success:
+    logger.warning("Adding fallback session middleware due to Redis session failure")
+    # Add the fallback session middleware
+    app.add_middleware(FallbackSessionMiddleware)
+    # Set flag to indicate we're using fallback
+    redis_session_middleware_installed = False
+
+# NOW add authentication middleware AFTER we know the session middleware status
+# This middleware will execute SECOND (after session loads)
 logger.info(
     f"Adding Authentication Middleware - redis_session_installed: {redis_session_middleware_installed}"
 )
@@ -243,20 +255,6 @@ app.add_middleware(
     AuthenticationMiddleware,
     redis_session_middleware_installed=redis_session_middleware_installed,
 )
-
-# Initialize and add Redis session middleware LAST (will execute FIRST)
-# This ensures session is loaded before authentication checks
-session_init_success = initialize_redis_session_middleware()
-
-# If Redis session middleware failed, add fallback session middleware
-if not session_init_success:
-    logger.warning("Adding fallback session middleware due to Redis session failure")
-
-    # Add the fallback session middleware
-    app.add_middleware(FallbackSessionMiddleware)
-
-    # Set flag to indicate we're using fallback
-    redis_session_middleware_installed = False
 
 
 # Helper function for non-cacheable redirects
