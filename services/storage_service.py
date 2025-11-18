@@ -306,11 +306,26 @@ class StorageService:
     def _get_s3_presigned_url(
         self, s3_key: str, expires_in: int, content_type: Optional[str] = None
     ) -> Optional[str]:
-        """Get presigned URL for S3 file - always returns direct Backblaze URLs for optimal performance"""
+        """Get presigned URL for S3 file with proper headers for browser viewing"""
         try:
-            params = {"Bucket": settings.s3_bucket, "Key": s3_key}
+            params = {
+                "Bucket": settings.s3_bucket,
+                "Key": s3_key,
+            }
+
+            # Add content type if specified
             if content_type:
                 params["ResponseContentType"] = content_type
+
+            # For images (previews), set inline disposition to view in browser
+            if content_type and content_type.startswith("image/"):
+                params["ResponseContentDisposition"] = "inline"
+                # Add cache control for browser caching
+                params["ResponseCacheControl"] = "max-age=86400, public"
+
+            # For documents, suggest inline viewing but allow browser to decide
+            elif content_type == "application/pdf":
+                params["ResponseContentDisposition"] = "inline"
 
             url = self.s3_client.generate_presigned_url(
                 "get_object",
@@ -318,11 +333,21 @@ class StorageService:
                 ExpiresIn=expires_in,
             )
             logger.debug(
-                f"Generated direct presigned URL for {s3_key} (expires in {expires_in}s)"
+                f"Generated presigned URL for {s3_key} with content_type={content_type}, expires in {expires_in}s"
             )
             return url
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            error_message = e.response.get("Error", {}).get("Message", str(e))
+            logger.error(
+                f"S3 ClientError generating presigned URL for {s3_key}: "
+                f"Code={error_code}, Message={error_message}"
+            )
+            return None
         except Exception as e:
-            logger.error(f"Error generating presigned URL for {s3_key}: {str(e)}")
+            logger.error(
+                f"Unexpected error generating presigned URL for {s3_key}: {str(e)}"
+            )
             return None
 
     async def get_preview_url(self, file_path: str) -> Optional[str]:

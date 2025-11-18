@@ -367,7 +367,7 @@ async def serve_preview(
     filename: str,
     storage_service: StorageService = Depends(get_storage_service),
 ):
-    """Serve preview images - PROTECTED by authentication middleware"""
+    """Serve preview images - PROTECTED by authentication middleware with failsafe streaming"""
     from fastapi.responses import StreamingResponse, RedirectResponse
     import io
 
@@ -377,23 +377,42 @@ async def serve_preview(
     preview_path = f"previews/{safe_filename}"
 
     try:
-        # For S3 storage, redirect to direct URL for optimal performance
+        # For S3 storage, try direct URL first for optimal performance
         if storage_service.storage_type == "s3" and settings.use_direct_urls:
-            direct_url = await storage_service.get_file_url(preview_path)
+            direct_url = await storage_service.get_file_url(
+                preview_path, content_type="image/png"
+            )
             if direct_url:
                 logger.debug(f"Redirecting preview {safe_filename} to direct URL")
                 return RedirectResponse(url=direct_url, status_code=302)
+            else:
+                logger.warning(
+                    f"Failed to generate presigned URL for {safe_filename}, falling back to streaming"
+                )
 
-        # For local storage or when direct URLs are disabled, stream the file
+        # Fallback: Stream the file directly from storage
+        # This happens for local storage, when direct URLs are disabled, or if presigned URL generation fails
         file_content = await storage_service.get_file(preview_path)
         if file_content:
-            return StreamingResponse(io.BytesIO(file_content), media_type="image/png")
+            logger.debug(f"Streaming preview {safe_filename} directly from storage")
+            return StreamingResponse(
+                io.BytesIO(file_content),
+                media_type="image/png",
+                headers={
+                    "Cache-Control": "public, max-age=86400",
+                    "Content-Disposition": "inline",
+                },
+            )
+        else:
+            logger.warning(f"Preview file not found in storage: {preview_path}")
+
     except Exception as e:
-        logger.error(f"Error serving preview for {safe_filename}: {e}")
+        logger.error(f"Error serving preview for {safe_filename}: {e}", exc_info=True)
 
     # If the file is not found or an error occurs, return a placeholder
     placeholder_path = "static/placeholder.svg"
     if os.path.exists(placeholder_path):
+        logger.debug(f"Serving placeholder for missing preview: {safe_filename}")
         return FileResponse(placeholder_path, media_type="image/svg+xml")
 
     raise HTTPException(status_code=404, detail="Preview not found")
