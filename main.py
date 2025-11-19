@@ -682,6 +682,60 @@ async def session_health_check(request: Request):
         }
 
 
+@app.post("/api/admin/clear-cache")
+async def clear_redis_cache(password: str = Form(...)):
+    """Clear Redis search and facet caches - Admin only"""
+    import redis as redis_lib
+
+    try:
+        # Verify admin password
+        admin_password = settings.upload_password or "upload123"
+        if password != admin_password:
+            raise HTTPException(status_code=401, detail="Invalid password")
+
+        # Connect to Redis
+        if not settings.redis_url:
+            raise HTTPException(status_code=500, detail="Redis not configured")
+
+        redis_client = redis_lib.from_url(settings.redis_url, decode_responses=True)
+        redis_client.ping()
+
+        # Get all cache keys
+        search_keys = redis_client.keys("search:*")
+        facet_keys = redis_client.keys("facets:*")
+        all_keys = search_keys + facet_keys
+
+        if not all_keys:
+            return {
+                "success": True,
+                "message": "Cache already empty",
+                "deleted_count": 0,
+                "search_keys": 0,
+                "facet_keys": 0,
+            }
+
+        # Delete all cache keys
+        deleted = redis_client.delete(*all_keys)
+
+        logger.info(f"Cleared {deleted} cache keys from Redis")
+
+        return {
+            "success": True,
+            "message": f"Successfully cleared {deleted} cache entries",
+            "deleted_count": deleted,
+            "search_keys": len(search_keys),
+            "facet_keys": len(facet_keys),
+            "use_direct_urls": settings.use_direct_urls,
+            "storage_type": settings.storage_type,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error clearing cache: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Document Upload
 @app.post("/api/documents/upload")
 @limiter.limit("20/minute")  # Increased rate limit for better usability
