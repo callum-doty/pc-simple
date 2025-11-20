@@ -2,12 +2,17 @@
 
 ## Problem Summary
 
-Preview images for new documents were failing to load with 401 Unauthorized errors because:
+Preview images for new documents were failing to load with 401 Unauthorized errors. The issue had multiple contributing factors:
 
-1. Presigned URLs were being generated with AWS Signature V4 authentication
-2. The presigned URLs were expiring (typically after 1 hour)
-3. Search results with expired URLs were cached in Redis for 1 hour
-4. Even after setting `USE_DIRECT_URLS=false`, cached results still contained old presigned URLs
+### Root Causes
+
+1. **Presigned URL Expiration**: Backblaze B2's S3-compatible API generates presigned URLs with strict expiration times. These URLs were being stored in the database and search cache, but would expire while still being served.
+
+2. **Batch Upload Processing Delays**: When uploading large batches (60+ documents), the 2-minute stagger between each document meant the last document wouldn't start processing for 2 hours. This long delay increased the likelihood of URL expiration issues.
+
+3. **Cache Compounding**: Redis cached search results containing preview URLs for 1 hour, so even after fixing configuration, old expired URLs remained in cache.
+
+4. **Database Storage of Expiring URLs**: The worker was storing presigned URLs directly in the database's `preview_url` field, which would then expire, causing 401 errors.
 
 ## Solution
 

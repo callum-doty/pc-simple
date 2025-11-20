@@ -241,11 +241,11 @@ def process_document_task(document_id: int, analysis_type: str = "unified"):
         logger.info(f"Generating preview for document {document_id}")
         preview_path = preview_service.generate_preview_sync(document.file_path)
         if preview_path:
-            preview_url = storage_service.get_file_url_sync(preview_path)
-            if preview_url:
-                document_service.update_document_preview_url_sync(
-                    document_id, preview_url
-                )
+            logger.info(f"Preview generated successfully at: {preview_path}")
+            # NOTE: We do NOT store presigned URLs in the database as they expire.
+            # Preview URLs are generated on-demand when requested via /previews/{filename}
+        else:
+            logger.warning(f"Failed to generate preview for document {document_id}")
 
         document_service.update_document_status_sync(
             document_id, DocumentStatus.COMPLETED, progress=100

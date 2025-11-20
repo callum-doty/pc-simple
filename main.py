@@ -755,7 +755,7 @@ async def upload_documents(
             raise HTTPException(status_code=401, detail="Invalid upload password")
 
         tasks = []
-        delay_seconds = 120  # 2 minutes
+        delay_seconds = 30  # 30 seconds between each document
 
         for i, file in enumerate(files):
             if not file.filename:
