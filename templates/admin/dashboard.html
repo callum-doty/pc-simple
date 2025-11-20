@@ -50,6 +50,37 @@
         <h2>AI Analysis Quality</h2>
         <canvas id="ai-quality-chart"></canvas>
       </div>
+
+      <div class="panel">
+        <h2>Cache Management</h2>
+        <p>
+          Clear Redis cache to force regeneration of preview URLs and search
+          results.
+        </p>
+        <input
+          type="password"
+          id="upload-password"
+          placeholder="Enter upload password"
+          style="width: 100%; padding: 8px; margin: 10px 0"
+        />
+        <button
+          onclick="clearCache()"
+          style="
+            background-color: #ff4444;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+          "
+        >
+          Clear Cache
+        </button>
+        <div
+          id="cache-result"
+          style="margin-top: 10px; padding: 10px; border-radius: 4px"
+        ></div>
+      </div>
     </div>
 
     <script>
@@ -139,6 +170,60 @@
           document.body.innerHTML = "<h1>Error loading dashboard data</h1>";
         }
       });
+
+      async function clearCache() {
+        const password = document.getElementById("upload-password").value;
+        const resultDiv = document.getElementById("cache-result");
+
+        if (!password) {
+          resultDiv.style.backgroundColor = "#f8d7da";
+          resultDiv.style.color = "#721c24";
+          resultDiv.textContent = "❌ Please enter the upload password";
+          return;
+        }
+
+        resultDiv.textContent = "⏳ Clearing cache...";
+        resultDiv.style.backgroundColor = "#fff3cd";
+        resultDiv.style.color = "#856404";
+
+        try {
+          const formData = new FormData();
+          formData.append("password", password);
+
+          const response = await fetch("/api/admin/clear-cache", {
+            method: "POST",
+            body: formData,
+          });
+
+          const data = await response.json();
+
+          if (response.ok && data.success) {
+            resultDiv.style.backgroundColor = "#d4edda";
+            resultDiv.style.color = "#155724";
+            resultDiv.innerHTML = `
+              ✅ Success!<br>
+              Deleted ${data.deleted_count} cache entries<br>
+              - ${data.search_keys} search keys<br>
+              - ${data.facet_keys} facet keys<br>
+              <br>
+              Storage type: ${data.storage_type}<br>
+              Direct URLs: ${data.use_direct_urls}<br>
+              <br>
+              🎉 Cache cleared! New searches will use streaming URLs.
+            `;
+          } else {
+            resultDiv.style.backgroundColor = "#f8d7da";
+            resultDiv.style.color = "#721c24";
+            resultDiv.textContent = `❌ Error: ${
+              data.detail || data.message || "Unknown error"
+            }`;
+          }
+        } catch (error) {
+          resultDiv.style.backgroundColor = "#f8d7da";
+          resultDiv.style.color = "#721c24";
+          resultDiv.textContent = `❌ Error: ${error.message}`;
+        }
+      }
     </script>
   </body>
 </html>
