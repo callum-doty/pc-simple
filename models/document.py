@@ -19,6 +19,7 @@ from sqlalchemy.sql import func
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 import json
+from pathlib import Path
 from pgvector.sqlalchemy import Vector
 
 from database import Base
@@ -244,6 +245,22 @@ class Document(Base):
             if mapping.get("mapped_canonical_term")
         ]
 
+    def get_preview_url(self) -> Optional[str]:
+        """
+        Generate preview URL on-demand from file path.
+        This ensures we never return expired presigned URLs.
+        Returns the app-relative URL that will be handled by /previews/{filename} endpoint.
+        """
+        if not self.file_path:
+            return None
+
+        # Extract the base filename and construct preview path
+        file_name = Path(self.file_path).stem
+        preview_filename = f"{file_name}_preview.png"
+
+        # Return app URL format (not presigned URL)
+        return f"/previews/{preview_filename}"
+
     def to_dict(
         self, full_detail: bool = False, include_heavy_fields: bool = False
     ) -> Dict[str, Any]:
@@ -262,7 +279,7 @@ class Document(Base):
             "summary": self.get_summary(),
             "canonical_terms": self.get_canonical_terms(),
             "thumbnail_url": self.thumbnail_url,
-            "preview_url": self.preview_url,
+            "preview_url": self.get_preview_url(),  # Generate URL on-demand instead of using stored value
             "has_embeddings": self.search_vector is not None,
         }
 
