@@ -486,7 +486,9 @@ endblock %} {% block content %}
         toggleButton.setAttribute("data-bs-target", `#${detailsId}`);
         toggleButton.setAttribute("aria-controls", detailsId);
 
-        const downloadUrl = `/api/documents/${doc.id}/download`;
+        // Use download_url from document object (generated on-demand by backend)
+        const downloadUrl =
+          doc.download_url || `/api/documents/${doc.id}/download`;
         card.querySelector(".document-link-image").href = downloadUrl;
         card.querySelector(".document-link-filename").href = downloadUrl;
 

@@ -261,6 +261,19 @@ class Document(Base):
         # Return app URL format (not presigned URL)
         return f"/previews/{preview_filename}"
 
+    def get_download_url(self) -> Optional[str]:
+        """
+        Generate download URL on-demand.
+        This ensures we never return expired presigned URLs.
+        Returns the app-relative URL that will be handled by /api/documents/{id}/download endpoint,
+        which redirects to Backblaze or streams the file depending on configuration.
+        """
+        if not self.id:
+            return None
+
+        # Return app URL format (not presigned URL)
+        return f"/api/documents/{self.id}/download"
+
     def to_dict(
         self, full_detail: bool = False, include_heavy_fields: bool = False
     ) -> Dict[str, Any]:
@@ -280,6 +293,7 @@ class Document(Base):
             "canonical_terms": self.get_canonical_terms(),
             "thumbnail_url": self.thumbnail_url,
             "preview_url": self.get_preview_url(),  # Generate URL on-demand instead of using stored value
+            "download_url": self.get_download_url(),  # Generate download URL on-demand
             "has_embeddings": self.search_vector is not None,
         }
 
