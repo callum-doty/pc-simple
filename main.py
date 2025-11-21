@@ -353,8 +353,9 @@ def get_ai_service(db: Session = Depends(get_db)) -> AIService:
 def get_search_service(
     db: Session = Depends(get_db),
     preview_service: PreviewService = Depends(get_preview_service),
+    storage_service: StorageService = Depends(get_storage_service),
 ) -> SearchService:
-    return SearchService(db, preview_service)
+    return SearchService(db, preview_service, storage_service)
 
 
 def get_taxonomy_service(db: Session = Depends(get_db)) -> TaxonomyService:

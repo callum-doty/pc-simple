@@ -28,9 +28,14 @@ settings = get_settings()
 class SearchService:
     """Service for searching and filtering documents"""
 
-    def __init__(self, db: Session, preview_service: PreviewService):
+    def __init__(
+        self, db: Session, preview_service: PreviewService, storage_service=None
+    ):
         self.db = db
         self.preview_service = preview_service
+        self.storage_service = (
+            storage_service  # Store storage service for direct URL generation
+        )
         self.ai_service = AIService(db=self.db)
         try:
             if settings.redis_url:
@@ -398,10 +403,12 @@ class SearchService:
                 .all()
             )
 
-            # 6. Format documents for response
+            # 6. Format documents for response with storage service for direct URLs
             formatted_docs = []
             for doc, relevance in results:
-                doc_dict = doc.to_dict(full_detail=False)
+                doc_dict = doc.to_dict(
+                    full_detail=False, storage_service=self.storage_service
+                )
                 doc_dict["relevance"] = f"{relevance:.2f}" if relevance else "0.00"
                 formatted_docs.append(doc_dict)
 

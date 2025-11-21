@@ -261,27 +261,56 @@ class Document(Base):
         # Return app URL format (not presigned URL)
         return f"/previews/{preview_filename}"
 
-    def get_download_url(self) -> Optional[str]:
+    def get_download_url(self, storage_service=None) -> Optional[str]:
         """
         Generate download URL on-demand.
-        This ensures we never return expired presigned URLs.
-        Returns the app-relative URL that will be handled by /api/documents/{id}/download endpoint,
-        which redirects to Backblaze or streams the file depending on configuration.
+        If storage_service is provided and direct URLs are enabled, returns a presigned Backblaze URL.
+        Otherwise, returns an app-relative URL for proxy/redirect handling.
         """
-        if not self.id:
+        if not self.id or not self.file_path:
             return None
 
-        # Return app URL format (not presigned URL)
+        # If storage service is provided, try to generate direct presigned URL
+        if storage_service:
+            try:
+                from config import get_settings
+
+                settings = get_settings()
+
+                # Only generate presigned URLs for S3/Backblaze storage with direct URLs enabled
+                if storage_service.storage_type == "s3" and settings.use_direct_urls:
+                    # Generate presigned URL with configured expiration (default 1 hour)
+                    presigned_url = storage_service._get_s3_presigned_url(
+                        self.file_path,
+                        expires_in=settings.download_url_expires_hours * 3600,
+                        content_type="application/pdf",
+                    )
+                    if presigned_url:
+                        return presigned_url
+            except Exception as e:
+                # Log error but fall back to app-relative URL
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Failed to generate presigned URL for document {self.id}: {e}"
+                )
+
+        # Fallback to app-relative URL
         return f"/api/documents/{self.id}/download"
 
     def to_dict(
-        self, full_detail: bool = False, include_heavy_fields: bool = False
+        self,
+        full_detail: bool = False,
+        include_heavy_fields: bool = False,
+        storage_service=None,
     ) -> Dict[str, Any]:
         """
         Convert document to dictionary for API responses.
         - `full_detail=False`: Returns a summary view for search results.
         - `full_detail=True`: Returns the complete document object.
         - `include_heavy_fields`: Whether to include heavyweight fields like `extracted_text` and `ai_analysis`.
+        - `storage_service`: Optional storage service to generate direct Backblaze URLs
         """
         data = {
             "id": self.id,
@@ -293,7 +322,9 @@ class Document(Base):
             "canonical_terms": self.get_canonical_terms(),
             "thumbnail_url": self.thumbnail_url,
             "preview_url": self.get_preview_url(),  # Generate URL on-demand instead of using stored value
-            "download_url": self.get_download_url(),  # Generate download URL on-demand
+            "download_url": self.get_download_url(
+                storage_service
+            ),  # Generate download URL on-demand with storage service
             "has_embeddings": self.search_vector is not None,
         }
 
