@@ -135,6 +135,23 @@
         margin-top: 4px;
         font-style: italic;
       }
+      .reprocess-btn {
+        background-color: #28a745;
+        color: white;
+        border: none;
+        padding: 6px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.85em;
+        margin-left: 10px;
+      }
+      .reprocess-btn:hover {
+        background-color: #218838;
+      }
+      .reprocess-btn:disabled {
+        background-color: #6c757d;
+        cursor: not-allowed;
+      }
     </style>
   </head>
   <body>
@@ -432,7 +449,7 @@
         listElement.innerHTML = documents
           .map(
             (doc) => `
-          <div class="document-item">
+          <div class="document-item" id="doc-item-${doc.id}">
             <div class="document-id">ID: ${doc.id}</div>
             <div class="document-info">
               <div class="document-filename">${escapeHtml(doc.filename)}</div>
@@ -456,6 +473,13 @@
               <span class="status-badge status-${doc.status.toLowerCase()}">${
               doc.status
             }</span>
+              <button 
+                class="reprocess-btn" 
+                id="reprocess-btn-${doc.id}"
+                onclick="reprocessDocument(${doc.id})"
+              >
+                Reprocess
+              </button>
             </div>
           </div>
         `
@@ -526,6 +550,60 @@
           resultDiv.style.backgroundColor = "#f8d7da";
           resultDiv.style.color = "#721c24";
           resultDiv.textContent = `❌ Error: ${error.message}`;
+        }
+      }
+
+      async function reprocessDocument(documentId) {
+        const button = document.getElementById(`reprocess-btn-${documentId}`);
+        const docItem = document.getElementById(`doc-item-${documentId}`);
+
+        // Disable button and show loading state
+        button.disabled = true;
+        button.textContent = "Reprocessing...";
+
+        try {
+          const response = await fetch(
+            `/api/documents/${documentId}/reprocess`,
+            {
+              method: "POST",
+            }
+          );
+
+          const data = await response.json();
+
+          if (response.ok && data.success) {
+            // Success - fade out and remove the document item
+            docItem.style.transition = "opacity 0.5s";
+            docItem.style.opacity = "0";
+
+            setTimeout(() => {
+              docItem.remove();
+              // Reload incomplete documents data to update counts
+              loadIncompleteDocuments();
+            }, 500);
+          } else {
+            // Error - show error message
+            const errorMsg = document.createElement("div");
+            errorMsg.className = "error-message";
+            errorMsg.textContent = `Failed: ${
+              data.detail || data.message || "Unknown error"
+            }`;
+            docItem.querySelector(".document-info").appendChild(errorMsg);
+
+            // Re-enable button
+            button.disabled = false;
+            button.textContent = "Reprocess";
+          }
+        } catch (error) {
+          // Network or other error
+          const errorMsg = document.createElement("div");
+          errorMsg.className = "error-message";
+          errorMsg.textContent = `Error: ${error.message}`;
+          docItem.querySelector(".document-info").appendChild(errorMsg);
+
+          // Re-enable button
+          button.disabled = false;
+          button.textContent = "Reprocess";
         }
       }
     </script>

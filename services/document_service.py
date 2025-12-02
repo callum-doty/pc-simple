@@ -496,3 +496,38 @@ class DocumentService:
                 f"Error updating preview URL for document {document_id}: {str(e)}"
             )
             return False
+
+    async def reset_document_for_reprocessing(self, document_id: int) -> bool:
+        """Reset document to QUEUED status and clear all AI-generated data for full reprocessing"""
+        try:
+            document = await self.get_document(document_id)
+            if not document:
+                logger.error(f"Document {document_id} not found for reprocessing")
+                return False
+
+            # Clear all AI-generated data
+            document.extracted_text = None
+            document.ai_analysis = None
+            document.keywords = None
+            document.search_vector = None
+
+            # Clear taxonomy associations
+            document.taxonomy_terms.clear()
+
+            # Reset status to QUEUED for reprocessing
+            document.status = DocumentStatus.QUEUED
+            document.processing_error = None
+            document.progress = 0
+            document.processed_at = None
+            document.updated_at = datetime.utcnow()
+
+            self.db.commit()
+            logger.info(f"Reset document {document_id} for reprocessing")
+            return True
+
+        except Exception as e:
+            self.db.rollback()
+            logger.error(
+                f"Error resetting document {document_id} for reprocessing: {str(e)}"
+            )
+            return False
