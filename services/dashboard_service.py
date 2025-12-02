@@ -249,3 +249,107 @@ class DashboardService:
         except Exception as e:
             logger.error(f"Error calculating queue health data: {e}")
             return {}
+
+    async def get_incomplete_documents(self) -> dict:
+        """
+        Identifies documents that are missing critical data (summary, extracted text, keywords, embeddings).
+        This is particularly useful for identifying documents that failed during AI processing due to quota issues.
+        """
+        try:
+            # Find documents missing summary (in ai_analysis)
+            missing_summary = (
+                self.db.query(Document)
+                .filter(
+                    (Document.ai_analysis.is_(None))
+                    | (~Document.ai_analysis.has_key("summary"))
+                    | (Document.ai_analysis["summary"].astext == "")
+                    | (Document.ai_analysis["summary"].astext.is_(None))
+                )
+                .order_by(desc(Document.created_at))
+                .limit(100)
+                .all()
+            )
+
+            # Find documents missing extracted text
+            missing_text = (
+                self.db.query(Document)
+                .filter(
+                    (Document.extracted_text.is_(None))
+                    | (Document.extracted_text == "")
+                )
+                .order_by(desc(Document.created_at))
+                .limit(100)
+                .all()
+            )
+
+            # Find documents missing keywords
+            missing_keywords = (
+                self.db.query(Document)
+                .filter(
+                    (Document.keywords.is_(None))
+                    | (~Document.keywords.has_key("keywords"))
+                )
+                .order_by(desc(Document.created_at))
+                .limit(100)
+                .all()
+            )
+
+            # Find documents missing embeddings
+            missing_embeddings = (
+                self.db.query(Document)
+                .filter(Document.search_vector.is_(None))
+                .order_by(desc(Document.created_at))
+                .limit(100)
+                .all()
+            )
+
+            # Helper function to convert document to dict
+            def doc_to_dict(doc):
+                return {
+                    "id": doc.id,
+                    "filename": doc.filename,
+                    "status": doc.status,
+                    "created_at": (
+                        doc.created_at.isoformat() if doc.created_at else None
+                    ),
+                    "processed_at": (
+                        doc.processed_at.isoformat() if doc.processed_at else None
+                    ),
+                    "processing_error": doc.processing_error,
+                }
+
+            return {
+                "summary": {
+                    "count": len(missing_summary),
+                    "documents": [doc_to_dict(doc) for doc in missing_summary],
+                },
+                "extracted_text": {
+                    "count": len(missing_text),
+                    "documents": [doc_to_dict(doc) for doc in missing_text],
+                },
+                "keywords": {
+                    "count": len(missing_keywords),
+                    "documents": [doc_to_dict(doc) for doc in missing_keywords],
+                },
+                "embeddings": {
+                    "count": len(missing_embeddings),
+                    "documents": [doc_to_dict(doc) for doc in missing_embeddings],
+                },
+                "total_unique_incomplete": len(
+                    set(
+                        [doc.id for doc in missing_summary]
+                        + [doc.id for doc in missing_text]
+                        + [doc.id for doc in missing_keywords]
+                        + [doc.id for doc in missing_embeddings]
+                    )
+                ),
+            }
+        except Exception as e:
+            logger.error(f"Error getting incomplete documents: {e}", exc_info=True)
+            return {
+                "summary": {"count": 0, "documents": []},
+                "extracted_text": {"count": 0, "documents": []},
+                "keywords": {"count": 0, "documents": []},
+                "embeddings": {"count": 0, "documents": []},
+                "total_unique_incomplete": 0,
+            }

@@ -45,3 +45,26 @@ async def get_queue_health(db: Session = Depends(get_db)):
             status_code=500,
             detail="Internal server error while fetching queue health data.",
         )
+
+
+@router.get(
+    "/incomplete-documents",
+    summary="Get documents with missing data",
+    tags=["Dashboard"],
+)
+async def get_incomplete_documents(db: Session = Depends(get_db)):
+    """
+    Retrieve documents that are missing critical data such as summary, extracted text,
+    keywords, or embeddings. This is useful for identifying documents that failed during
+    AI processing due to quota issues or other errors.
+    """
+    try:
+        dashboard_service = DashboardService(db)
+        data = await dashboard_service.get_incomplete_documents()
+        return data
+    except Exception as e:
+        logger.error(f"Error fetching incomplete documents: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error while fetching incomplete documents.",
+        )

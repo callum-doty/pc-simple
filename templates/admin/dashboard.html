@@ -23,6 +23,118 @@
       .panel h2 {
         margin-top: 0;
       }
+      .badge {
+        background-color: #dc3545;
+        color: white;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 0.8em;
+        margin-left: 10px;
+      }
+      .metric-card {
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 15px;
+        text-align: center;
+      }
+      .metric-label {
+        font-size: 0.9em;
+        color: #6c757d;
+        margin-bottom: 8px;
+      }
+      .metric-value {
+        font-size: 2em;
+        font-weight: bold;
+        color: #dc3545;
+        margin-bottom: 12px;
+      }
+      .expand-btn {
+        background-color: #007bff;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.85em;
+      }
+      .expand-btn:hover {
+        background-color: #0056b3;
+      }
+      .detail-section {
+        margin-top: 20px;
+        padding: 15px;
+        background: #f8f9fa;
+        border-radius: 8px;
+        border: 1px solid #dee2e6;
+      }
+      .detail-section h3 {
+        margin-top: 0;
+        color: #495057;
+        border-bottom: 2px solid #dee2e6;
+        padding-bottom: 10px;
+      }
+      .document-list {
+        max-height: 400px;
+        overflow-y: auto;
+      }
+      .document-item {
+        background: white;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        padding: 12px;
+        margin-bottom: 10px;
+        display: grid;
+        grid-template-columns: 60px 1fr auto;
+        gap: 15px;
+        align-items: center;
+      }
+      .document-id {
+        font-weight: bold;
+        color: #007bff;
+        font-size: 0.9em;
+      }
+      .document-info {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .document-filename {
+        font-weight: 500;
+        color: #212529;
+      }
+      .document-meta {
+        font-size: 0.85em;
+        color: #6c757d;
+      }
+      .status-badge {
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.8em;
+        font-weight: 500;
+      }
+      .status-completed {
+        background-color: #d4edda;
+        color: #155724;
+      }
+      .status-failed {
+        background-color: #f8d7da;
+        color: #721c24;
+      }
+      .status-pending {
+        background-color: #fff3cd;
+        color: #856404;
+      }
+      .status-processing {
+        background-color: #d1ecf1;
+        color: #0c5460;
+      }
+      .error-message {
+        font-size: 0.8em;
+        color: #dc3545;
+        margin-top: 4px;
+        font-style: italic;
+      }
     </style>
   </head>
   <body>
@@ -81,9 +193,84 @@
           style="margin-top: 10px; padding: 10px; border-radius: 4px"
         ></div>
       </div>
+
+      <div class="panel" style="grid-column: 1 / -1">
+        <h2>
+          Incomplete Documents
+          <span id="total-incomplete-badge" class="badge">0</span>
+        </h2>
+        <p style="color: #666; margin-bottom: 20px">
+          Documents missing critical data due to AI processing failures (e.g.,
+          API quota exceeded)
+        </p>
+
+        <div
+          style="
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+          "
+        >
+          <div class="metric-card">
+            <div class="metric-label">Missing Summary</div>
+            <div class="metric-value" id="missing-summary-count">-</div>
+            <button class="expand-btn" onclick="toggleSection('summary')">
+              View Details
+            </button>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Missing Extracted Text</div>
+            <div class="metric-value" id="missing-text-count">-</div>
+            <button class="expand-btn" onclick="toggleSection('text')">
+              View Details
+            </button>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Missing Keywords</div>
+            <div class="metric-value" id="missing-keywords-count">-</div>
+            <button class="expand-btn" onclick="toggleSection('keywords')">
+              View Details
+            </button>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Missing Embeddings</div>
+            <div class="metric-value" id="missing-embeddings-count">-</div>
+            <button class="expand-btn" onclick="toggleSection('embeddings')">
+              View Details
+            </button>
+          </div>
+        </div>
+
+        <div id="summary-section" class="detail-section" style="display: none">
+          <h3>Documents Missing Summary</h3>
+          <div id="summary-list" class="document-list"></div>
+        </div>
+
+        <div id="text-section" class="detail-section" style="display: none">
+          <h3>Documents Missing Extracted Text</h3>
+          <div id="text-list" class="document-list"></div>
+        </div>
+
+        <div id="keywords-section" class="detail-section" style="display: none">
+          <h3>Documents Missing Keywords</h3>
+          <div id="keywords-list" class="document-list"></div>
+        </div>
+
+        <div
+          id="embeddings-section"
+          class="detail-section"
+          style="display: none"
+        >
+          <h3>Documents Missing Embeddings</h3>
+          <div id="embeddings-list" class="document-list"></div>
+        </div>
+      </div>
     </div>
 
     <script>
+      let incompleteData = null;
+
       document.addEventListener("DOMContentLoaded", async () => {
         try {
           const response = await fetch("/api/dashboard");
@@ -165,11 +352,128 @@
               },
             },
           });
+
+          // Load incomplete documents data
+          await loadIncompleteDocuments();
         } catch (error) {
           console.error("Error fetching dashboard data:", error);
           document.body.innerHTML = "<h1>Error loading dashboard data</h1>";
         }
       });
+
+      async function loadIncompleteDocuments() {
+        try {
+          const response = await fetch("/api/incomplete-documents");
+          incompleteData = await response.json();
+
+          // Update counts
+          document.getElementById("total-incomplete-badge").textContent =
+            incompleteData.total_unique_incomplete;
+          document.getElementById("missing-summary-count").textContent =
+            incompleteData.summary.count;
+          document.getElementById("missing-text-count").textContent =
+            incompleteData.extracted_text.count;
+          document.getElementById("missing-keywords-count").textContent =
+            incompleteData.keywords.count;
+          document.getElementById("missing-embeddings-count").textContent =
+            incompleteData.embeddings.count;
+
+          // Update badge color based on count
+          const badge = document.getElementById("total-incomplete-badge");
+          if (incompleteData.total_unique_incomplete === 0) {
+            badge.style.backgroundColor = "#28a745";
+          }
+        } catch (error) {
+          console.error("Error fetching incomplete documents:", error);
+        }
+      }
+
+      function toggleSection(section) {
+        const sections = ["summary", "text", "keywords", "embeddings"];
+        const sectionId = `${section}-section`;
+        const sectionElement = document.getElementById(sectionId);
+
+        // Close all other sections
+        sections.forEach((s) => {
+          if (s !== section) {
+            document.getElementById(`${s}-section`).style.display = "none";
+          }
+        });
+
+        // Toggle current section
+        if (sectionElement.style.display === "none") {
+          sectionElement.style.display = "block";
+          renderDocumentList(section);
+        } else {
+          sectionElement.style.display = "none";
+        }
+      }
+
+      function renderDocumentList(section) {
+        if (!incompleteData) return;
+
+        const mapping = {
+          summary: "summary",
+          text: "extracted_text",
+          keywords: "keywords",
+          embeddings: "embeddings",
+        };
+
+        const dataKey = mapping[section];
+        const documents = incompleteData[dataKey].documents;
+        const listElement = document.getElementById(`${section}-list`);
+
+        if (documents.length === 0) {
+          listElement.innerHTML =
+            '<p style="text-align: center; color: #6c757d; padding: 20px;">No documents found with missing data.</p>';
+          return;
+        }
+
+        listElement.innerHTML = documents
+          .map(
+            (doc) => `
+          <div class="document-item">
+            <div class="document-id">ID: ${doc.id}</div>
+            <div class="document-info">
+              <div class="document-filename">${escapeHtml(doc.filename)}</div>
+              <div class="document-meta">
+                Created: ${formatDate(doc.created_at)}
+                ${
+                  doc.processed_at
+                    ? `• Processed: ${formatDate(doc.processed_at)}`
+                    : ""
+                }
+              </div>
+              ${
+                doc.processing_error
+                  ? `<div class="error-message">Error: ${escapeHtml(
+                      doc.processing_error
+                    )}</div>`
+                  : ""
+              }
+            </div>
+            <div>
+              <span class="status-badge status-${doc.status.toLowerCase()}">${
+              doc.status
+            }</span>
+            </div>
+          </div>
+        `
+          )
+          .join("");
+      }
+
+      function formatDate(dateString) {
+        if (!dateString) return "N/A";
+        const date = new Date(dateString);
+        return date.toLocaleDateString() + " " + date.toLocaleTimeString();
+      }
+
+      function escapeHtml(text) {
+        const div = document.createElement("div");
+        div.textContent = text;
+        return div.innerHTML;
+      }
 
       async function clearCache() {
         const password = document.getElementById("upload-password").value;
