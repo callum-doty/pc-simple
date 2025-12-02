@@ -257,15 +257,15 @@ class DashboardService:
         """
         try:
             # Find documents missing summary (in ai_analysis)
-            # Check for: NULL, missing key, empty string, or null value
+            # Note: Using JSON type (not JSONB), so can't use has_key()
+            # Check for: NULL, empty string, or null value
             missing_summary = (
                 self.db.query(Document)
                 .filter(Document.status == "COMPLETED")
                 .filter(
                     (Document.ai_analysis.is_(None))
-                    | (~Document.ai_analysis.has_key("summary"))
                     | (Document.ai_analysis["summary"].astext == "")
-                    | (Document.ai_analysis["summary"].astext == "null")
+                    | (Document.ai_analysis["summary"].astext.is_(None))
                 )
                 .order_by(desc(Document.created_at))
                 .limit(100)
