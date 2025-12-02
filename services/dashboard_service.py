@@ -257,13 +257,15 @@ class DashboardService:
         """
         try:
             # Find documents missing summary (in ai_analysis)
+            # Check for: NULL, missing key, empty string, or null value
             missing_summary = (
                 self.db.query(Document)
+                .filter(Document.status == "COMPLETED")
                 .filter(
                     (Document.ai_analysis.is_(None))
                     | (~Document.ai_analysis.has_key("summary"))
                     | (Document.ai_analysis["summary"].astext == "")
-                    | (Document.ai_analysis["summary"].astext.is_(None))
+                    | (Document.ai_analysis["summary"].astext == "null")
                 )
                 .order_by(desc(Document.created_at))
                 .limit(100)
@@ -273,6 +275,7 @@ class DashboardService:
             # Find documents missing extracted text
             missing_text = (
                 self.db.query(Document)
+                .filter(Document.status == "COMPLETED")
                 .filter(
                     (Document.extracted_text.is_(None))
                     | (Document.extracted_text == "")
@@ -283,12 +286,11 @@ class DashboardService:
             )
 
             # Find documents missing keywords
+            # Check for: NULL or empty/missing keywords array
             missing_keywords = (
                 self.db.query(Document)
-                .filter(
-                    (Document.keywords.is_(None))
-                    | (~Document.keywords.has_key("keywords"))
-                )
+                .filter(Document.status == "COMPLETED")
+                .filter((Document.keywords.is_(None)))
                 .order_by(desc(Document.created_at))
                 .limit(100)
                 .all()
@@ -297,6 +299,7 @@ class DashboardService:
             # Find documents missing embeddings
             missing_embeddings = (
                 self.db.query(Document)
+                .filter(Document.status == "COMPLETED")
                 .filter(Document.search_vector.is_(None))
                 .order_by(desc(Document.created_at))
                 .limit(100)
