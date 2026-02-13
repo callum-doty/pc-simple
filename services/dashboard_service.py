@@ -33,11 +33,19 @@ class DashboardService:
         core_processing_metrics = await self._get_core_processing_metrics()
         ai_analysis_metrics = await self._get_ai_analysis_metrics()
         user_engagement_metrics = await self._get_user_engagement_metrics()
+        key_metrics = await self._get_key_metrics()
+        trends = await self._get_trend_data()
+        status_breakdown = await self._get_status_breakdown()
+        recent_documents = await self._get_recent_documents()
 
         return {
             "core_processing": core_processing_metrics,
             "ai_analysis": ai_analysis_metrics,
             "user_engagement": user_engagement_metrics,
+            "key_metrics": key_metrics,
+            "trends": trends,
+            "status_breakdown": status_breakdown,
+            "recent_documents": recent_documents,
         }
 
     async def _get_core_processing_metrics(self) -> dict:
@@ -356,3 +364,189 @@ class DashboardService:
                 "embeddings": {"count": 0, "documents": []},
                 "total_unique_incomplete": 0,
             }
+
+    async def _get_key_metrics(self) -> dict:
+        """Calculate key dashboard metrics."""
+        try:
+            # Total documents
+            total_docs = self.db.query(func.count(Document.id)).scalar() or 0
+
+            # Success rate (7 days)
+            seven_days_ago = datetime.utcnow() - timedelta(days=7)
+            total_processed_7d = (
+                self.db.query(func.count(Document.id))
+                .filter(
+                    Document.processed_at >= seven_days_ago,
+                    Document.status.in_(
+                        [DocumentStatus.COMPLETED, DocumentStatus.FAILED]
+                    ),
+                )
+                .scalar()
+                or 0
+            )
+
+            successful_7d = (
+                self.db.query(func.count(Document.id))
+                .filter(
+                    Document.processed_at >= seven_days_ago,
+                    Document.status == DocumentStatus.COMPLETED,
+                )
+                .scalar()
+                or 0
+            )
+
+            success_rate_7d = (
+                round((successful_7d / total_processed_7d * 100), 2)
+                if total_processed_7d > 0
+                else 100.0
+            )
+
+            # Average processing time
+            avg_processing_time = self.db.query(
+                func.avg(Document.processed_at - Document.created_at)
+            ).filter(
+                Document.status == DocumentStatus.COMPLETED,
+                Document.processed_at.isnot(None),
+            ).scalar() or timedelta(
+                seconds=0
+            )
+
+            # Queue depth
+            queue_depth = (
+                self.db.query(func.count(Document.id))
+                .filter(Document.status == DocumentStatus.PENDING)
+                .scalar()
+                or 0
+            )
+
+            return {
+                "total_documents": total_docs,
+                "success_rate_7d": success_rate_7d,
+                "avg_processing_time_seconds": round(
+                    avg_processing_time.total_seconds(), 2
+                ),
+                "queue_depth": queue_depth,
+            }
+        except Exception as e:
+            logger.error(f"Error calculating key metrics: {e}")
+            return {
+                "total_documents": 0,
+                "success_rate_7d": 0,
+                "avg_processing_time_seconds": 0,
+                "queue_depth": 0,
+            }
+
+    async def _get_trend_data(self) -> dict:
+        """Calculate 30-day trend data for uploads, completions, and searches."""
+        try:
+            thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+
+            # Daily uploads
+            daily_uploads = (
+                self.db.query(
+                    func.date(Document.created_at).label("date"),
+                    func.count(Document.id).label("count"),
+                )
+                .filter(Document.created_at >= thirty_days_ago)
+                .group_by(func.date(Document.created_at))
+                .order_by(func.date(Document.created_at))
+                .all()
+            )
+
+            # Daily completions
+            daily_completions = (
+                self.db.query(
+                    func.date(Document.processed_at).label("date"),
+                    func.count(Document.id).label("count"),
+                )
+                .filter(
+                    Document.processed_at >= thirty_days_ago,
+                    Document.status == DocumentStatus.COMPLETED,
+                )
+                .group_by(func.date(Document.processed_at))
+                .order_by(func.date(Document.processed_at))
+                .all()
+            )
+
+            # Daily searches
+            daily_searches = (
+                self.db.query(
+                    func.date(SearchQuery.timestamp).label("date"),
+                    func.count(SearchQuery.id).label("count"),
+                )
+                .filter(SearchQuery.timestamp >= thirty_days_ago)
+                .group_by(func.date(SearchQuery.timestamp))
+                .order_by(func.date(SearchQuery.timestamp))
+                .all()
+            )
+
+            # Convert to lists of dicts
+            uploads_data = [
+                {"date": str(row.date), "count": row.count} for row in daily_uploads
+            ]
+            completions_data = [
+                {"date": str(row.date), "count": row.count} for row in daily_completions
+            ]
+            searches_data = [
+                {"date": str(row.date), "count": row.count} for row in daily_searches
+            ]
+
+            return {
+                "daily_uploads": uploads_data,
+                "daily_completions": completions_data,
+                "daily_searches": searches_data,
+            }
+        except Exception as e:
+            logger.error(f"Error calculating trend data: {e}")
+            return {
+                "daily_uploads": [],
+                "daily_completions": [],
+                "daily_searches": [],
+            }
+
+    async def _get_status_breakdown(self) -> dict:
+        """Get document status breakdown."""
+        try:
+            status_counts = (
+                self.db.query(Document.status, func.count(Document.status))
+                .group_by(Document.status)
+                .all()
+            )
+
+            status_map = dict(status_counts)
+
+            return {
+                "pending": status_map.get(DocumentStatus.PENDING, 0),
+                "processing": status_map.get(DocumentStatus.PROCESSING, 0),
+                "completed": status_map.get(DocumentStatus.COMPLETED, 0),
+                "failed": status_map.get(DocumentStatus.FAILED, 0),
+            }
+        except Exception as e:
+            logger.error(f"Error calculating status breakdown: {e}")
+            return {"pending": 0, "processing": 0, "completed": 0, "failed": 0}
+
+    async def _get_recent_documents(self) -> list:
+        """Get the 10 most recent documents."""
+        try:
+            recent_docs = (
+                self.db.query(Document)
+                .order_by(desc(Document.created_at))
+                .limit(10)
+                .all()
+            )
+
+            return [
+                {
+                    "id": doc.id,
+                    "filename": doc.filename,
+                    "status": doc.status,
+                    "created_at": doc.created_at.isoformat() if doc.created_at else None,
+                    "processed_at": (
+                        doc.processed_at.isoformat() if doc.processed_at else None
+                    ),
+                }
+                for doc in recent_docs
+            ]
+        except Exception as e:
+            logger.error(f"Error getting recent documents: {e}")
+            return []

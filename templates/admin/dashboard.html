@@ -7,21 +7,87 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
       body {
-        font-family: sans-serif;
-        margin: 20px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background: #f5f7fa;
+      }
+      .dashboard-container {
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+      h1 {
+        color: #2c3e50;
+        margin-bottom: 30px;
+        font-size: 2em;
       }
       .dashboard-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
         gap: 20px;
+        margin-bottom: 20px;
       }
       .panel {
-        border: 1px solid #ccc;
-        border-radius: 5px;
-        padding: 20px;
+        background: white;
+        border: 1px solid #e1e8ed;
+        border-radius: 12px;
+        padding: 24px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        transition: box-shadow 0.3s ease;
+      }
+      .panel:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
       }
       .panel h2 {
         margin-top: 0;
+        font-size: 1.3em;
+        color: #2c3e50;
+      }
+      /* Key Metrics Cards */
+      .key-metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 20px;
+        margin-bottom: 20px;
+      }
+      .key-metric-card {
+        background: white;
+        border-radius: 12px;
+        padding: 24px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        border-left: 4px solid #007bff;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+      .key-metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+      }
+      .key-metric-card.success {
+        border-left-color: #28a745;
+      }
+      .key-metric-card.warning {
+        border-left-color: #ffc107;
+      }
+      .key-metric-card.danger {
+        border-left-color: #dc3545;
+      }
+      .key-metric-label {
+        font-size: 0.85em;
+        color: #6c757d;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 8px;
+        font-weight: 600;
+      }
+      .key-metric-value {
+        font-size: 2.5em;
+        font-weight: bold;
+        color: #2c3e50;
+        margin-bottom: 4px;
+      }
+      .key-metric-subtitle {
+        font-size: 0.85em;
+        color: #95a5a6;
       }
       .badge {
         background-color: #dc3545;
@@ -155,33 +221,71 @@
     </style>
   </head>
   <body>
-    <h1>Admin Dashboard</h1>
+    <div class="dashboard-container">
+      <h1>📊 Admin Dashboard</h1>
 
-    <div class="dashboard-grid">
-      <div class="panel">
-        <h2>Executive Summary</h2>
-        <p>Total Documents: <span id="total-docs">...</span></p>
-        <p>Success Rate (7d): <span id="success-rate">...</span>%</p>
-        <p>Avg. Processing Time: <span id="avg-time">...</span>s</p>
+      <!-- Key Metrics Cards -->
+      <div class="key-metrics">
+        <div class="key-metric-card" id="total-docs-card">
+          <div class="key-metric-label">Total Documents</div>
+          <div class="key-metric-value" id="total-docs">...</div>
+          <div class="key-metric-subtitle">All time</div>
+        </div>
+        <div class="key-metric-card" id="success-rate-card">
+          <div class="key-metric-label">Success Rate</div>
+          <div class="key-metric-value" id="success-rate">...</div>
+          <div class="key-metric-subtitle">Last 7 days</div>
+        </div>
+        <div class="key-metric-card">
+          <div class="key-metric-label">Avg Processing Time</div>
+          <div class="key-metric-value" id="avg-time">...</div>
+          <div class="key-metric-subtitle">Seconds per document</div>
+        </div>
+        <div class="key-metric-card" id="queue-depth-card">
+          <div class="key-metric-label">Queue Depth</div>
+          <div class="key-metric-value" id="queue-depth">...</div>
+          <div class="key-metric-subtitle">Pending documents</div>
+        </div>
       </div>
 
-      <div class="panel">
-        <h2>Processing Pipeline</h2>
-        <canvas id="processing-status-chart"></canvas>
-      </div>
+      <div class="dashboard-grid">
+        <!-- Document Processing Activity Chart -->
+        <div class="panel" style="grid-column: span 2;">
+          <h2>📈 Document Processing Activity (30 Days)</h2>
+          <canvas id="processing-activity-chart"></canvas>
+        </div>
 
-      <div class="panel">
-        <h2>User Activity</h2>
-        <canvas id="user-activity-chart"></canvas>
-      </div>
+        <!-- Document Status Breakdown -->
+        <div class="panel">
+          <h2>🔄 Document Status</h2>
+          <canvas id="processing-status-chart"></canvas>
+        </div>
 
-      <div class="panel">
-        <h2>AI Analysis Quality</h2>
-        <canvas id="ai-quality-chart"></canvas>
-      </div>
+        <!-- Search Analytics Chart -->
+        <div class="panel" style="grid-column: span 2;">
+          <h2>🔍 Search Analytics (30 Days)</h2>
+          <canvas id="search-analytics-chart"></canvas>
+        </div>
 
-      <div class="panel">
-        <h2>Cache Management</h2>
+        <!-- Recent Documents -->
+        <div class="panel">
+          <h2>📄 Recent Uploads</h2>
+          <div id="recent-documents-list" style="max-height: 300px; overflow-y: auto;">
+            <p style="color: #6c757d;">Loading...</p>
+          </div>
+        </div>
+
+        <!-- Top Search Terms -->
+        <div class="panel">
+          <h2>🔥 Top Search Terms</h2>
+          <div id="top-searches-list">
+            <p style="color: #6c757d;">Loading...</p>
+          </div>
+        </div>
+
+        <!-- Cache Management -->
+        <div class="panel">
+          <h2>🗑️ Cache Management</h2>
         <p>
           Clear Redis cache to force regeneration of preview URLs and search
           results.
@@ -292,83 +396,21 @@
         try {
           const response = await fetch("/api/dashboard");
           const data = await response.json();
+          console.log("Dashboard data:", data);
 
-          // Executive Summary
-          document.getElementById("total-docs").textContent =
-            data.core_processing.queue_depth; // This is not total docs, will fix later
-          document.getElementById("success-rate").textContent =
-            data.core_processing.processing_success_rate;
-          document.getElementById("avg-time").textContent =
-            data.core_processing.average_processing_time_seconds;
+          // Update Key Metrics
+          updateKeyMetrics(data);
 
-          // Processing Pipeline Chart
-          new Chart(document.getElementById("processing-status-chart"), {
-            type: "doughnut",
-            data: {
-              labels: ["Pending", "Processing", "Completed", "Failed"],
-              datasets: [
-                {
-                  label: "Document Status",
-                  data: [
-                    data.core_processing.queue_depth,
-                    0,
-                    0,
-                    0, // Placeholder values
-                  ],
-                  backgroundColor: ["#ffc107", "#007bff", "#28a745", "#dc3545"],
-                },
-              ],
-            },
-          });
+          // Render Charts
+          renderProcessingActivityChart(data.trends);
+          renderStatusBreakdownChart(data.status_breakdown);
+          renderSearchAnalyticsChart(data.trends);
 
-          // User Activity Chart
-          new Chart(document.getElementById("user-activity-chart"), {
-            type: "bar",
-            data: {
-              labels: ["Searches (7d)", "Uploads (7d)"],
-              datasets: [
-                {
-                  label: "Activity",
-                  data: [
-                    data.user_engagement.search_query_volume_7d,
-                    data.user_engagement.upload_volume_7d,
-                  ],
-                  backgroundColor: ["#17a2b8", "#6f42c1"],
-                },
-              ],
-            },
-          });
+          // Render Recent Documents
+          renderRecentDocuments(data.recent_documents);
 
-          // AI Quality Chart
-          new Chart(document.getElementById("ai-quality-chart"), {
-            type: "bar",
-            data: {
-              labels: [
-                "Analysis Completion",
-                "Keyword Mapping",
-                "Embedding Generation",
-              ],
-              datasets: [
-                {
-                  label: "Success Rate (%)",
-                  data: [
-                    data.ai_analysis.analysis_completion_rate,
-                    data.ai_analysis.keyword_mapping_success_rate,
-                    data.ai_analysis.embedding_generation_rate,
-                  ],
-                  backgroundColor: ["#fd7e14", "#20c997", "#6610f2"],
-                },
-              ],
-            },
-            options: {
-              scales: {
-                y: {
-                  beginAtZero: true,
-                  max: 100,
-                },
-              },
-            },
-          });
+          // Render Top Searches
+          renderTopSearches(data.user_engagement.top_search_terms);
 
           // Load incomplete documents data
           await loadIncompleteDocuments();
@@ -377,6 +419,216 @@
           document.body.innerHTML = "<h1>Error loading dashboard data</h1>";
         }
       });
+
+      function updateKeyMetrics(data) {
+        const metrics = data.key_metrics;
+
+        // Total Documents
+        document.getElementById("total-docs").textContent = metrics.total_documents || 0;
+
+        // Success Rate with color coding
+        const successRate = metrics.success_rate_7d || 0;
+        document.getElementById("success-rate").textContent = successRate.toFixed(1) + "%";
+        const successCard = document.getElementById("success-rate-card");
+        if (successRate >= 95) {
+          successCard.classList.add("success");
+        } else if (successRate >= 85) {
+          successCard.classList.add("warning");
+        } else {
+          successCard.classList.add("danger");
+        }
+
+        // Avg Processing Time
+        const avgTime = metrics.avg_processing_time_seconds || 0;
+        document.getElementById("avg-time").textContent = avgTime.toFixed(1) + "s";
+
+        // Queue Depth with color coding
+        const queueDepth = metrics.queue_depth || 0;
+        document.getElementById("queue-depth").textContent = queueDepth;
+        const queueCard = document.getElementById("queue-depth-card");
+        if (queueDepth === 0) {
+          queueCard.classList.add("success");
+        } else if (queueDepth < 10) {
+          queueCard.classList.add("warning");
+        } else {
+          queueCard.classList.add("danger");
+        }
+      }
+
+      function renderProcessingActivityChart(trends) {
+        const uploads = trends.daily_uploads || [];
+        const completions = trends.daily_completions || [];
+
+        // Get all unique dates
+        const allDates = [...new Set([
+          ...uploads.map(d => d.date),
+          ...completions.map(d => d.date)
+        ])].sort();
+
+        // Create data arrays aligned by date
+        const uploadCounts = allDates.map(date => {
+          const found = uploads.find(d => d.date === date);
+          return found ? found.count : 0;
+        });
+
+        const completionCounts = allDates.map(date => {
+          const found = completions.find(d => d.date === date);
+          return found ? found.count : 0;
+        });
+
+        new Chart(document.getElementById("processing-activity-chart"), {
+          type: "line",
+          data: {
+            labels: allDates,
+            datasets: [
+              {
+                label: "Uploads",
+                data: uploadCounts,
+                borderColor: "#6f42c1",
+                backgroundColor: "rgba(111, 66, 193, 0.1)",
+                tension: 0.4,
+                fill: true
+              },
+              {
+                label: "Completed",
+                data: completionCounts,
+                borderColor: "#28a745",
+                backgroundColor: "rgba(40, 167, 69, 0.1)",
+                tension: 0.4,
+                fill: true
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+              legend: {
+                position: "top"
+              }
+            },
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: {
+                  precision: 0
+                }
+              }
+            }
+          }
+        });
+      }
+
+      function renderStatusBreakdownChart(statusData) {
+        new Chart(document.getElementById("processing-status-chart"), {
+          type: "doughnut",
+          data: {
+            labels: ["Pending", "Processing", "Completed", "Failed"],
+            datasets: [
+              {
+                label: "Documents",
+                data: [
+                  statusData.pending || 0,
+                  statusData.processing || 0,
+                  statusData.completed || 0,
+                  statusData.failed || 0
+                ],
+                backgroundColor: ["#ffc107", "#007bff", "#28a745", "#dc3545"],
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+              legend: {
+                position: "bottom"
+              }
+            }
+          }
+        });
+      }
+
+      function renderSearchAnalyticsChart(trends) {
+        const searches = trends.daily_searches || [];
+
+        const dates = searches.map(d => d.date);
+        const counts = searches.map(d => d.count);
+
+        new Chart(document.getElementById("search-analytics-chart"), {
+          type: "line",
+          data: {
+            labels: dates,
+            datasets: [
+              {
+                label: "Daily Searches",
+                data: counts,
+                borderColor: "#17a2b8",
+                backgroundColor: "rgba(23, 162, 184, 0.1)",
+                tension: 0.4,
+                fill: true
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+              legend: {
+                display: false
+              }
+            },
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: {
+                  precision: 0
+                }
+              }
+            }
+          }
+        });
+      }
+
+      function renderRecentDocuments(documents) {
+        const listElement = document.getElementById("recent-documents-list");
+        
+        if (!documents || documents.length === 0) {
+          listElement.innerHTML = '<p style="color: #6c757d; padding: 10px;">No recent documents</p>';
+          return;
+        }
+
+        listElement.innerHTML = documents.map(doc => `
+          <div style="padding: 10px; border-bottom: 1px solid #e1e8ed;">
+            <div style="font-weight: 500; color: #2c3e50; margin-bottom: 4px;">${escapeHtml(doc.filename)}</div>
+            <div style="font-size: 0.85em; color: #6c757d;">
+              <span class="status-badge status-${doc.status.toLowerCase()}">${doc.status}</span>
+              <span style="margin-left: 8px;">${formatDate(doc.created_at)}</span>
+            </div>
+          </div>
+        `).join('');
+      }
+
+      function renderTopSearches(topSearches) {
+        const listElement = document.getElementById("top-searches-list");
+        
+        if (!topSearches || topSearches.length === 0) {
+          listElement.innerHTML = '<p style="color: #6c757d; padding: 10px;">No search data available</p>';
+          return;
+        }
+
+        listElement.innerHTML = topSearches.map((item, index) => `
+          <div style="padding: 12px; border-bottom: 1px solid #e1e8ed; display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; align-items: center;">
+              <span style="font-weight: bold; color: #007bff; margin-right: 12px; font-size: 1.2em;">${index + 1}</span>
+              <span style="color: #2c3e50;">${escapeHtml(item.query || item)}</span>
+            </div>
+            <span style="background: #e1e8ed; padding: 4px 12px; border-radius: 12px; font-size: 0.85em; font-weight: 600;">
+              ${item.count || 0}
+            </span>
+          </div>
+        `).join('');
+      }
 
       async function loadIncompleteDocuments() {
         try {
