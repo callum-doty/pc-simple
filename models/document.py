@@ -366,7 +366,7 @@ Index(
     "idx_documents_search_vector",
     Document.search_vector,
     postgresql_using="hnsw",
-    postgresql_with={"m": 16, "ef_construction": 64},
+    postgresql_with={"m": 32, "ef_construction": 128},
     postgresql_ops={"search_vector": "vector_cosine_ops"},
 )
 

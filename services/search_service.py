@@ -426,8 +426,8 @@ class SearchService:
             if self.redis_client:
                 try:
                     self.redis_client.set(
-                        cache_key, json.dumps(result, default=str), ex=3600
-                    )  # Cache for 1 hour
+                        cache_key, json.dumps(result, default=str), ex=1800
+                    )  # Cache for 30 minutes (optimized for memory)
                 except redis.exceptions.RedisError as e:
                     logger.error(f"Redis SET error: {e}")
 
@@ -518,13 +518,13 @@ class SearchService:
                 ],
             }
 
-            # Cache the results for 6 hours
+            # Cache the results for 24 hours (facets are expensive to regenerate)
             if self.redis_client:
                 try:
                     self.redis_client.set(
-                        facet_cache_key, json.dumps(facets), ex=21600  # 6 hours
+                        facet_cache_key, json.dumps(facets), ex=86400  # 24 hours
                     )
-                    logger.info("Cached enhanced facets for 6 hours")
+                    logger.info("Cached enhanced facets for 24 hours")
                 except redis.exceptions.RedisError as e:
                     logger.error(f"Redis SET error for facets: {e}")
 
