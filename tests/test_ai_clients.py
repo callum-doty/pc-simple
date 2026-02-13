@@ -146,7 +146,7 @@ def test_simple_api_call(client, provider):
     try:
         if provider == "anthropic":
             response = client.messages.create(
-                model="claude-3-haiku-20240307",
+                model="claude-3-5-haiku-20241022",
                 max_tokens=50,
                 messages=[{"role": "user", "content": "Say hello"}],
             )
@@ -154,7 +154,7 @@ def test_simple_api_call(client, provider):
 
         elif provider == "openai":
             response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-4o-mini",
                 max_tokens=50,
                 messages=[{"role": "user", "content": "Say hello"}],
             )
