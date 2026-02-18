@@ -153,16 +153,16 @@ graph LR
 ```mermaid
 graph TD
     subgraph "DocumentService"
-        CREATE_DOC[create_document()]
-        GET_DOC[get_document()]
-        UPDATE_STATUS[update_document_status()]
-        UPDATE_CONTENT[update_document_content()]
-        DELETE_DOC[delete_document()]
-        GET_STATS[get_statistics()]
-        SEARCH_DOCS[search_documents_by_text()]
-        UPDATE_EMBEDDINGS[update_document_embeddings()]
-        UPDATE_PREVIEW[update_document_preview_url()]
-        GET_DETAILS[get_document_details()]
+        CREATE_DOC["create_document()"]
+        GET_DOC["get_document()"]
+        UPDATE_STATUS["update_document_status()"]
+        UPDATE_CONTENT["update_document_content()"]
+        DELETE_DOC["delete_document()"]
+        GET_STATS["get_statistics()"]
+        SEARCH_DOCS["search_documents_by_text()"]
+        UPDATE_EMBEDDINGS["update_document_embeddings()"]
+        UPDATE_PREVIEW["update_document_preview_url()"]
+        GET_DETAILS["get_document_details()"]
     end
 
     subgraph "Database Operations"
@@ -204,12 +204,12 @@ graph TD
 ```mermaid
 graph TD
     subgraph "AIService"
-        ANALYZE_DOC[analyze_document()]
-        EXTRACT_TEXT[_extract_text()]
-        GENERATE_EMBEDDINGS[generate_embeddings()]
-        ANALYZE_CHUNK[analyze_text_chunk()]
-        GET_AI_INFO[get_ai_info()]
-        GET_ANALYSIS_TYPES[get_available_analysis_types()]
+        ANALYZE_DOC["analyze_document()"]
+        EXTRACT_TEXT["_extract_text()"]
+        GENERATE_EMBEDDINGS["generate_embeddings()"]
+        ANALYZE_CHUNK["analyze_text_chunk()"]
+        GET_AI_INFO["get_ai_info()"]
+        GET_ANALYSIS_TYPES["get_available_analysis_types()"]
     end
 
     subgraph "Analysis Types"
@@ -291,13 +291,13 @@ graph TD
 ```mermaid
 graph TD
     subgraph "SearchService"
-        SEARCH[search()]
-        SEARCH_CANONICAL[search_by_canonical_term()]
-        SEARCH_VERBATIM[search_by_verbatim_term()]
-        GET_MAPPING_STATS[get_mapping_statistics()]
-        LOG_QUERY[log_search_query()]
-        GET_TOP_QUERIES[get_top_queries()]
-        GENERATE_FACETS[_generate_enhanced_facets()]
+        SEARCH["search()"]
+        SEARCH_CANONICAL["search_by_canonical_term()"]
+        SEARCH_VERBATIM["search_by_verbatim_term()"]
+        GET_MAPPING_STATS["get_mapping_statistics()"]
+        LOG_QUERY["log_search_query()"]
+        GET_TOP_QUERIES["get_top_queries()"]
+        GENERATE_FACETS["_generate_enhanced_facets()"]
     end
 
     subgraph "Search Strategies"
@@ -386,13 +386,13 @@ graph TD
 ```mermaid
 graph TD
     subgraph "StorageService"
-        SAVE_FILE[save_file()]
-        GET_FILE[get_file()]
-        DELETE_FILE[delete_file()]
-        GET_FILE_URL[get_file_url()]
-        CHECK_EXISTS[check_file_exists()]
-        GET_SIZE[get_file_size()]
-        GET_STORAGE_INFO[get_storage_info()]
+        SAVE_FILE["save_file()"]
+        GET_FILE["get_file()"]
+        DELETE_FILE["delete_file()"]
+        GET_FILE_URL["get_file_url()"]
+        CHECK_EXISTS["check_file_exists()"]
+        GET_SIZE["get_file_size()"]
+        GET_STORAGE_INFO["get_storage_info()"]
     end
 
     subgraph "Storage Backends"
@@ -402,17 +402,17 @@ graph TD
     end
 
     subgraph "Local Storage Operations"
-        LOCAL_SAVE[_save_file_local()]
-        LOCAL_GET[_get_file_local()]
-        LOCAL_DELETE[_delete_file_local()]
-        LOCAL_URL[_get_local_file_url()]
+        LOCAL_SAVE["_save_file_local()"]
+        LOCAL_GET["_get_file_local()"]
+        LOCAL_DELETE["_delete_file_local()"]
+        LOCAL_URL["_get_local_file_url()"]
     end
 
     subgraph "S3 Storage Operations"
-        S3_SAVE[_save_file_s3()]
-        S3_GET[_get_file_s3()]
-        S3_DELETE[_delete_file_s3()]
-        S3_PRESIGNED[_get_s3_presigned_url()]
+        S3_SAVE["_save_file_s3()"]
+        S3_GET["_get_file_s3()"]
+        S3_DELETE["_delete_file_s3()"]
+        S3_PRESIGNED["_get_s3_presigned_url()"]
     end
 
     subgraph "Configuration Management"
@@ -467,15 +467,15 @@ graph TD
 ```mermaid
 graph TD
     subgraph "TaxonomyService"
-        INIT_FROM_CSV[initialize_from_csv()]
-        GET_HIERARCHY[get_taxonomy_hierarchy()]
-        GET_CATEGORIES[get_primary_categories()]
-        GET_SUBCATEGORIES[get_subcategories()]
-        SEARCH_TERMS[search_terms()]
-        FIND_CREATE_TERM[find_or_create_term()]
-        GET_CANONICAL_TERMS[get_all_canonical_terms()]
-        VALIDATE_MAPPING[validate_taxonomy_mapping()]
-        GET_STATISTICS[get_statistics()]
+        INIT_FROM_CSV["initialize_from_csv()"]
+        GET_HIERARCHY["get_taxonomy_hierarchy()"]
+        GET_CATEGORIES["get_primary_categories()"]
+        GET_SUBCATEGORIES["get_subcategories()"]
+        SEARCH_TERMS["search_terms()"]
+        FIND_CREATE_TERM["find_or_create_term()"]
+        GET_CANONICAL_TERMS["get_all_canonical_terms()"]
+        VALIDATE_MAPPING["validate_taxonomy_mapping()"]
+        GET_STATISTICS["get_statistics()"]
     end
 
     subgraph "Data Models"
@@ -728,15 +728,15 @@ graph TD
 ```mermaid
 graph TD
     subgraph "RedisSessionService"
-        CREATE_SESSION[create_session()]
-        GET_SESSION[get_session()]
-        UPDATE_SESSION[update_session()]
-        DELETE_SESSION[delete_session()]
-        EXTEND_SESSION[extend_session()]
-        GET_TTL[get_session_ttl()]
-        CLEANUP[cleanup_expired_sessions()]
-        GET_STATS[get_session_stats()]
-        HEALTH_CHECK[health_check()]
+        CREATE_SESSION["create_session()"]
+        GET_SESSION["get_session()"]
+        UPDATE_SESSION["update_session()"]
+        DELETE_SESSION["delete_session()"]
+        EXTEND_SESSION["extend_session()"]
+        GET_TTL["get_session_ttl()"]
+        CLEANUP["cleanup_expired_sessions()"]
+        GET_STATS["get_session_stats()"]
+        HEALTH_CHECK["health_check()"]
     end
 
     subgraph "Redis Operations"

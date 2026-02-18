@@ -106,13 +106,13 @@ graph LR
         subgraph "Document Routes"
             DOC_UPLOAD[POST /api/documents/upload]
             DOC_SEARCH[GET /api/documents/search]
-            DOC_GET[GET /api/documents/{id}]
-            DOC_DOWNLOAD[GET /api/documents/{id}/download]
-            DOC_PREVIEW[GET /api/documents/{id}/preview]
-            DOC_STATUS[GET /api/documents/{id}/status]
-            DOC_REPROCESS[POST /api/documents/{id}/reprocess]
-            DOC_ANALYZE[POST /api/documents/{id}/analyze]
-            DOC_MAPPINGS[GET /api/documents/{id}/mappings]
+            DOC_GET["GET /api/documents/{id}"]
+            DOC_DOWNLOAD["GET /api/documents/{id}/download"]
+            DOC_PREVIEW["GET /api/documents/{id}/preview"]
+            DOC_STATUS["GET /api/documents/{id}/status"]
+            DOC_REPROCESS["POST /api/documents/{id}/reprocess"]
+            DOC_ANALYZE["POST /api/documents/{id}/analyze"]
+            DOC_MAPPINGS["GET /api/documents/{id}/mappings"]
         end
 
         subgraph "Dashboard Routes"
@@ -123,7 +123,7 @@ graph LR
 
         subgraph "Taxonomy Routes"
             TAX_CATEGORIES[GET /api/taxonomy/categories]
-            TAX_SUBCATEGORIES[GET /api/taxonomy/categories/{cat}/subcategories]
+            TAX_SUBCATEGORIES["GET /api/taxonomy/categories/{cat}/subcategories"]
             TAX_HIERARCHY[GET /api/taxonomy/hierarchy]
             TAX_FILTER[GET /api/taxonomy/filter-data]
             TAX_CANONICAL[GET /api/taxonomy/canonical-terms]
@@ -196,16 +196,16 @@ graph TD
         REQUEST[HTTP Request] --> DEPS[Dependency Resolution]
 
         subgraph "Database Dependencies"
-            GET_DB[get_db() -> Session]
+            GET_DB["get_db() returns Session"]
         end
 
         subgraph "Service Dependencies"
-            GET_DOC_SVC[get_document_service() -> DocumentService]
-            GET_AI_SVC[get_ai_service() -> AIService]
-            GET_SEARCH_SVC[get_search_service() -> SearchService]
-            GET_STORAGE_SVC[get_storage_service() -> StorageService]
-            GET_TAXONOMY_SVC[get_taxonomy_service() -> TaxonomyService]
-            GET_PREVIEW_SVC[get_preview_service() -> PreviewService]
+            GET_DOC_SVC["get_document_service() returns DocumentService"]
+            GET_AI_SVC["get_ai_service() returns AIService"]
+            GET_SEARCH_SVC["get_search_service() returns SearchService"]
+            GET_STORAGE_SVC["get_storage_service() returns StorageService"]
+            GET_TAXONOMY_SVC["get_taxonomy_service() returns TaxonomyService"]
+            GET_PREVIEW_SVC["get_preview_service() returns PreviewService"]
         end
 
         subgraph "Endpoint Handler"
@@ -397,8 +397,8 @@ graph TD
 
     subgraph "Runtime Selection"
         ENVIRONMENT[ENVIRONMENT Variable]
-        GET_SETTINGS[get_settings() Function]
-        CACHED_SETTINGS[@lru_cache Decorator]
+        GET_SETTINGS["get_settings() Function"]
+        CACHED_SETTINGS["@lru_cache Decorator"]
     end
 
     ENVIRONMENT --> GET_SETTINGS
