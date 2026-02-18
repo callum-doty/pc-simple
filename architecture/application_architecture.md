@@ -61,7 +61,8 @@ graph TB
 ```mermaid
 graph TD
     REQUEST[Incoming Request] --> CORS[CORS Middleware]
-    CORS --> SLOWAPI[SlowAPI Rate Limiting]
+    CORS --> SESSION[Redis Session Middleware]
+    SESSION --> SLOWAPI[SlowAPI Rate Limiting]
     SLOWAPI --> SECURITY[Security Headers Middleware]
     SECURITY --> PERFORMANCE[Performance Monitoring]
     PERFORMANCE --> FASTAPI[FastAPI Router]
@@ -69,6 +70,8 @@ graph TD
 
     subgraph "Middleware Details"
         CORS_DETAIL["CORS Middleware<br/>- Allow origins: *<br/>- Allow credentials: true<br/>- Allow methods: *<br/>- Allow headers: *"]
+
+        SESSION_DETAIL["Redis Session Middleware<br/>- Encrypted session storage<br/>- Automatic TTL management<br/>- HttpOnly secure cookies<br/>- Fallback to in-memory"]
 
         SLOWAPI_DETAIL["Rate Limiting<br/>- Default: 1000/hour<br/>- Upload: 20/minute<br/>- Search: 30/minute<br/>- Key: Remote IP"]
 
@@ -78,6 +81,7 @@ graph TD
     end
 
     CORS -.-> CORS_DETAIL
+    SESSION -.-> SESSION_DETAIL
     SLOWAPI -.-> SLOWAPI_DETAIL
     SECURITY -.-> SECURITY_DETAIL
     PERFORMANCE -.-> PERFORMANCE_DETAIL
@@ -466,6 +470,13 @@ graph TD
 - Service layer instantiation through dependencies
 - Database session management per request
 - Automatic cleanup and resource management
+
+### **Session Management Pattern**
+
+- Redis-backed session storage for scalability
+- Encrypted session data for security
+- Automatic session lifecycle management
+- Graceful fallback when Redis unavailable
 
 ### **Async/Await Pattern**
 

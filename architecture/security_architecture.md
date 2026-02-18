@@ -89,6 +89,7 @@ graph TD
     subgraph "Authentication Methods"
         UPLOAD_PASSWORD[Upload Password Authentication]
         API_KEY[API Key Authentication]
+        SESSION_AUTH[Redis Session Authentication]
         OPTIONAL_AUTH[Optional Authentication]
     end
 
@@ -108,6 +109,15 @@ graph TD
         API_ACCESS_DENIED[API Access Denied]
     end
 
+    subgraph "Session Authentication Flow"
+        SESSION_REQUEST[Web Request]
+        COOKIE_CHECK[Session Cookie Check]
+        SESSION_VALIDATION[Redis Session Validation]
+        SESSION_LOAD[Load Session Data]
+        SESSION_GRANTED[Session Access Granted]
+        SESSION_DENIED[Create New Session]
+    end
+
     subgraph "Public Access Flow"
         PUBLIC_REQUEST[Public Request]
         ENDPOINT_CHECK[Endpoint Access Check]
@@ -121,6 +131,7 @@ graph TD
         REQUIRE_AUTH_FLAG[require_auth Configuration]
         UPLOAD_PASSWORD_CONFIG[upload_password Configuration]
         API_KEY_CONFIG[api_key Configuration]
+        SESSION_SECRET_CONFIG[session_secret_key Configuration]
         SECURITY_SETTINGS[Security Settings]
     end
 
@@ -134,6 +145,12 @@ graph TD
     API_KEY_VALIDATION --> API_ACCESS_GRANTED
     API_KEY_VALIDATION --> API_ACCESS_DENIED
 
+    SESSION_REQUEST --> COOKIE_CHECK
+    COOKIE_CHECK --> SESSION_VALIDATION
+    SESSION_VALIDATION --> SESSION_LOAD
+    SESSION_LOAD --> SESSION_GRANTED
+    SESSION_VALIDATION --> SESSION_DENIED
+
     PUBLIC_REQUEST --> ENDPOINT_CHECK
     ENDPOINT_CHECK --> PUBLIC_ENDPOINTS
     ENDPOINT_CHECK --> PROTECTED_ENDPOINTS
@@ -143,10 +160,140 @@ graph TD
     REQUIRE_AUTH_FLAG --> SECURITY_SETTINGS
     UPLOAD_PASSWORD_CONFIG --> SECURITY_SETTINGS
     API_KEY_CONFIG --> SECURITY_SETTINGS
+    SESSION_SECRET_CONFIG --> SECURITY_SETTINGS
     SECURITY_SETTINGS --> PASSWORD_CHECK
     SECURITY_SETTINGS --> API_KEY_VALIDATION
+    SECURITY_SETTINGS --> SESSION_VALIDATION
     SECURITY_SETTINGS --> ENDPOINT_CHECK
 ```
+
+## Redis Session Management Architecture
+
+```mermaid
+graph TB
+    subgraph "Session Creation"
+        USER_VISIT[User Visits Application]
+        CHECK_COOKIE[Check for Session Cookie]
+        EXISTING_SESSION[Existing Session Found]
+        NEW_SESSION[Create New Session]
+        GENERATE_ID[Generate Secure Session ID]
+        ENCRYPT_DATA[Encrypt Session Data]
+        STORE_REDIS[Store in Redis with TTL]
+        SET_COOKIE[Set HttpOnly Session Cookie]
+    end
+
+    subgraph "Session Validation"
+        INCOMING_REQUEST[Incoming Request]
+        EXTRACT_COOKIE[Extract Session Cookie]
+        LOAD_SESSION[Load Session from Redis]
+        DECRYPT_SESSION[Decrypt Session Data]
+        VALIDATE_TTL[Validate TTL]
+        UPDATE_TIMESTAMP[Update Last Accessed]
+        SESSION_VALID[Session Valid]
+        SESSION_EXPIRED[Session Expired/Invalid]
+    end
+
+    subgraph "Session Security"
+        FERNET_ENCRYPTION[Fernet Symmetric Encryption]
+        KEY_DERIVATION[SHA-256 Key Derivation]
+        SECURE_ID_GEN[Cryptographically Secure ID]
+        HTTPONLY_COOKIE[HttpOnly Cookie Flag]
+        SAMESITE_POLICY[SameSite Cookie Policy]
+        SECURE_FLAG[Secure Flag for HTTPS]
+    end
+
+    subgraph "Session Storage"
+        REDIS_STORAGE[Redis Storage]
+        SESSION_PREFIX[session: Key Prefix]
+        TTL_EXPIRATION[Automatic TTL Expiration]
+        ENCRYPTED_PAYLOAD[Encrypted Data Payload]
+        SESSION_METADATA[Session Metadata]
+    end
+
+    subgraph "Session Lifecycle"
+        SESSION_CREATE[Create Session]
+        SESSION_ACCESS[Access Session]
+        SESSION_UPDATE[Update Session Data]
+        SESSION_EXTEND[Extend Session TTL]
+        SESSION_DELETE[Delete Session]
+        SESSION_EXPIRE[Automatic Expiration]
+    end
+
+    USER_VISIT --> CHECK_COOKIE
+    CHECK_COOKIE --> EXISTING_SESSION
+    CHECK_COOKIE --> NEW_SESSION
+    NEW_SESSION --> GENERATE_ID
+    GENERATE_ID --> ENCRYPT_DATA
+    ENCRYPT_DATA --> STORE_REDIS
+    STORE_REDIS --> SET_COOKIE
+
+    INCOMING_REQUEST --> EXTRACT_COOKIE
+    EXTRACT_COOKIE --> LOAD_SESSION
+    LOAD_SESSION --> DECRYPT_SESSION
+    DECRYPT_SESSION --> VALIDATE_TTL
+    VALIDATE_TTL --> UPDATE_TIMESTAMP
+    UPDATE_TIMESTAMP --> SESSION_VALID
+    VALIDATE_TTL --> SESSION_EXPIRED
+
+    ENCRYPT_DATA --> FERNET_ENCRYPTION
+    GENERATE_ID --> SECURE_ID_GEN
+    FERNET_ENCRYPTION --> KEY_DERIVATION
+    SET_COOKIE --> HTTPONLY_COOKIE
+    SET_COOKIE --> SAMESITE_POLICY
+    SET_COOKIE --> SECURE_FLAG
+
+    STORE_REDIS --> REDIS_STORAGE
+    REDIS_STORAGE --> SESSION_PREFIX
+    REDIS_STORAGE --> TTL_EXPIRATION
+    ENCRYPTED_PAYLOAD --> REDIS_STORAGE
+    SESSION_METADATA --> REDIS_STORAGE
+
+    SESSION_CREATE --> SESSION_ACCESS
+    SESSION_ACCESS --> SESSION_UPDATE
+    SESSION_UPDATE --> SESSION_EXTEND
+    SESSION_EXTEND --> SESSION_DELETE
+    SESSION_DELETE --> SESSION_EXPIRE
+```
+
+### **Redis Session Security Features**
+
+#### **Encryption at Rest**
+- **Algorithm**: Fernet symmetric encryption (AES-128 in CBC mode)
+- **Key Management**: Encryption key derived from `session_secret_key` using SHA-256
+- **Data Protection**: All session data encrypted before storage in Redis
+- **Key Rotation**: Support for encryption key rotation without session loss
+
+#### **Secure Session IDs**
+- **Generation**: `secrets.token_urlsafe(32)` for cryptographically secure IDs
+- **Length**: 43 characters (256 bits of entropy)
+- **Uniqueness**: Statistically impossible collisions
+- **Unpredictability**: No sequential or predictable patterns
+
+#### **Cookie Security**
+- **HttpOnly**: Prevents JavaScript access to session cookies
+- **SameSite**: CSRF protection through SameSite policy (Lax/Strict)
+- **Secure**: HTTPS-only transmission in production
+- **Path**: Scoped to application path
+- **Max-Age**: Configurable expiration (default: 14 days)
+
+#### **Session Lifecycle Security**
+- **TTL-Based Expiration**: Automatic cleanup of expired sessions
+- **Idle Timeout**: Configurable session timeout (default: session_timeout_hours)
+- **Activity Tracking**: Last accessed timestamp updated on each request
+- **Explicit Deletion**: Support for explicit session termination
+- **Session Extension**: Ability to extend session TTL on activity
+
+#### **Data Integrity**
+- **Modification Tracking**: Automatic detection of session data changes
+- **Atomic Updates**: Redis operations ensure data consistency
+- **Transaction Safety**: Session updates are atomic and isolated
+- **Validation**: Session data validated on retrieval
+
+#### **Fallback Mechanism**
+- **Redis Unavailable**: Graceful degradation to in-memory sessions
+- **Warning Headers**: Client notified when using fallback sessions
+- **No Data Loss**: Existing Redis sessions preserved when service recovers
+- **Health Monitoring**: Continuous Redis connection health checks
 
 ## Input Validation and Sanitization
 

@@ -26,6 +26,7 @@ graph TB
         PROMPT_MANAGER[PromptManager]
         POPULARITY_SERVICE[PopularityService]
         RELEVANCE_SERVICE[RelevanceService]
+        REDIS_SESSION_SERVICE[RedisSessionService]
     end
 
     subgraph "Data Layer"
@@ -77,6 +78,8 @@ graph TB
     SCHEDULER_SERVICE --> DATABASE
 
     SECURITY_SERVICE --> ROUTERS
+    
+    REDIS_SESSION_SERVICE --> REDIS
 ```
 
 ## Core Service Dependencies
@@ -96,6 +99,7 @@ graph LR
         PREVIEW[PreviewService]
         DASHBOARD[DashboardService]
         SCHEDULER[SchedulerService]
+        REDIS_SESSION[RedisSessionService]
     end
 
     subgraph "Utility Services"
@@ -138,6 +142,8 @@ graph LR
 
     SCHEDULER --> DOC
     SCHEDULER --> DB
+
+    REDIS_SESSION --> REDIS_CLIENT
 
     PROMPT --> TAXONOMY
 ```
@@ -716,6 +722,113 @@ graph TD
     LIFECYCLE_MANAGEMENT --> STORAGE_SERVICE_INSTANCE
     LIFECYCLE_MANAGEMENT --> TAXONOMY_SERVICE_INSTANCE
 ```
+
+## Redis Session Service Architecture
+
+```mermaid
+graph TD
+    subgraph "RedisSessionService"
+        CREATE_SESSION[create_session()]
+        GET_SESSION[get_session()]
+        UPDATE_SESSION[update_session()]
+        DELETE_SESSION[delete_session()]
+        EXTEND_SESSION[extend_session()]
+        GET_TTL[get_session_ttl()]
+        CLEANUP[cleanup_expired_sessions()]
+        GET_STATS[get_session_stats()]
+        HEALTH_CHECK[health_check()]
+    end
+
+    subgraph "Redis Operations"
+        REDIS_CLIENT[Redis Client]
+        KEY_MANAGEMENT[Session Key Management]
+        TTL_MANAGEMENT[TTL Management]
+        CONNECTION_POOL[Connection Pooling]
+    end
+
+    subgraph "Security Features"
+        ENCRYPTION[Session Data Encryption]
+        FERNET[Fernet Cryptography]
+        KEY_DERIVATION[Key Derivation from Secret]
+        SECURE_ID[Secure Session ID Generation]
+    end
+
+    subgraph "Session Storage"
+        SESSION_PREFIX[session: Prefix]
+        SESSION_DATA[Encrypted Session Data]
+        SESSION_METADATA[Session Metadata]
+        TTL_EXPIRY[Automatic TTL Expiry]
+    end
+
+    subgraph "Middleware Integration"
+        REDIS_SESSION_MIDDLEWARE[RedisSessionMiddleware]
+        COOKIE_MANAGEMENT[Cookie Management]
+        SESSION_LOADING[Session Loading]
+        SESSION_SAVING[Session Saving]
+    end
+
+    CREATE_SESSION --> ENCRYPTION
+    GET_SESSION --> ENCRYPTION
+    UPDATE_SESSION --> ENCRYPTION
+    DELETE_SESSION --> REDIS_CLIENT
+    EXTEND_SESSION --> TTL_MANAGEMENT
+
+    ENCRYPTION --> FERNET
+    FERNET --> KEY_DERIVATION
+    SECURE_ID --> SESSION_PREFIX
+
+    CREATE_SESSION --> REDIS_CLIENT
+    GET_SESSION --> REDIS_CLIENT
+    UPDATE_SESSION --> REDIS_CLIENT
+
+    REDIS_CLIENT --> SESSION_DATA
+    SESSION_DATA --> TTL_EXPIRY
+    SESSION_PREFIX --> KEY_MANAGEMENT
+    KEY_MANAGEMENT --> SESSION_METADATA
+
+    REDIS_SESSION_MIDDLEWARE --> COOKIE_MANAGEMENT
+    COOKIE_MANAGEMENT --> SESSION_LOADING
+    SESSION_LOADING --> GET_SESSION
+    SESSION_SAVING --> UPDATE_SESSION
+    SESSION_SAVING --> CREATE_SESSION
+
+    HEALTH_CHECK --> REDIS_CLIENT
+    GET_STATS --> REDIS_CLIENT
+    CLEANUP --> REDIS_CLIENT
+```
+
+### **Redis Session Service Features**
+
+#### **Session Management**
+- Secure session ID generation with `secrets.token_urlsafe(32)`
+- Encrypted session data storage using Fernet cryptography
+- Automatic TTL-based session expiration
+- Session extension and refresh capabilities
+
+#### **Security Implementation**
+- **Encryption**: All session data encrypted at rest in Redis
+- **Key Derivation**: Encryption key derived from session secret using SHA-256
+- **Secure IDs**: Cryptographically secure session ID generation
+- **HttpOnly Cookies**: Session cookies protected from JavaScript access
+
+#### **Session Lifecycle**
+1. **Creation**: Generate secure ID, encrypt data, store in Redis
+2. **Access**: Retrieve, decrypt, update last accessed timestamp
+3. **Update**: Re-encrypt modified data, preserve TTL
+4. **Expiration**: Automatic Redis TTL-based cleanup
+5. **Deletion**: Explicit session removal and cookie clearing
+
+#### **Performance Features**
+- Connection pooling for Redis operations
+- Configurable session timeout (default: session_timeout_hours)
+- Health checks and statistics monitoring
+- Fallback session support when Redis unavailable
+
+#### **Middleware Integration**
+- **RedisSessionMiddleware**: ASGI middleware for automatic session handling
+- **Cookie Management**: Secure cookie configuration (SameSite, HttpOnly, Secure)
+- **Session Tracking**: Automatic modification tracking for efficient updates
+- **Fallback Mode**: In-memory sessions when Redis unavailable
 
 ## Key Service Architecture Principles
 
