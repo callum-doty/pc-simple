@@ -8,6 +8,7 @@ from typing import List, Optional, Dict, Any
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
+import redis
 
 from database import SessionLocal
 from models.document import Document, DocumentStatus
@@ -221,6 +222,10 @@ class DocumentService:
                 result["database_deleted"] = True
                 result["success"] = True
                 logger.info(f"Successfully deleted document {document_id} ({filename})")
+                
+                # Invalidate Redis cache after successful deletion
+                self._invalidate_search_cache()
+                
             except Exception as e:
                 self.db.rollback()
                 logger.error(f"Error deleting document {document_id} from database: {str(e)}")
@@ -274,6 +279,11 @@ class DocumentService:
                 results["failed"] += 1
         
         logger.info(f"Bulk delete completed: {results['successful']}/{results['total_requested']} successful")
+        
+        # Invalidate Redis cache after bulk deletion if any documents were successfully deleted
+        if results["successful"] > 0:
+            self._invalidate_search_cache()
+        
         return results
 
     async def get_statistics(self) -> Dict[str, Any]:
@@ -615,6 +625,10 @@ class DocumentService:
 
             self.db.commit()
             logger.info(f"Reset document {document_id} for reprocessing")
+            
+            # Invalidate cache since document data changed
+            self._invalidate_search_cache()
+            
             return True
 
         except Exception as e:
@@ -623,3 +637,32 @@ class DocumentService:
                 f"Error resetting document {document_id} for reprocessing: {str(e)}"
             )
             return False
+
+    def _invalidate_search_cache(self):
+        """
+        Invalidate Redis search and facet caches.
+        Called after document deletion, bulk deletion, or reprocessing.
+        """
+        try:
+            if not settings.redis_url:
+                logger.debug("No Redis URL configured, skipping cache invalidation")
+                return
+            
+            redis_client = redis.from_url(settings.redis_url, decode_responses=True)
+            
+            # Get all search and facet cache keys
+            search_keys = redis_client.keys("search:*")
+            facet_keys = redis_client.keys("facets:*")
+            
+            all_keys = search_keys + facet_keys
+            
+            if all_keys:
+                deleted = redis_client.delete(*all_keys)
+                logger.info(f"Invalidated {deleted} cache keys ({len(search_keys)} search, {len(facet_keys)} facet)")
+            else:
+                logger.debug("No cache keys to invalidate")
+                
+        except redis.exceptions.ConnectionError as e:
+            logger.warning(f"Could not connect to Redis for cache invalidation: {e}")
+        except Exception as e:
+            logger.error(f"Error invalidating cache: {e}")
