@@ -385,7 +385,14 @@ async def serve_preview(
             )
             if direct_url:
                 logger.debug(f"Redirecting preview {safe_filename} to direct URL")
-                return RedirectResponse(url=direct_url, status_code=302)
+                # Create redirect response with cache headers to avoid regenerating presigned URLs
+                response = RedirectResponse(url=direct_url, status_code=302)
+                # Cache the redirect for 1 hour (matches presigned URL expiration)
+                response.headers["Cache-Control"] = "public, max-age=3600"
+                # Add Expires header for better browser compatibility
+                expires_time = datetime.utcnow() + timedelta(hours=1)
+                response.headers["Expires"] = expires_time.strftime("%a, %d %b %Y %H:%M:%S GMT")
+                return response
             else:
                 logger.warning(
                     f"Failed to generate presigned URL for {safe_filename}, falling back to streaming"
