@@ -7,6 +7,7 @@ from sqlalchemy import func, desc, asc
 from typing import List, Optional, Dict, Any
 import logging
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from database import SessionLocal
 from models.document import Document, DocumentStatus
@@ -166,23 +167,114 @@ class DocumentService:
             logger.error(f"Error updating document {document_id} content: {str(e)}")
             return False
 
-    async def delete_document(self, document_id: int) -> bool:
-        """Delete a document"""
+    async def delete_document(self, document_id: int, storage_service=None) -> Dict[str, Any]:
+        """
+        Delete a document completely - removes database record and all storage files.
+        Returns detailed results of the deletion operation.
+        """
+        result = {
+            "success": False,
+            "document_id": document_id,
+            "database_deleted": False,
+            "file_deleted": False,
+            "preview_deleted": False,
+            "errors": []
+        }
+        
         try:
             document = await self.get_document(document_id)
             if not document:
-                return False
+                result["errors"].append("Document not found")
+                return result
 
-            self.db.delete(document)
-            self.db.commit()
+            filename = document.filename
+            file_path = document.file_path
+            
+            # Delete files from storage if storage_service is provided
+            if storage_service:
+                # Delete main document file
+                try:
+                    if file_path:
+                        file_deleted = await storage_service.delete_file(file_path)
+                        result["file_deleted"] = file_deleted
+                        if not file_deleted:
+                            result["errors"].append(f"Failed to delete file: {file_path}")
+                except Exception as e:
+                    logger.error(f"Error deleting file {file_path}: {str(e)}")
+                    result["errors"].append(f"File deletion error: {str(e)}")
+                
+                # Delete preview file
+                try:
+                    preview_path = f"previews/{Path(file_path).stem}_preview.png"
+                    preview_deleted = await storage_service.delete_file(preview_path)
+                    result["preview_deleted"] = preview_deleted
+                    if not preview_deleted:
+                        logger.info(f"Preview file not found or already deleted: {preview_path}")
+                except Exception as e:
+                    logger.error(f"Error deleting preview {preview_path}: {str(e)}")
+                    result["errors"].append(f"Preview deletion error: {str(e)}")
+            
+            # Delete database record (CASCADE will handle taxonomy mappings)
+            try:
+                self.db.delete(document)
+                self.db.commit()
+                result["database_deleted"] = True
+                result["success"] = True
+                logger.info(f"Successfully deleted document {document_id} ({filename})")
+            except Exception as e:
+                self.db.rollback()
+                logger.error(f"Error deleting document {document_id} from database: {str(e)}")
+                result["errors"].append(f"Database deletion error: {str(e)}")
+                return result
 
-            logger.info(f"Deleted document {document_id}")
-            return True
+            return result
 
         except Exception as e:
             self.db.rollback()
             logger.error(f"Error deleting document {document_id}: {str(e)}")
-            return False
+            result["errors"].append(f"Unexpected error: {str(e)}")
+            return result
+
+    async def delete_documents_bulk(self, document_ids: List[int], storage_service=None) -> Dict[str, Any]:
+        """
+        Delete multiple documents in bulk.
+        Returns detailed results for each document.
+        """
+        results = {
+            "total_requested": len(document_ids),
+            "successful": 0,
+            "failed": 0,
+            "details": []
+        }
+        
+        for doc_id in document_ids:
+            try:
+                result = await self.delete_document(doc_id, storage_service)
+                results["details"].append({
+                    "document_id": doc_id,
+                    "success": result["success"],
+                    "database_deleted": result["database_deleted"],
+                    "file_deleted": result["file_deleted"],
+                    "preview_deleted": result["preview_deleted"],
+                    "errors": result["errors"]
+                })
+                
+                if result["success"]:
+                    results["successful"] += 1
+                else:
+                    results["failed"] += 1
+                    
+            except Exception as e:
+                logger.error(f"Error in bulk delete for document {doc_id}: {str(e)}")
+                results["details"].append({
+                    "document_id": doc_id,
+                    "success": False,
+                    "errors": [str(e)]
+                })
+                results["failed"] += 1
+        
+        logger.info(f"Bulk delete completed: {results['successful']}/{results['total_requested']} successful")
+        return results
 
     async def get_statistics(self) -> Dict[str, Any]:
         """Get document statistics"""

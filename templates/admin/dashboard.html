@@ -387,6 +387,55 @@
           <div id="embeddings-list" class="document-list"></div>
         </div>
       </div>
+
+      <!-- Document Deletion Section -->
+      <div class="panel" style="grid-column: 1 / -1">
+        <h2>🗑️ Delete Documents</h2>
+        <p style="color: #666; margin-bottom: 20px">
+          Permanently delete documents from the system. This will remove the database record and all storage files (document + preview).
+        </p>
+
+        <div style="margin-bottom: 20px;">
+          <input
+            type="text"
+            id="delete-search-input"
+            placeholder="Search by Document ID or Filename"
+            style="width: 100%; padding: 10px; border: 1px solid #dee2e6; border-radius: 4px; font-size: 0.95em;"
+          />
+        </div>
+
+        <div style="margin-bottom: 20px;">
+          <input
+            type="password"
+            id="delete-password"
+            placeholder="Enter upload password"
+            style="width: 100%; padding: 10px; border: 1px solid #dee2e6; border-radius: 4px; font-size: 0.95em;"
+          />
+        </div>
+
+        <div style="margin-bottom: 20px; display: flex; gap: 10px;">
+          <button
+            class="expand-btn"
+            onclick="searchDocumentsForDeletion()"
+            style="background-color: #007bff;"
+          >
+            Search Documents
+          </button>
+          <button
+            class="expand-btn"
+            onclick="deleteSelectedDocuments()"
+            style="background-color: #dc3545;"
+            id="bulk-delete-btn"
+            disabled
+          >
+            Delete Selected (<span id="selected-count">0</span>)
+          </button>
+        </div>
+
+        <div id="delete-results" style="margin-top: 10px; padding: 10px; border-radius: 4px; display: none;"></div>
+
+        <div id="delete-document-list" class="document-list" style="max-height: 500px;"></div>
+      </div>
     </div>
 
     <script>
@@ -857,6 +906,247 @@
           button.disabled = false;
           button.textContent = "Reprocess";
         }
+      }
+
+      // Document Deletion Functions
+      let deleteSelectedIds = new Set();
+
+      async function searchDocumentsForDeletion() {
+        const searchInput = document.getElementById("delete-search-input").value.trim();
+        const resultsDiv = document.getElementById("delete-results");
+        const listDiv = document.getElementById("delete-document-list");
+
+        if (!searchInput) {
+          resultsDiv.style.display = "block";
+          resultsDiv.style.backgroundColor = "#f8d7da";
+          resultsDiv.style.color = "#721c24";
+          resultsDiv.textContent = "❌ Please enter a Document ID or Filename to search";
+          return;
+        }
+
+        resultsDiv.style.display = "block";
+        resultsDiv.style.backgroundColor = "#fff3cd";
+        resultsDiv.style.color = "#856404";
+        resultsDiv.textContent = "🔍 Searching...";
+
+        try {
+          const response = await fetch(`/api/documents/search?q=${encodeURIComponent(searchInput)}&per_page=50`);
+          const data = await response.json();
+
+          if (response.ok && data.success) {
+            const documents = data.documents || [];
+            
+            if (documents.length === 0) {
+              resultsDiv.style.backgroundColor = "#f8d7da";
+              resultsDiv.style.color = "#721c24";
+              resultsDiv.textContent = "❌ No documents found matching your search";
+              listDiv.innerHTML = "";
+              return;
+            }
+
+            resultsDiv.style.backgroundColor = "#d4edda";
+            resultsDiv.style.color = "#155724";
+            resultsDiv.textContent = `✅ Found ${documents.length} document(s)`;
+
+            renderDeletionDocumentList(documents);
+          } else {
+            resultsDiv.style.backgroundColor = "#f8d7da";
+            resultsDiv.style.color = "#721c24";
+            resultsDiv.textContent = `❌ Error: ${data.detail || data.message || "Unknown error"}`;
+          }
+        } catch (error) {
+          resultsDiv.style.backgroundColor = "#f8d7da";
+          resultsDiv.style.color = "#721c24";
+          resultsDiv.textContent = `❌ Error: ${error.message}`;
+        }
+      }
+
+      function renderDeletionDocumentList(documents) {
+        const listDiv = document.getElementById("delete-document-list");
+        
+        listDiv.innerHTML = documents.map(doc => `
+          <div class="document-item" id="delete-doc-item-${doc.id}" style="grid-template-columns: 40px 60px 1fr auto;">
+            <input 
+              type="checkbox" 
+              id="checkbox-${doc.id}" 
+              onchange="toggleDocumentSelection(${doc.id})"
+              style="width: 20px; height: 20px; cursor: pointer;"
+            />
+            <div class="document-id">ID: ${doc.id}</div>
+            <div class="document-info">
+              <div class="document-filename">${escapeHtml(doc.filename)}</div>
+              <div class="document-meta">
+                Status: <span class="status-badge status-${doc.status.toLowerCase()}">${doc.status}</span>
+                • Created: ${formatDate(doc.created_at)}
+              </div>
+            </div>
+            <div>
+              <button 
+                class="reprocess-btn"
+                style="background-color: #dc3545;"
+                onclick="deleteSingleDocument(${doc.id})"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        `).join('');
+      }
+
+      function toggleDocumentSelection(documentId) {
+        const checkbox = document.getElementById(`checkbox-${documentId}`);
+        
+        if (checkbox.checked) {
+          deleteSelectedIds.add(documentId);
+        } else {
+          deleteSelectedIds.delete(documentId);
+        }
+
+        updateBulkDeleteButton();
+      }
+
+      function updateBulkDeleteButton() {
+        const bulkBtn = document.getElementById("bulk-delete-btn");
+        const countSpan = document.getElementById("selected-count");
+        
+        countSpan.textContent = deleteSelectedIds.size;
+        bulkBtn.disabled = deleteSelectedIds.size === 0;
+      }
+
+      async function deleteSingleDocument(documentId) {
+        const password = document.getElementById("delete-password").value;
+        
+        if (!password) {
+          showDeleteResult("❌ Please enter the upload password", "error");
+          return;
+        }
+
+        if (!confirm(`Are you sure you want to permanently delete document ID ${documentId}? This action cannot be undone.`)) {
+          return;
+        }
+
+        const resultsDiv = document.getElementById("delete-results");
+        resultsDiv.style.display = "block";
+        resultsDiv.style.backgroundColor = "#fff3cd";
+        resultsDiv.style.color = "#856404";
+        resultsDiv.textContent = "🗑️ Deleting document...";
+
+        try {
+          const formData = new FormData();
+          formData.append("password", password);
+
+          const response = await fetch(`/api/documents/${documentId}`, {
+            method: "DELETE",
+            body: formData,
+          });
+
+          const data = await response.json();
+
+          if (response.ok && data.success) {
+            showDeleteResult(`✅ Document ${documentId} deleted successfully`, "success");
+            
+            // Remove from UI
+            const docItem = document.getElementById(`delete-doc-item-${documentId}`);
+            if (docItem) {
+              docItem.style.transition = "opacity 0.5s";
+              docItem.style.opacity = "0";
+              setTimeout(() => docItem.remove(), 500);
+            }
+
+            // Remove from selection
+            deleteSelectedIds.delete(documentId);
+            updateBulkDeleteButton();
+          } else {
+            showDeleteResult(`❌ Failed to delete document: ${data.detail || data.message || "Unknown error"}`, "error");
+          }
+        } catch (error) {
+          showDeleteResult(`❌ Error: ${error.message}`, "error");
+        }
+      }
+
+      async function deleteSelectedDocuments() {
+        const password = document.getElementById("delete-password").value;
+        
+        if (!password) {
+          showDeleteResult("❌ Please enter the upload password", "error");
+          return;
+        }
+
+        if (deleteSelectedIds.size === 0) {
+          showDeleteResult("❌ No documents selected", "error");
+          return;
+        }
+
+        const documentIds = Array.from(deleteSelectedIds);
+        
+        if (!confirm(`Are you sure you want to permanently delete ${documentIds.length} document(s)? This action cannot be undone.`)) {
+          return;
+        }
+
+        const resultsDiv = document.getElementById("delete-results");
+        resultsDiv.style.display = "block";
+        resultsDiv.style.backgroundColor = "#fff3cd";
+        resultsDiv.style.color = "#856404";
+        resultsDiv.textContent = `🗑️ Deleting ${documentIds.length} document(s)...`;
+
+        try {
+          const formData = new FormData();
+          documentIds.forEach(id => formData.append("document_ids", id));
+          formData.append("password", password);
+
+          const response = await fetch("/api/documents/bulk-delete", {
+            method: "POST",
+            body: formData,
+          });
+
+          const data = await response.json();
+
+          if (response.ok && data.success) {
+            const results = data.results;
+            showDeleteResult(
+              `✅ Deleted ${results.successful} of ${results.total_requested} document(s)` +
+              (results.failed > 0 ? ` (${results.failed} failed)` : ""),
+              results.failed > 0 ? "warning" : "success"
+            );
+
+            // Remove successful deletions from UI
+            results.details.forEach(detail => {
+              if (detail.success) {
+                const docItem = document.getElementById(`delete-doc-item-${detail.document_id}`);
+                if (docItem) {
+                  docItem.style.transition = "opacity 0.5s";
+                  docItem.style.opacity = "0";
+                  setTimeout(() => docItem.remove(), 500);
+                }
+                deleteSelectedIds.delete(detail.document_id);
+              }
+            });
+
+            updateBulkDeleteButton();
+          } else {
+            showDeleteResult(`❌ Bulk delete failed: ${data.detail || data.message || "Unknown error"}`, "error");
+          }
+        } catch (error) {
+          showDeleteResult(`❌ Error: ${error.message}`, "error");
+        }
+      }
+
+      function showDeleteResult(message, type) {
+        const resultsDiv = document.getElementById("delete-results");
+        resultsDiv.style.display = "block";
+        
+        if (type === "success") {
+          resultsDiv.style.backgroundColor = "#d4edda";
+          resultsDiv.style.color = "#155724";
+        } else if (type === "warning") {
+          resultsDiv.style.backgroundColor = "#fff3cd";
+          resultsDiv.style.color = "#856404";
+        } else {
+          resultsDiv.style.backgroundColor = "#f8d7da";
+          resultsDiv.style.color = "#721c24";
+        }
+        
+        resultsDiv.textContent = message;
       }
     </script>
   </body>
