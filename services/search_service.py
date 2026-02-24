@@ -412,7 +412,25 @@ class SearchService:
                 .all()
             )
 
-            # 6. Format documents for response with storage service for direct URLs
+            # 6. Normalize relevance scores to better utilize (0, 1) range
+            # Collect all relevance scores first
+            relevance_scores = [relevance for _, relevance in results]
+            
+            # Calculate min/max for normalization (if we have scores)
+            if relevance_scores and any(score > 0 for score in relevance_scores):
+                min_score = min(relevance_scores)
+                max_score = max(relevance_scores)
+                
+                # Apply min-max normalization if there's a range
+                if max_score > min_score:
+                    normalized_results = []
+                    for doc, relevance in results:
+                        # Normalize to (0, 1) range
+                        normalized_score = (relevance - min_score) / (max_score - min_score)
+                        normalized_results.append((doc, normalized_score))
+                    results = normalized_results
+            
+            # 7. Format documents for response with storage service for direct URLs
             formatted_docs = []
             for doc, relevance in results:
                 doc_dict = doc.to_dict(
