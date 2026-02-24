@@ -824,9 +824,14 @@ async def search_documents(
     canonical_term: Optional[str] = None,
     sort_by: str = "relevance",
     sort_direction: str = "desc",
+    include_facets: bool = True,
     search_service: SearchService = Depends(get_search_service),
 ):
-    """Search documents - PUBLIC ENDPOINT"""
+    """Search documents - PUBLIC ENDPOINT
+    
+    Args:
+        include_facets: Set to false to skip expensive facet generation for faster initial page load
+    """
     try:
         # Validate and sanitize search query
         safe_query = security_service.validate_search_query(q)
@@ -860,6 +865,7 @@ async def search_documents(
             canonical_term=canonical_term,
             sort_by=sort_by,
             sort_direction=sort_direction,
+            include_facets=include_facets,
         )
 
         return {

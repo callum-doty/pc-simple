@@ -265,17 +265,26 @@ endblock %} {% block content %}
           .catch((error) => console.error("Error loading top queries:", error));
       }
 
+      let filtersLoaded = false;
+      
       function loadCanonicalTermFilters() {
+        if (filtersLoaded) return; // Only load once
+        
+        const accordion = document.getElementById("canonicalTermAccordion");
+        accordion.innerHTML = '<div class="text-center p-3"><div class="spinner-border spinner-border-sm" role="status"></div><p class="mt-2 small text-muted">Loading filters...</p></div>';
+        
         fetch("/api/taxonomy/canonical-terms")
           .then((response) => response.json())
           .then((data) => {
             if (data.success && data.terms) {
               updateCanonicalTermFilters(data.terms);
+              filtersLoaded = true;
             }
           })
-          .catch((error) =>
-            console.error("Error loading canonical terms:", error)
-          );
+          .catch((error) => {
+            console.error("Error loading canonical terms:", error);
+            accordion.innerHTML = '<div class="text-danger small p-3">Failed to load filters</div>';
+          });
       }
 
       function updateCanonicalTermFilters(terms) {
@@ -409,9 +418,11 @@ endblock %} {% block content %}
         const params = new URLSearchParams({
           q: query,
           page: currentPage,
-          per_page: 20, // Regular pagination now
+          per_page: 20,
           sort_by: sortBy,
           sort_direction: sortDirection,
+          // Skip expensive facet generation on initial load for 10x faster performance
+          include_facets: "false"
         });
 
         if (activeCanonicalTerm) {

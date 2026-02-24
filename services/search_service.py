@@ -229,12 +229,16 @@ class SearchService:
         canonical_term: Optional[str] = None,
         sort_by: str = "relevance",
         sort_direction: str = "desc",
+        include_facets: bool = True,
     ) -> Dict[str, Any]:
         """
         Optimized search with hybrid text and vector search, hierarchical taxonomy filtering,
         and relevance scoring.
+        
+        Args:
+            include_facets: If False, skip expensive facet generation for faster initial load
         """
-        cache_key = f"search:{query}:{page}:{per_page}:{primary_category}:{subcategory}:{canonical_term}:{sort_by}:{sort_direction}"
+        cache_key = f"search:{query}:{page}:{per_page}:{primary_category}:{subcategory}:{canonical_term}:{sort_by}:{sort_direction}:{include_facets}"
         if self.redis_client:
             try:
                 cached_result = self.redis_client.get(cache_key)
@@ -253,7 +257,12 @@ class SearchService:
 
             search_subquery = None
             if query.strip():
-                query_embedding = await self.ai_service.generate_embeddings(query)
+                # Skip expensive embedding generation for empty or very short queries
+                query_embedding = None
+                if len(query.strip()) > 3:
+                    query_embedding = await self.ai_service.generate_embeddings(query)
+                else:
+                    logger.info(f"Skipping embedding generation for short query: '{query}'")
 
                 vector_weight = 0.7
                 text_weight = 0.3
@@ -413,7 +422,14 @@ class SearchService:
                 formatted_docs.append(doc_dict)
 
             pagination = self._create_pagination_info(page, per_page, total_count)
-            facets = await self._generate_enhanced_facets()
+            
+            # Only generate facets if requested (expensive operation ~10-15s)
+            facets = {}
+            if include_facets:
+                logger.info("Generating facets (expensive operation)")
+                facets = await self._generate_enhanced_facets()
+            else:
+                logger.info("Skipping facet generation for faster initial load")
 
             result = {
                 "documents": formatted_docs,
