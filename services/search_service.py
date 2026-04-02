@@ -8,7 +8,7 @@ import re
 from typing import Dict, Any, List, Optional
 from sqlalchemy import or_, and_, func, desc, asc, cast, true, text
 from sqlalchemy.dialects.postgresql import JSONB, JSONPATH
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from database import SessionLocal
 from models.document import Document, DocumentStatus
@@ -260,7 +260,25 @@ class SearchService:
                 # Skip expensive embedding generation for empty or very short queries
                 query_embedding = None
                 if len(query.strip()) > 3:
-                    query_embedding = await self.ai_service.generate_embeddings(query)
+                    embed_cache_key = f"embed:{query.strip().lower()}"
+                    if self.redis_client:
+                        try:
+                            cached_embedding = self.redis_client.get(embed_cache_key)
+                            if cached_embedding:
+                                query_embedding = json.loads(cached_embedding)
+                                logger.info(f"Embedding cache HIT for query: '{query}'")
+                        except redis.exceptions.RedisError as e:
+                            logger.error(f"Redis GET error for embedding: {e}")
+
+                    if query_embedding is None:
+                        query_embedding = await self.ai_service.generate_embeddings(query)
+                        if query_embedding and self.redis_client:
+                            try:
+                                self.redis_client.set(
+                                    embed_cache_key, json.dumps(query_embedding), ex=3600  # 1 hour TTL
+                                )
+                            except redis.exceptions.RedisError as e:
+                                logger.error(f"Redis SET error for embedding: {e}")
                 else:
                     logger.info(f"Skipping embedding generation for short query: '{query}'")
 
@@ -348,14 +366,16 @@ class SearchService:
             final_query = final_query.filter(
                 Document.status == DocumentStatus.COMPLETED
             )
-            if primary_category:
-                final_query = final_query.join(Document.taxonomy_terms).filter(
-                    TaxonomyTerm.primary_category == primary_category
-                )
-            if subcategory:
-                final_query = final_query.join(Document.taxonomy_terms).filter(
-                    TaxonomyTerm.subcategory == subcategory
-                )
+            if primary_category or subcategory:
+                final_query = final_query.join(Document.taxonomy_terms)
+                if primary_category:
+                    final_query = final_query.filter(
+                        TaxonomyTerm.primary_category == primary_category
+                    )
+                if subcategory:
+                    final_query = final_query.filter(
+                        TaxonomyTerm.subcategory == subcategory
+                    )
             if canonical_term:
                 logger.info(f"Applying canonical term filter for: {canonical_term}")
 
@@ -405,7 +425,18 @@ class SearchService:
             offset = (page - 1) * per_page
             results = (
                 final_query.options(
-                    undefer(Document.ai_analysis), undefer(Document.search_vector)
+                    load_only(
+                        Document.id,
+                        Document.filename,
+                        Document.file_size,
+                        Document.status,
+                        Document.created_at,
+                        Document.ai_analysis,
+                        Document.keywords,
+                        Document.thumbnail_url,
+                        Document.file_path,
+                        Document.search_vector,
+                    )
                 )
                 .offset(offset)
                 .limit(per_page)
@@ -460,8 +491,8 @@ class SearchService:
             if self.redis_client:
                 try:
                     self.redis_client.set(
-                        cache_key, json.dumps(result, default=str), ex=1800
-                    )  # Cache for 30 minutes (optimized for memory)
+                        cache_key, json.dumps(result, default=str), ex=300
+                    )  # Cache for 5 minutes (optimized for memory)
                 except redis.exceptions.RedisError as e:
                     logger.error(f"Redis SET error: {e}")
 
