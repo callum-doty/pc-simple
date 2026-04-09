@@ -12,3 +12,7 @@ dev_storage/
 
 # Virtual environment
 venv/
+
+feature_extraction/
+
+.claude/worktrees/

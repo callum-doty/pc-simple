@@ -46,6 +46,7 @@ from api.documents import router as documents_router
 from worker import process_document_task
 from celery.result import AsyncResult
 from models.search_query import SearchQuery
+from models.document import Document
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -822,6 +823,9 @@ async def search_documents(
     primary_category: Optional[str] = None,
     subcategory: Optional[str] = None,
     canonical_term: Optional[str] = None,
+    client_canonical: Optional[str] = None,
+    state: Optional[str] = None,
+    date_year: Optional[int] = None,
     sort_by: str = "relevance",
     sort_direction: str = "desc",
     include_facets: bool = True,
@@ -863,6 +867,9 @@ async def search_documents(
             primary_category=primary_category,
             subcategory=subcategory,
             canonical_term=canonical_term,
+            client_canonical=client_canonical,
+            state=state,
+            date_year=date_year,
             sort_by=sort_by,
             sort_direction=sort_direction,
             include_facets=include_facets,
@@ -900,6 +907,52 @@ async def get_document(
         raise
     except Exception as e:
         logger.error(f"Get document error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Document Details (for collapsible card section)
+@app.get("/api/documents/{document_id}/details")
+async def get_document_details(
+    document_id: int, document_service: DocumentService = Depends(get_document_service)
+):
+    """Get full document details for the card collapsible section"""
+    try:
+        document = await document_service.get_document(document_id)
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        return {
+            "success": True,
+            **document.to_dict(full_detail=True, include_heavy_fields=True),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get document details error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Client facets for filter dropdown
+@app.get("/api/facets/clients")
+async def get_client_facets(db: Session = Depends(get_db)):
+    """Return top 200 client_canonical values by document count"""
+    try:
+        from sqlalchemy import func as sa_func
+
+        rows = (
+            db.query(Document.client_canonical, sa_func.count(Document.id).label("cnt"))
+            .filter(Document.client_canonical.isnot(None))
+            .filter(Document.client_canonical != "")
+            .group_by(Document.client_canonical)
+            .order_by(sa_func.count(Document.id).desc())
+            .limit(200)
+            .all()
+        )
+        return {"success": True, "clients": [r[0] for r in rows]}
+
+    except Exception as e:
+        logger.error(f"Client facets error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

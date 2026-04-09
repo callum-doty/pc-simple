@@ -64,6 +64,93 @@ endblock %} {% block content %}
         <h6 class="mb-0"><i class="fas fa-filter me-2"></i>Filters</h6>
       </div>
       <div class="card-body">
+        <!-- Client Filter -->
+        <div class="mb-3">
+          <label for="clientFilter" class="form-label">Client</label>
+          <input
+            type="text"
+            id="clientFilter"
+            class="form-control"
+            placeholder="Search clients..."
+            list="clientDatalist"
+            autocomplete="off"
+          />
+          <datalist id="clientDatalist"></datalist>
+        </div>
+
+        <!-- State Filter -->
+        <div class="mb-3">
+          <label for="stateFilter" class="form-label">State</label>
+          <select class="form-select" id="stateFilter">
+            <option value="">All States</option>
+            <option value="AL">AL - Alabama</option>
+            <option value="AK">AK - Alaska</option>
+            <option value="AZ">AZ - Arizona</option>
+            <option value="AR">AR - Arkansas</option>
+            <option value="CA">CA - California</option>
+            <option value="CO">CO - Colorado</option>
+            <option value="CT">CT - Connecticut</option>
+            <option value="DE">DE - Delaware</option>
+            <option value="FL">FL - Florida</option>
+            <option value="GA">GA - Georgia</option>
+            <option value="HI">HI - Hawaii</option>
+            <option value="ID">ID - Idaho</option>
+            <option value="IL">IL - Illinois</option>
+            <option value="IN">IN - Indiana</option>
+            <option value="IA">IA - Iowa</option>
+            <option value="KS">KS - Kansas</option>
+            <option value="KY">KY - Kentucky</option>
+            <option value="LA">LA - Louisiana</option>
+            <option value="ME">ME - Maine</option>
+            <option value="MD">MD - Maryland</option>
+            <option value="MA">MA - Massachusetts</option>
+            <option value="MI">MI - Michigan</option>
+            <option value="MN">MN - Minnesota</option>
+            <option value="MS">MS - Mississippi</option>
+            <option value="MO">MO - Missouri</option>
+            <option value="MT">MT - Montana</option>
+            <option value="NE">NE - Nebraska</option>
+            <option value="NV">NV - Nevada</option>
+            <option value="NH">NH - New Hampshire</option>
+            <option value="NJ">NJ - New Jersey</option>
+            <option value="NM">NM - New Mexico</option>
+            <option value="NY">NY - New York</option>
+            <option value="NC">NC - North Carolina</option>
+            <option value="ND">ND - North Dakota</option>
+            <option value="OH">OH - Ohio</option>
+            <option value="OK">OK - Oklahoma</option>
+            <option value="OR">OR - Oregon</option>
+            <option value="PA">PA - Pennsylvania</option>
+            <option value="RI">RI - Rhode Island</option>
+            <option value="SC">SC - South Carolina</option>
+            <option value="SD">SD - South Dakota</option>
+            <option value="TN">TN - Tennessee</option>
+            <option value="TX">TX - Texas</option>
+            <option value="UT">UT - Utah</option>
+            <option value="VT">VT - Vermont</option>
+            <option value="VA">VA - Virginia</option>
+            <option value="WA">WA - Washington</option>
+            <option value="WV">WV - West Virginia</option>
+            <option value="WI">WI - Wisconsin</option>
+            <option value="WY">WY - Wyoming</option>
+            <option value="DC">DC - Washington D.C.</option>
+          </select>
+        </div>
+
+        <!-- Date Created Year Filter -->
+        <div class="mb-3">
+          <label class="form-label">Year Created</label>
+          <div class="d-flex flex-wrap gap-1" id="yearFilterGroup">
+            <button type="button" class="btn btn-sm btn-outline-secondary year-filter-btn" data-year="2019">2019</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary year-filter-btn" data-year="2020">2020</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary year-filter-btn" data-year="2021">2021</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary year-filter-btn" data-year="2022">2022</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary year-filter-btn" data-year="2023">2023</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary year-filter-btn" data-year="2024">2024</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary year-filter-btn" data-year="2025">2025</button>
+          </div>
+        </div>
+
         <div class="mb-3">
           <label for="filterSearch" class="form-label">Filter by Term</label>
           <input
@@ -185,6 +272,16 @@ endblock %} {% block content %}
       <!-- Collapsible Details Section -->
       <div class="collapse details-section">
         <div class="card-body bg-light p-3">
+          <!-- Document Info Section -->
+          <div class="mb-3">
+            <h6 class="text-secondary">
+              <i class="fas fa-info-circle me-1"></i>Document Info
+            </h6>
+            <div class="doc-info-content d-flex flex-wrap gap-2"></div>
+          </div>
+
+          <hr />
+
           <!-- Extracted Text Section -->
           <div class="mb-3">
             <h6 class="text-primary">
@@ -230,6 +327,9 @@ endblock %} {% block content %}
     document.addEventListener("DOMContentLoaded", function () {
       let currentPage = 1;
       let activeCanonicalTerm = "";
+      let activeClient = "";
+      let activeState = "";
+      let activeDateYear = "";
       let isLoading = false;
       let hasMore = true;
       let currentSearchQuery = "";
@@ -385,13 +485,22 @@ endblock %} {% block content %}
       document.getElementById("clearFilters").addEventListener("click", () => {
         document.getElementById("searchQuery").value = "";
         document.getElementById("filterSearch").value = "";
+        document.getElementById("clientFilter").value = "";
+        document.getElementById("stateFilter").value = "";
         document
           .querySelectorAll("#canonicalTermAccordion button.btn")
           .forEach((btn) => {
             btn.classList.remove("active", "btn-primary");
             btn.classList.add("btn-outline-secondary");
           });
+        document.querySelectorAll(".year-filter-btn").forEach((btn) => {
+          btn.classList.remove("active", "btn-primary");
+          btn.classList.add("btn-outline-secondary");
+        });
         activeCanonicalTerm = "";
+        activeClient = "";
+        activeState = "";
+        activeDateYear = "";
         document.getElementById("sortBy").value = "relevance";
         document.getElementById("sortDirection").value = "desc";
         performSearch(true);
@@ -426,8 +535,16 @@ endblock %} {% block content %}
         });
 
         if (activeCanonicalTerm) {
-          console.log("Adding canonical_term parameter:", activeCanonicalTerm); // Debug log
           params.append("canonical_term", activeCanonicalTerm);
+        }
+        if (activeClient) {
+          params.append("client_canonical", activeClient);
+        }
+        if (activeState) {
+          params.append("state", activeState);
+        }
+        if (activeDateYear) {
+          params.append("date_year", activeDateYear);
         }
 
         console.log("Search URL:", `/api/documents/search?${params}`); // Debug log
@@ -571,6 +688,22 @@ endblock %} {% block content %}
       }
 
       function populateDetailsContent(card, doc) {
+        // Document Info (client, state, date_created)
+        const docInfoContainer = card.querySelector(".doc-info-content");
+        docInfoContainer.innerHTML = "";
+        if (doc.client_canonical) {
+          docInfoContainer.innerHTML += `<span class="badge bg-secondary me-1 mb-1"><i class="fas fa-building me-1"></i>${doc.client_canonical}</span>`;
+        }
+        if (doc.state) {
+          docInfoContainer.innerHTML += `<span class="badge bg-secondary me-1 mb-1"><i class="fas fa-map-marker-alt me-1"></i>${doc.state}</span>`;
+        }
+        if (doc.date_created) {
+          docInfoContainer.innerHTML += `<span class="badge bg-secondary me-1 mb-1"><i class="fas fa-calendar-alt me-1"></i>${doc.date_created}</span>`;
+        }
+        if (!doc.client_canonical && !doc.state && !doc.date_created) {
+          docInfoContainer.innerHTML = '<em class="text-muted">No document info available</em>';
+        }
+
         // Extracted Text
         const extractedTextContainer = card.querySelector(
           ".extracted-text-content"
@@ -711,6 +844,60 @@ endblock %} {% block content %}
         }
       });
 
+      // Load top 200 clients into datalist
+      function loadClientFilters() {
+        fetch("/api/facets/clients")
+          .then((response) => response.json())
+          .then((data) => {
+            const datalist = document.getElementById("clientDatalist");
+            datalist.innerHTML = "";
+            (data.clients || []).forEach((client) => {
+              const option = document.createElement("option");
+              option.value = client;
+              datalist.appendChild(option);
+            });
+          })
+          .catch((error) => console.error("Client facets error:", error));
+      }
+
+      // Client filter: trigger search when user picks from datalist or clears
+      document.getElementById("clientFilter").addEventListener("change", function () {
+        const val = this.value.trim();
+        const datalist = document.getElementById("clientDatalist");
+        const options = Array.from(datalist.options).map((o) => o.value);
+        activeClient = options.includes(val) ? val : "";
+        performSearch(true);
+      });
+
+      // State filter
+      document.getElementById("stateFilter").addEventListener("change", function () {
+        activeState = this.value;
+        performSearch(true);
+      });
+
+      // Year toggle buttons
+      document.querySelectorAll(".year-filter-btn").forEach((btn) => {
+        btn.addEventListener("click", function () {
+          const year = this.dataset.year;
+          if (activeDateYear === year) {
+            // Deselect
+            activeDateYear = "";
+            this.classList.remove("active", "btn-primary");
+            this.classList.add("btn-outline-secondary");
+          } else {
+            // Deselect previously active
+            document.querySelectorAll(".year-filter-btn").forEach((b) => {
+              b.classList.remove("active", "btn-primary");
+              b.classList.add("btn-outline-secondary");
+            });
+            activeDateYear = year;
+            this.classList.add("active", "btn-primary");
+            this.classList.remove("btn-outline-secondary");
+          }
+          performSearch(true);
+        });
+      });
+
       fetch("/api/stats")
         .then((response) => response.json())
         .then((data) => {
@@ -725,6 +912,7 @@ endblock %} {% block content %}
 
       performSearch(true);
       loadCanonicalTermFilters();
+      loadClientFilters();
       loadTopQueries();
     });
   </script>

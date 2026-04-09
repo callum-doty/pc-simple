@@ -227,6 +227,9 @@ class SearchService:
         primary_category: Optional[str] = None,
         subcategory: Optional[str] = None,
         canonical_term: Optional[str] = None,
+        client_canonical: Optional[str] = None,
+        state: Optional[str] = None,
+        date_year: Optional[int] = None,
         sort_by: str = "relevance",
         sort_direction: str = "desc",
         include_facets: bool = True,
@@ -238,7 +241,10 @@ class SearchService:
         Args:
             include_facets: If False, skip expensive facet generation for faster initial load
         """
-        cache_key = f"search:{query}:{page}:{per_page}:{primary_category}:{subcategory}:{canonical_term}:{sort_by}:{sort_direction}:{include_facets}"
+        import time
+        _t0 = time.perf_counter()
+
+        cache_key = f"search:{query}:{page}:{per_page}:{primary_category}:{subcategory}:{canonical_term}:{client_canonical}:{state}:{date_year}:{sort_by}:{sort_direction}:{include_facets}"
         if self.redis_client:
             try:
                 cached_result = self.redis_client.get(cache_key)
@@ -248,6 +254,8 @@ class SearchService:
                 logger.info(f"Cache MISS for key: {cache_key}")
             except redis.exceptions.RedisError as e:
                 logger.error(f"Redis GET error: {e}")
+
+        logger.info(f"[PERF] Redis check: {(time.perf_counter()-_t0)*1000:.0f}ms")
         from sqlalchemy import literal_column, union_all, select
         from sqlalchemy.orm import undefer
 
@@ -270,8 +278,12 @@ class SearchService:
                         except redis.exceptions.RedisError as e:
                             logger.error(f"Redis GET error for embedding: {e}")
 
+                    _t_embed = time.perf_counter()
                     if query_embedding is None:
                         query_embedding = await self.ai_service.generate_embeddings(query)
+                        logger.info(f"[PERF] OpenAI embedding (cold): {(time.perf_counter()-_t_embed)*1000:.0f}ms")
+                    else:
+                        logger.info(f"[PERF] Embedding from Redis cache: {(time.perf_counter()-_t_embed)*1000:.0f}ms")
                         if query_embedding and self.redis_client:
                             try:
                                 self.redis_client.set(
@@ -404,8 +416,23 @@ class SearchService:
                 logger.info(f"Applied canonical term filter for: {canonical_term}")
                 final_query = final_query.filter(canonical_filter)
 
+            if client_canonical:
+                final_query = final_query.filter(
+                    Document.client_canonical == client_canonical
+                )
+
+            if state:
+                final_query = final_query.filter(Document.state == state)
+
+            if date_year:
+                final_query = final_query.filter(
+                    func.extract("year", Document.date_created) == date_year
+                )
+
             # 3. Get total count
+            _t_count = time.perf_counter()
             total_count = final_query.with_entities(func.count(Document.id)).scalar()
+            logger.info(f"[PERF] Count query: {(time.perf_counter()-_t_count)*1000:.0f}ms")
 
             # 4. Apply sorting
             if sort_by == "relevance" and search_subquery is not None:
@@ -422,6 +449,7 @@ class SearchService:
             final_query = final_query.order_by(order_clause)
 
             # 5. Apply pagination
+            _t_fetch = time.perf_counter()
             offset = (page - 1) * per_page
             results = (
                 final_query.options(
@@ -436,12 +464,16 @@ class SearchService:
                         Document.thumbnail_url,
                         Document.file_path,
                         Document.search_vector,
+                        Document.client_canonical,
+                        Document.state,
+                        Document.date_created,
                     )
                 )
                 .offset(offset)
                 .limit(per_page)
                 .all()
             )
+            logger.info(f"[PERF] Document fetch query: {(time.perf_counter()-_t_fetch)*1000:.0f}ms")
 
             # 6. Normalize relevance scores to better utilize (0, 1) range
             # Collect all relevance scores first
@@ -470,8 +502,10 @@ class SearchService:
                 doc_dict["relevance"] = f"{relevance:.2f}" if relevance else "0.00"
                 formatted_docs.append(doc_dict)
 
+            _t_format = time.perf_counter()
             pagination = self._create_pagination_info(page, per_page, total_count)
-            
+            logger.info(f"[PERF] Format + pagination: {(time.perf_counter()-_t_format)*1000:.0f}ms")
+
             # Only generate facets if requested (expensive operation ~10-15s)
             facets = {}
             if include_facets:
@@ -496,6 +530,7 @@ class SearchService:
                 except redis.exceptions.RedisError as e:
                     logger.error(f"Redis SET error: {e}")
 
+            logger.info(f"[PERF] Total search time: {(time.perf_counter()-_t0)*1000:.0f}ms | query='{query}'")
             return result
 
         except Exception as e:

@@ -1028,12 +1028,21 @@ class AIService:
 
     async def generate_embeddings(self, text: str) -> Optional[List[float]]:
         """Generate embeddings for text using the configured AI provider."""
+        import time, asyncio
+        _t = time.perf_counter()
         try:
             if self.ai_provider == "openai" and self.openai_client:
-                response = self.openai_client.embeddings.create(
-                    model="text-embedding-3-small",
-                    input=text,
+                # NOTE: openai_client is the synchronous client — run in executor to avoid
+                # blocking the event loop. Replace with AsyncOpenAI to remove this overhead.
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: self.openai_client.embeddings.create(
+                        model="text-embedding-3-small",
+                        input=text,
+                    ),
                 )
+                logger.info(f"[PERF] openai embeddings.create: {(time.perf_counter()-_t)*1000:.0f}ms")
                 return response.data[0].embedding
             elif self.ai_provider == "gemini" and self.gemini_client:
                 # Use Gemini for embeddings

@@ -8,6 +8,7 @@ from sqlalchemy import (
     String,
     Text,
     DateTime,
+    Date,
     Float,
     Boolean,
     Index,
@@ -73,6 +74,11 @@ class Document(Base):
     # Preview and display
     preview_url = Column(String(500), nullable=True)
     thumbnail_url = Column(String(500), nullable=True)
+
+    # Document metadata fields (populated from DB)
+    client_canonical = Column(Text, nullable=True, index=True)
+    state = Column(String(2), nullable=True, index=True)
+    date_created = Column(Date, nullable=True, index=True)
 
     # Relationships
     taxonomy_terms = relationship(
@@ -326,6 +332,9 @@ class Document(Base):
                 storage_service
             ),  # Generate download URL on-demand with storage service
             "has_embeddings": self.search_vector is not None,
+            "client_canonical": self.client_canonical,
+            "state": self.state.strip() if self.state else None,
+            "date_created": self.date_created.isoformat() if self.date_created else None,
         }
 
         if full_detail:
