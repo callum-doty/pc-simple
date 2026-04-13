@@ -47,6 +47,66 @@ async def get_queue_health(db: Session = Depends(get_db)):
         )
 
 
+@router.get("/review-queue", summary="Get review queue breakdown by reason", tags=["Dashboard"])
+async def get_review_queue(db: Session = Depends(get_db)):
+    try:
+        dashboard_service = DashboardService(db)
+        return await dashboard_service.get_review_queue()
+    except Exception as e:
+        logger.error(f"Error fetching review queue: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error.")
+
+
+@router.get("/data-quality", summary="Get confidence distributions and bad-data leaderboard", tags=["Dashboard"])
+async def get_data_quality(db: Session = Depends(get_db)):
+    try:
+        dashboard_service = DashboardService(db)
+        return await dashboard_service.get_data_quality()
+    except Exception as e:
+        logger.error(f"Error fetching data quality: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error.")
+
+
+@router.get("/client-intelligence", summary="Get client volume and normalization analysis", tags=["Dashboard"])
+async def get_client_intelligence(db: Session = Depends(get_db)):
+    try:
+        dashboard_service = DashboardService(db)
+        return await dashboard_service.get_client_intelligence()
+    except Exception as e:
+        logger.error(f"Error fetching client intelligence: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error.")
+
+
+@router.get("/geography", summary="Get document distribution by state", tags=["Dashboard"])
+async def get_geography(db: Session = Depends(get_db)):
+    try:
+        dashboard_service = DashboardService(db)
+        return await dashboard_service.get_geography()
+    except Exception as e:
+        logger.error(f"Error fetching geography: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error.")
+
+
+@router.get("/frank-analysis", summary="Get franked mail analysis", tags=["Dashboard"])
+async def get_frank_analysis(db: Session = Depends(get_db)):
+    try:
+        dashboard_service = DashboardService(db)
+        return await dashboard_service.get_frank_analysis()
+    except Exception as e:
+        logger.error(f"Error fetching frank analysis: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error.")
+
+
+@router.get("/temporal", summary="Get document timeline by date_created", tags=["Dashboard"])
+async def get_temporal_analysis(db: Session = Depends(get_db)):
+    try:
+        dashboard_service = DashboardService(db)
+        return await dashboard_service.get_temporal_analysis()
+    except Exception as e:
+        logger.error(f"Error fetching temporal analysis: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error.")
+
+
 @router.get(
     "/incomplete-documents",
     summary="Get documents with missing data",

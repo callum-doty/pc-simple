@@ -76,9 +76,17 @@ class Document(Base):
     thumbnail_url = Column(String(500), nullable=True)
 
     # Document metadata fields (populated from DB)
+    client = Column(Text, nullable=True)
+    paid_for_by_raw = Column(Text, nullable=True)
+    client_clean_v1 = Column(Text, nullable=True)
     client_canonical = Column(Text, nullable=True, index=True)
     state = Column(String(2), nullable=True, index=True)
+    is_frank = Column(Boolean, nullable=True, default=False)
     date_created = Column(Date, nullable=True, index=True)
+    date_confidence = Column(Text, nullable=True)
+    client_confidence = Column(Text, nullable=True)
+    state_confidence = Column(Text, nullable=True)
+    needs_review = Column(Boolean, nullable=True, default=False)
 
     # Relationships
     taxonomy_terms = relationship(

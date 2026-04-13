@@ -438,6 +438,72 @@
       </div>
     </div>
 
+    <!-- ================================================================
+         INTELLIGENCE ANALYTICS SECTION
+    ================================================================ -->
+    <h2 style="color: #2c3e50; margin: 40px 0 20px; font-size: 1.6em; border-top: 2px solid #e1e8ed; padding-top: 30px;">
+      Intelligence Analytics
+    </h2>
+
+    <div class="dashboard-grid">
+
+      <!-- Review Queue Control Center (full width) -->
+      <div class="panel" style="grid-column: 1 / -1;">
+        <h2>Control Center — Review Queue</h2>
+        <p style="color: #6c757d; margin-bottom: 20px;">Documents needing attention, broken down by reason.</p>
+        <div id="review-queue-cards" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px;">
+          <p style="color: #6c757d;">Loading...</p>
+        </div>
+      </div>
+
+      <!-- Data Quality -->
+      <div class="panel">
+        <h2>Data Quality</h2>
+        <p style="color: #6c757d; margin-bottom: 16px;">Confidence distributions across extraction fields.</p>
+        <div id="confidence-bars"></div>
+        <h3 style="font-size: 1em; color: #495057; margin: 20px 0 10px;">Bottom-quality clients (min 3 docs)</h3>
+        <div id="bad-data-leaderboard" style="font-size: 0.88em;"></div>
+      </div>
+
+      <!-- Client Intelligence -->
+      <div class="panel">
+        <h2>Client Intelligence</h2>
+        <canvas id="top-clients-chart" style="max-height: 260px;"></canvas>
+        <h3 style="font-size: 1em; color: #495057; margin: 20px 0 8px;">Normalization gaps (most raw variants)</h3>
+        <div id="dirty-clients-table" style="font-size: 0.88em;"></div>
+      </div>
+
+      <!-- Geographic Distribution -->
+      <div class="panel">
+        <h2>Geographic Distribution</h2>
+        <canvas id="geography-chart" style="max-height: 340px;"></canvas>
+      </div>
+
+      <!-- Franked Mail Analysis -->
+      <div class="panel">
+        <h2>Franked Mail Analysis</h2>
+        <div id="frank-summary" style="margin-bottom: 16px;"></div>
+        <canvas id="frank-over-time-chart" style="max-height: 200px;"></canvas>
+        <h3 style="font-size: 1em; color: #495057; margin: 20px 0 8px;">Top frank clients</h3>
+        <div id="frank-clients-table" style="font-size: 0.88em;"></div>
+      </div>
+
+      <!-- Document Timeline (full width) -->
+      <div class="panel" style="grid-column: 1 / -1;">
+        <h2>Document Timeline — by date_created</h2>
+        <p style="color: #6c757d; margin-bottom: 4px;">
+          Actual document dates (not upload dates). Reveals political cycles and historical ingestion patterns.
+          <span id="temporal-lag" style="margin-left: 16px; font-weight: 600;"></span>
+        </p>
+        <canvas id="temporal-chart"></canvas>
+        <div style="margin-top: 20px;">
+          <h3 style="font-size: 1em; color: #495057; margin-bottom: 8px;">Top 10 spike days</h3>
+          <div id="spike-days-list" style="font-size: 0.88em; display: flex; flex-wrap: wrap; gap: 8px;"></div>
+        </div>
+      </div>
+
+    </div>
+
     <script>
       let incompleteData = null;
 
@@ -1134,7 +1200,7 @@
       function showDeleteResult(message, type) {
         const resultsDiv = document.getElementById("delete-results");
         resultsDiv.style.display = "block";
-        
+
         if (type === "success") {
           resultsDiv.style.backgroundColor = "#d4edda";
           resultsDiv.style.color = "#155724";
@@ -1145,8 +1211,294 @@
           resultsDiv.style.backgroundColor = "#f8d7da";
           resultsDiv.style.color = "#721c24";
         }
-        
+
         resultsDiv.textContent = message;
+      }
+
+      // ================================================================
+      // INTELLIGENCE ANALYTICS
+      // ================================================================
+
+      document.addEventListener("DOMContentLoaded", () => {
+        loadIntelligenceAnalytics();
+      });
+
+      async function loadIntelligenceAnalytics() {
+        const [reviewData, qualityData, clientData, geoData, frankData, temporalData] =
+          await Promise.allSettled([
+            fetch("/api/review-queue").then(r => r.json()),
+            fetch("/api/data-quality").then(r => r.json()),
+            fetch("/api/client-intelligence").then(r => r.json()),
+            fetch("/api/geography").then(r => r.json()),
+            fetch("/api/frank-analysis").then(r => r.json()),
+            fetch("/api/temporal").then(r => r.json()),
+          ]);
+
+        if (reviewData.status === "fulfilled") renderReviewQueue(reviewData.value);
+        if (qualityData.status === "fulfilled") renderDataQuality(qualityData.value);
+        if (clientData.status === "fulfilled") renderClientIntelligence(clientData.value);
+        if (geoData.status === "fulfilled") renderGeography(geoData.value);
+        if (frankData.status === "fulfilled") renderFrankAnalysis(frankData.value);
+        if (temporalData.status === "fulfilled") renderTemporalAnalysis(temporalData.value);
+      }
+
+      function renderReviewQueue(data) {
+        const REASONS = [
+          { key: "needs_review_flagged",   label: "Flagged for Review",    color: "#dc3545" },
+          { key: "missing_embeddings",      label: "Missing Embeddings",    color: "#6f42c1" },
+          { key: "missing_text",            label: "Missing Extracted Text",color: "#fd7e14" },
+          { key: "missing_keywords",        label: "Missing Keywords",      color: "#ffc107" },
+          { key: "has_errors",              label: "Processing Errors",     color: "#dc3545" },
+          { key: "low_date_confidence",     label: "Low Date Confidence",   color: "#17a2b8" },
+          { key: "low_client_confidence",   label: "Low Client Confidence", color: "#17a2b8" },
+          { key: "low_state_confidence",    label: "Low State Confidence",  color: "#17a2b8" },
+        ];
+        const container = document.getElementById("review-queue-cards");
+        container.innerHTML = REASONS.map(r => {
+          const count = data[r.key] || 0;
+          const urgency = count === 0 ? "#28a745" : count < 50 ? "#ffc107" : r.color;
+          return `
+            <div style="background:#f8f9fa; border-radius:8px; padding:16px; border-left:4px solid ${urgency}; text-align:center;">
+              <div style="font-size:2em; font-weight:bold; color:${urgency};">${count.toLocaleString()}</div>
+              <div style="font-size:0.82em; color:#6c757d; margin-top:4px;">${r.label}</div>
+            </div>`;
+        }).join("");
+      }
+
+      function renderConfidenceBar(label, dist) {
+        const high   = dist["HIGH"]   || 0;
+        const medium = dist["MEDIUM"] || 0;
+        const low    = dist["LOW"]    || 0;
+        const total  = high + medium + low || 1;
+        const pHigh   = (high   / total * 100).toFixed(1);
+        const pMedium = (medium / total * 100).toFixed(1);
+        const pLow    = (low    / total * 100).toFixed(1);
+        return `
+          <div style="margin-bottom:14px;">
+            <div style="display:flex; justify-content:space-between; font-size:0.85em; margin-bottom:4px;">
+              <span style="font-weight:600;">${label}</span>
+              <span style="color:#6c757d;">${high.toLocaleString()} / ${medium.toLocaleString()} / ${low.toLocaleString()}</span>
+            </div>
+            <div style="display:flex; height:16px; border-radius:8px; overflow:hidden;">
+              <div style="width:${pHigh}%; background:#28a745;" title="High: ${pHigh}%"></div>
+              <div style="width:${pMedium}%; background:#ffc107;" title="Medium: ${pMedium}%"></div>
+              <div style="width:${pLow}%; background:#dc3545;" title="Low: ${pLow}%"></div>
+            </div>
+            <div style="display:flex; gap:12px; font-size:0.78em; color:#6c757d; margin-top:3px;">
+              <span style="color:#28a745;">High ${pHigh}%</span>
+              <span style="color:#856404;">Med ${pMedium}%</span>
+              <span style="color:#dc3545;">Low ${pLow}%</span>
+            </div>
+          </div>`;
+      }
+
+      function renderDataQuality(data) {
+        const barsEl = document.getElementById("confidence-bars");
+        barsEl.innerHTML =
+          renderConfidenceBar("Date Confidence",   data.date_confidence   || {}) +
+          renderConfidenceBar("Client Confidence", data.client_confidence || {}) +
+          renderConfidenceBar("State Confidence",  data.state_confidence  || {});
+
+        const leaderboard = data.bad_data_leaderboard || [];
+        const el = document.getElementById("bad-data-leaderboard");
+        if (!leaderboard.length) {
+          el.innerHTML = '<span style="color:#6c757d;">No data</span>';
+          return;
+        }
+        el.innerHTML = leaderboard.map(row => {
+          const pct = Math.round(row.avg_quality * 100);
+          const color = pct >= 67 ? "#28a745" : pct >= 34 ? "#ffc107" : "#dc3545";
+          return `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid #f0f0f0;">
+              <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:60%;" title="${escapeHtml(row.client)}">${escapeHtml(row.client)}</span>
+              <span style="display:flex; align-items:center; gap:8px;">
+                <span style="font-size:0.85em; color:#6c757d;">${row.doc_count} docs</span>
+                <span style="font-weight:bold; color:${color};">${pct}%</span>
+              </span>
+            </div>`;
+        }).join("");
+      }
+
+      function renderClientIntelligence(data) {
+        const topClients = (data.top_clients || []).slice(0, 15);
+        new Chart(document.getElementById("top-clients-chart"), {
+          type: "bar",
+          data: {
+            labels: topClients.map(c => c.client.length > 22 ? c.client.slice(0, 22) + "…" : c.client),
+            datasets: [{
+              label: "Documents",
+              data: topClients.map(c => c.doc_count),
+              backgroundColor: "rgba(0, 123, 255, 0.7)",
+              borderColor: "#007bff",
+              borderWidth: 1,
+            }]
+          },
+          options: {
+            indexAxis: "y",
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: { legend: { display: false } },
+            scales: { x: { beginAtZero: true, ticks: { precision: 0 } } }
+          }
+        });
+
+        const dirty = data.dirty_clients || [];
+        const el = document.getElementById("dirty-clients-table");
+        if (!dirty.length) {
+          el.innerHTML = '<span style="color:#28a745;">All clients normalised cleanly.</span>';
+          return;
+        }
+        el.innerHTML = dirty.slice(0, 10).map(row => `
+          <div style="display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid #f0f0f0;">
+            <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:65%;" title="${escapeHtml(row.client)}">${escapeHtml(row.client)}</span>
+            <span style="color:#dc3545; font-weight:600;">${row.variants} variants</span>
+          </div>`).join("");
+      }
+
+      function renderGeography(data) {
+        const rows = (data.by_state || []).slice(0, 20);
+        new Chart(document.getElementById("geography-chart"), {
+          type: "bar",
+          data: {
+            labels: rows.map(r => r.state),
+            datasets: [{
+              label: "Documents",
+              data: rows.map(r => r.doc_count),
+              backgroundColor: rows.map(r => "rgba(111, 66, 193, 0.7)"),
+              borderColor: "#6f42c1",
+              borderWidth: 1,
+            }]
+          },
+          options: {
+            indexAxis: "y",
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  label: ctx => {
+                    const row = rows[ctx.dataIndex];
+                    return ` ${ctx.parsed.x.toLocaleString()} docs (${row.pct}%)`;
+                  }
+                }
+              }
+            },
+            scales: { x: { beginAtZero: true, ticks: { precision: 0 } } }
+          }
+        });
+      }
+
+      function renderFrankAnalysis(data) {
+        const summaryEl = document.getElementById("frank-summary");
+        const frankPct = data.frank_pct || 0;
+        const color = frankPct > 50 ? "#dc3545" : frankPct > 20 ? "#ffc107" : "#28a745";
+        summaryEl.innerHTML = `
+          <div style="display:flex; gap:20px; flex-wrap:wrap;">
+            <div style="background:#f8f9fa; border-radius:8px; padding:12px 20px; border-left:4px solid ${color}; flex:1; min-width:100px; text-align:center;">
+              <div style="font-size:2em; font-weight:bold; color:${color};">${frankPct}%</div>
+              <div style="font-size:0.82em; color:#6c757d;">Franked</div>
+            </div>
+            <div style="background:#f8f9fa; border-radius:8px; padding:12px 20px; border-left:4px solid #007bff; flex:1; min-width:100px; text-align:center;">
+              <div style="font-size:2em; font-weight:bold; color:#007bff;">${(data.frank_count || 0).toLocaleString()}</div>
+              <div style="font-size:0.82em; color:#6c757d;">Frank docs</div>
+            </div>
+            <div style="background:#f8f9fa; border-radius:8px; padding:12px 20px; border-left:4px solid #6c757d; flex:1; min-width:100px; text-align:center;">
+              <div style="font-size:2em; font-weight:bold; color:#6c757d;">${(data.total || 0).toLocaleString()}</div>
+              <div style="font-size:0.82em; color:#6c757d;">Total docs</div>
+            </div>
+          </div>`;
+
+        const overTime = data.over_time || [];
+        if (overTime.length) {
+          new Chart(document.getElementById("frank-over-time-chart"), {
+            type: "line",
+            data: {
+              labels: overTime.map(r => r.month),
+              datasets: [
+                {
+                  label: "Franked",
+                  data: overTime.map(r => r.frank_count),
+                  borderColor: "#dc3545",
+                  backgroundColor: "rgba(220,53,69,0.1)",
+                  tension: 0.3,
+                  fill: true,
+                },
+                {
+                  label: "Non-franked",
+                  data: overTime.map(r => r.total - r.frank_count),
+                  borderColor: "#007bff",
+                  backgroundColor: "rgba(0,123,255,0.07)",
+                  tension: 0.3,
+                  fill: true,
+                }
+              ]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: true,
+              plugins: { legend: { position: "top" } },
+              scales: { y: { beginAtZero: true, stacked: false, ticks: { precision: 0 } } }
+            }
+          });
+        }
+
+        const byClient = data.by_client || [];
+        const fcEl = document.getElementById("frank-clients-table");
+        fcEl.innerHTML = byClient.slice(0, 8).map(row => {
+          const pct = row.total ? Math.round(row.frank_count / row.total * 100) : 0;
+          return `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid #f0f0f0;">
+              <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:60%;" title="${escapeHtml(row.client)}">${escapeHtml(row.client)}</span>
+              <span style="display:flex; align-items:center; gap:8px;">
+                <span style="font-size:0.85em; color:#6c757d;">${row.frank_count.toLocaleString()} frank</span>
+                <span style="font-weight:bold; color:#dc3545;">${pct}%</span>
+              </span>
+            </div>`;
+        }).join("");
+      }
+
+      function renderTemporalAnalysis(data) {
+        const monthly = data.monthly || [];
+        if (monthly.length) {
+          new Chart(document.getElementById("temporal-chart"), {
+            type: "line",
+            data: {
+              labels: monthly.map(r => r.month),
+              datasets: [{
+                label: "Documents by date_created",
+                data: monthly.map(r => r.doc_count),
+                borderColor: "#17a2b8",
+                backgroundColor: "rgba(23,162,184,0.1)",
+                tension: 0.3,
+                fill: true,
+                pointRadius: 3,
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: true,
+              plugins: { legend: { display: false } },
+              scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+            }
+          });
+        }
+
+        if (data.avg_lag_days !== null && data.avg_lag_days !== undefined) {
+          const lag = data.avg_lag_days;
+          const lagEl = document.getElementById("temporal-lag");
+          const lagColor = Math.abs(lag) > 365 ? "#dc3545" : Math.abs(lag) > 90 ? "#ffc107" : "#28a745";
+          lagEl.innerHTML = `Avg upload lag: <span style="color:${lagColor};">${lag > 0 ? "+" : ""}${lag} days</span> vs document date`;
+        }
+
+        const spikeDays = data.top_spike_days || [];
+        const spikeEl = document.getElementById("spike-days-list");
+        spikeEl.innerHTML = spikeDays.map((r, i) => `
+          <div style="background:#f8f9fa; border-radius:6px; padding:8px 14px; border-left:3px solid #17a2b8;">
+            <span style="font-weight:600; color:#17a2b8;">#${i+1}</span>
+            <span style="margin-left:8px; color:#2c3e50;">${r.date}</span>
+            <span style="margin-left:8px; font-weight:bold;">${r.doc_count.toLocaleString()} docs</span>
+          </div>`).join("");
       }
     </script>
   </body>

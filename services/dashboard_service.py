@@ -4,7 +4,7 @@ Dashboard service - handles calculating and aggregating dashboard metrics
 
 import logging
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc, case, Integer
+from sqlalchemy import func, desc, case, Integer, text, cast, Float
 from datetime import datetime, timedelta
 
 from models.document import Document, DocumentStatus
@@ -550,3 +550,301 @@ class DashboardService:
         except Exception as e:
             logger.error(f"Error getting recent documents: {e}")
             return []
+
+    # -------------------------------------------------------------------------
+    # Intelligence analytics methods
+    # -------------------------------------------------------------------------
+
+    async def get_review_queue(self) -> dict:
+        """Breakdown of documents needing review, by reason."""
+        try:
+            needs_review_flagged = (
+                self.db.query(func.count(Document.id))
+                .filter(Document.needs_review == True)
+                .scalar() or 0
+            )
+            missing_embeddings = (
+                self.db.query(func.count(Document.id))
+                .filter(
+                    Document.status == DocumentStatus.COMPLETED,
+                    Document.search_vector.is_(None),
+                )
+                .scalar() or 0
+            )
+            missing_text = (
+                self.db.query(func.count(Document.id))
+                .filter(
+                    Document.status == DocumentStatus.COMPLETED,
+                    (Document.extracted_text.is_(None)) | (Document.extracted_text == ""),
+                )
+                .scalar() or 0
+            )
+            missing_keywords = (
+                self.db.query(func.count(Document.id))
+                .filter(
+                    Document.status == DocumentStatus.COMPLETED,
+                    Document.keywords.is_(None),
+                )
+                .scalar() or 0
+            )
+            has_errors = (
+                self.db.query(func.count(Document.id))
+                .filter(Document.processing_error.isnot(None))
+                .scalar() or 0
+            )
+            low_date_conf = (
+                self.db.query(func.count(Document.id))
+                .filter(Document.date_confidence == "LOW")
+                .scalar() or 0
+            )
+            low_client_conf = (
+                self.db.query(func.count(Document.id))
+                .filter(Document.client_confidence == "LOW")
+                .scalar() or 0
+            )
+            low_state_conf = (
+                self.db.query(func.count(Document.id))
+                .filter(Document.state_confidence == "LOW")
+                .scalar() or 0
+            )
+            return {
+                "needs_review_flagged": needs_review_flagged,
+                "missing_embeddings": missing_embeddings,
+                "missing_text": missing_text,
+                "missing_keywords": missing_keywords,
+                "has_errors": has_errors,
+                "low_date_confidence": low_date_conf,
+                "low_client_confidence": low_client_conf,
+                "low_state_confidence": low_state_conf,
+            }
+        except Exception as e:
+            logger.error(f"Error getting review queue: {e}")
+            return {}
+
+    async def get_data_quality(self) -> dict:
+        """Confidence distributions and bad-data leaderboard."""
+        _CONF_SCORE = {"high": 1.0, "medium": 0.5, "low": 0.0}
+
+        def _dist(column):
+            rows = (
+                self.db.query(column, func.count(Document.id))
+                .filter(column.isnot(None))
+                .group_by(column)
+                .all()
+            )
+            return {level: cnt for level, cnt in rows}
+
+        try:
+            date_dist = _dist(Document.date_confidence)
+            client_dist = _dist(Document.client_confidence)
+            state_dist = _dist(Document.state_confidence)
+
+            # Composite quality score per client_canonical
+            # Pull raw counts per (client_canonical, each confidence level)
+            rows = self.db.execute(text("""
+                SELECT
+                    client_canonical,
+                    COUNT(*) AS doc_count,
+                    AVG(
+                        CASE date_confidence   WHEN 'HIGH' THEN 1.0 WHEN 'MEDIUM' THEN 0.5 ELSE 0.0 END +
+                        CASE client_confidence WHEN 'HIGH' THEN 1.0 WHEN 'MEDIUM' THEN 0.5 ELSE 0.0 END +
+                        CASE state_confidence  WHEN 'HIGH' THEN 1.0 WHEN 'MEDIUM' THEN 0.5 ELSE 0.0 END
+                    ) / 3.0 AS avg_quality
+                FROM documents
+                WHERE client_canonical IS NOT NULL
+                GROUP BY client_canonical
+                HAVING COUNT(*) >= 3
+                ORDER BY avg_quality ASC
+                LIMIT 15
+            """)).fetchall()
+
+            bad_data_leaderboard = [
+                {
+                    "client": r[0],
+                    "doc_count": r[1],
+                    "avg_quality": round(float(r[2]), 3) if r[2] is not None else 0.0,
+                }
+                for r in rows
+            ]
+
+            return {
+                "date_confidence": date_dist,
+                "client_confidence": client_dist,
+                "state_confidence": state_dist,
+                "bad_data_leaderboard": bad_data_leaderboard,
+            }
+        except Exception as e:
+            logger.error(f"Error getting data quality: {e}")
+            return {}
+
+    async def get_client_intelligence(self) -> dict:
+        """Top clients by volume and dirty-client (normalization) analysis."""
+        try:
+            top_clients = (
+                self.db.query(Document.client_canonical, func.count(Document.id).label("doc_count"))
+                .filter(Document.client_canonical.isnot(None))
+                .group_by(Document.client_canonical)
+                .order_by(desc("doc_count"))
+                .limit(20)
+                .all()
+            )
+
+            dirty_clients = self.db.execute(text("""
+                SELECT
+                    client_canonical,
+                    COUNT(DISTINCT client) AS variants,
+                    COUNT(*) AS doc_count
+                FROM documents
+                WHERE client_canonical IS NOT NULL AND client IS NOT NULL
+                GROUP BY client_canonical
+                HAVING COUNT(DISTINCT client) > 1
+                ORDER BY variants DESC
+                LIMIT 20
+            """)).fetchall()
+
+            return {
+                "top_clients": [
+                    {"client": r[0], "doc_count": r[1]} for r in top_clients
+                ],
+                "dirty_clients": [
+                    {"client": r[0], "variants": r[1], "doc_count": r[2]}
+                    for r in dirty_clients
+                ],
+            }
+        except Exception as e:
+            logger.error(f"Error getting client intelligence: {e}")
+            return {}
+
+    async def get_geography(self) -> dict:
+        """Document distribution by state, with percentage of total."""
+        try:
+            rows = self.db.execute(text("""
+                SELECT
+                    TRIM(state) AS state,
+                    COUNT(*) AS doc_count,
+                    ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 1) AS pct
+                FROM documents
+                WHERE state IS NOT NULL AND TRIM(state) != ''
+                GROUP BY TRIM(state)
+                ORDER BY doc_count DESC
+            """)).fetchall()
+
+            frank_by_state = self.db.execute(text("""
+                SELECT
+                    TRIM(state) AS state,
+                    COUNT(*) FILTER (WHERE is_frank = true) AS frank_count,
+                    COUNT(*) AS total
+                FROM documents
+                WHERE state IS NOT NULL AND TRIM(state) != ''
+                GROUP BY TRIM(state)
+                ORDER BY frank_count DESC
+            """)).fetchall()
+
+            return {
+                "by_state": [
+                    {"state": r[0], "doc_count": r[1], "pct": float(r[2])}
+                    for r in rows
+                ],
+                "frank_by_state": [
+                    {"state": r[0], "frank_count": r[1], "total": r[2]}
+                    for r in frank_by_state
+                ],
+            }
+        except Exception as e:
+            logger.error(f"Error getting geography: {e}")
+            return {}
+
+    async def get_frank_analysis(self) -> dict:
+        """Franked mail ratio overall, by state, by client, and over time."""
+        try:
+            totals = self.db.execute(text("""
+                SELECT
+                    COUNT(*) AS total,
+                    COUNT(*) FILTER (WHERE is_frank = true) AS frank_count
+                FROM documents
+            """)).fetchone()
+
+            by_client = self.db.execute(text("""
+                SELECT
+                    client_canonical,
+                    COUNT(*) FILTER (WHERE is_frank = true) AS frank_count,
+                    COUNT(*) AS total
+                FROM documents
+                WHERE client_canonical IS NOT NULL
+                GROUP BY client_canonical
+                HAVING COUNT(*) FILTER (WHERE is_frank = true) > 0
+                ORDER BY frank_count DESC
+                LIMIT 15
+            """)).fetchall()
+
+            over_time = self.db.execute(text("""
+                SELECT
+                    DATE_TRUNC('month', date_created)::date AS month,
+                    COUNT(*) FILTER (WHERE is_frank = true) AS frank_count,
+                    COUNT(*) AS total
+                FROM documents
+                WHERE date_created IS NOT NULL
+                GROUP BY DATE_TRUNC('month', date_created)
+                ORDER BY month
+            """)).fetchall()
+
+            return {
+                "total": totals[0] if totals else 0,
+                "frank_count": totals[1] if totals else 0,
+                "frank_pct": round(totals[1] / totals[0] * 100, 1) if totals and totals[0] else 0,
+                "by_client": [
+                    {"client": r[0], "frank_count": r[1], "total": r[2]}
+                    for r in by_client
+                ],
+                "over_time": [
+                    {"month": str(r[0]), "frank_count": r[1], "total": r[2]}
+                    for r in over_time
+                ],
+            }
+        except Exception as e:
+            logger.error(f"Error getting frank analysis: {e}")
+            return {}
+
+    async def get_temporal_analysis(self) -> dict:
+        """Document timeline using date_created (the document's actual date, not upload date)."""
+        try:
+            monthly = self.db.execute(text("""
+                SELECT
+                    DATE_TRUNC('month', date_created)::date AS month,
+                    COUNT(*) AS doc_count
+                FROM documents
+                WHERE date_created IS NOT NULL
+                GROUP BY DATE_TRUNC('month', date_created)
+                ORDER BY month
+            """)).fetchall()
+
+            top_days = self.db.execute(text("""
+                SELECT date_created, COUNT(*) AS doc_count
+                FROM documents
+                WHERE date_created IS NOT NULL
+                GROUP BY date_created
+                ORDER BY doc_count DESC
+                LIMIT 10
+            """)).fetchall()
+
+            lag = self.db.execute(text("""
+                SELECT
+                    AVG(
+                        EXTRACT(EPOCH FROM (created_at - date_created::timestamp with time zone)) / 86400.0
+                    ) AS avg_lag_days
+                FROM documents
+                WHERE date_created IS NOT NULL AND created_at IS NOT NULL
+            """)).fetchone()
+
+            return {
+                "monthly": [
+                    {"month": str(r[0]), "doc_count": r[1]} for r in monthly
+                ],
+                "top_spike_days": [
+                    {"date": str(r[0]), "doc_count": r[1]} for r in top_days
+                ],
+                "avg_lag_days": round(float(lag[0]), 1) if lag and lag[0] is not None else None,
+            }
+        except Exception as e:
+            logger.error(f"Error getting temporal analysis: {e}")
+            return {}
