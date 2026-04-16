@@ -157,8 +157,18 @@ class RedisSessionMiddleware:
         self.https_only = https_only
         self.domain = domain
 
+    # Paths that don't need session handling — avoids Redis calls on health checks
+    _skip_session_paths = ("/health", "/static", "/favicon.ico")
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+
+        # Skip session for paths that don't need it (avoids Redis on health checks)
+        path = scope.get("path", "")
+        if any(path.startswith(p) for p in self._skip_session_paths):
+            scope["session"] = {}
             await self.app(scope, receive, send)
             return
 
