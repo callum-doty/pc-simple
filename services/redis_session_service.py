@@ -5,6 +5,7 @@ Redis-based session service - replaces SessionMiddleware with Redis storage
 import json
 import logging
 import secrets
+import time
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import redis
@@ -29,30 +30,31 @@ class RedisSessionService:
         self._initialize_redis()
         self._initialize_encryption()
 
-    def _initialize_redis(self):
-        """Initialize Redis connection"""
-        try:
-            # Parse Redis URL
-            redis_url = settings.redis_url
-            logger.info(f"Connecting to Redis at: {redis_url}")
+    def _initialize_redis(self, retries: int = 3, retry_delay: float = 2.0):
+        """Initialize Redis connection with retries"""
+        redis_url = settings.redis_url
+        logger.info(f"Connecting to Redis at: {redis_url}")
 
-            self.redis_client = redis.from_url(
-                redis_url,
-                decode_responses=True,
-                socket_connect_timeout=5,
-                socket_timeout=5,
-                retry_on_timeout=True,
-                health_check_interval=30,
-            )
+        for attempt in range(1, retries + 1):
+            try:
+                self.redis_client = redis.from_url(
+                    redis_url,
+                    decode_responses=True,
+                    socket_connect_timeout=5,
+                    socket_timeout=5,
+                    retry_on_timeout=True,
+                    health_check_interval=30,
+                )
+                self.redis_client.ping()
+                logger.info(f"Redis connection established successfully (attempt {attempt})")
+                return
+            except Exception as e:
+                logger.warning(f"Redis connection attempt {attempt}/{retries} failed: {e}")
+                if attempt < retries:
+                    time.sleep(retry_delay)
 
-            # Test connection
-            self.redis_client.ping()
-            logger.info("Redis connection established successfully")
-
-        except Exception as e:
-            logger.error(f"Failed to connect to Redis: {e}")
-            logger.warning("Session service will operate in fallback mode")
-            self.redis_client = None
+        logger.error("All Redis connection attempts failed. Session service will operate in fallback mode.")
+        self.redis_client = None
 
     def _initialize_encryption(self):
         """Initialize session data encryption"""
@@ -319,7 +321,11 @@ class RedisSessionService:
         """Health check for Redis session service"""
         try:
             if not self.redis_client:
-                return {"status": "unhealthy", "error": "Redis client not initialized"}
+                # Attempt to reconnect — Redis may not have been ready at startup
+                logger.info("Redis client not initialized, attempting reconnect...")
+                self._initialize_redis()
+                if not self.redis_client:
+                    return {"status": "unhealthy", "error": "Redis client not initialized"}
 
             # Test Redis connection
             self.redis_client.ping()
