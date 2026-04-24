@@ -45,6 +45,11 @@ services:
           name: redis
           property: connectionString
       - key: SECRET_KEY
+        fromService:
+          type: web
+          name: document-catalog-app
+          envVarKey: SECRET_KEY
+      - key: SECRET_KEY
         generateValue: true
       - key: ANTHROPIC_API_KEY
         sync: false
