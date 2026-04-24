@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     preview_url_expires_hours: int = 24  # Preview URLs expire after 24 hours
     download_url_expires_hours: int = 1  # Download URLs expire after 1 hour
 
+    # Dropbox ingestion settings
+    dropbox_app_key: str = ""
+    dropbox_app_secret: str = ""
+    dropbox_refresh_token: str = ""
+    dropbox_folder_path: str = "/Press Files 2019-2020/2026"
+
     class Config:
         env_file = ".env"
         case_sensitive = False

@@ -75,6 +75,10 @@ class Document(Base):
     preview_url = Column(String(500), nullable=True)
     thumbnail_url = Column(String(500), nullable=True)
 
+    # Dropbox ingestion fields
+    dropbox_file_id = Column(String(255), nullable=True, unique=True, index=True)
+    content_hash = Column(String(64), nullable=True, index=True)
+
     # Document metadata fields (populated from DB)
     client = Column(Text, nullable=True)
     paid_for_by_raw = Column(Text, nullable=True)
