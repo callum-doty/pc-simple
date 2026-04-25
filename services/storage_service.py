@@ -79,19 +79,22 @@ class StorageService:
             )
 
             # Test connection to the bucket
-            try:
-                self.s3_client.head_bucket(Bucket=settings.s3_bucket)
-                logger.info(
-                    f"Successfully initialized S3 storage for bucket: {settings.s3_bucket}"
-                )
-            except ClientError as e:
-                logger.error(
-                    f"Could not connect to S3 bucket '{settings.s3_bucket}'. "
-                    f"Error: {e}. Please verify your S3 environment variables "
-                    "(S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION)."
-                )
-                # We log the error but don't raise, allowing the app to start.
-                # File operations will likely fail until the configuration is corrected.
+            if not settings.s3_bucket:
+                logger.warning("S3_BUCKET is not set — skipping bucket connectivity check")
+            else:
+                try:
+                    self.s3_client.head_bucket(Bucket=settings.s3_bucket)
+                    logger.info(
+                        f"Successfully initialized S3 storage for bucket: {settings.s3_bucket}"
+                    )
+                except ClientError as e:
+                    logger.error(
+                        f"Could not connect to S3 bucket '{settings.s3_bucket}'. "
+                        f"Error: {e}. Please verify your S3 environment variables "
+                        "(S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION)."
+                    )
+                    # We log the error but don't raise, allowing the app to start.
+                    # File operations will likely fail until the configuration is corrected.
 
         except Exception as e:
             logger.error(
