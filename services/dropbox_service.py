@@ -3,6 +3,7 @@ Dropbox integration service — lists new files via cursor-based sync and downlo
 """
 
 import logging
+import os
 from io import BytesIO
 from typing import Generator, Optional, Tuple
 
@@ -10,31 +11,31 @@ import dropbox
 from dropbox.exceptions import ApiError, AuthError
 from dropbox.files import FileMetadata, ListFolderResult
 
-from config import get_settings
-
 logger = logging.getLogger(__name__)
-settings = get_settings()
+
+
+def _require_env(key: str) -> str:
+    val = os.environ.get(key, "").strip()
+    if not val:
+        raise ValueError(f"{key} environment variable is not set")
+    return val
 
 
 class DropboxService:
     """Wraps the Dropbox SDK for folder listing and file downloads."""
 
     def __init__(self):
-        if not all(
-            [
-                settings.dropbox_app_key,
-                settings.dropbox_app_secret,
-                settings.dropbox_refresh_token,
-            ]
-        ):
-            raise ValueError(
-                "DROPBOX_APP_KEY, DROPBOX_APP_SECRET, and DROPBOX_REFRESH_TOKEN must all be set"
-            )
+        app_key = _require_env("DROPBOX_APP_KEY")
+        app_secret = _require_env("DROPBOX_APP_SECRET")
+        refresh_token = _require_env("DROPBOX_REFRESH_TOKEN")
 
         self._dbx = dropbox.Dropbox(
-            app_key=settings.dropbox_app_key,
-            app_secret=settings.dropbox_app_secret,
-            oauth2_refresh_token=settings.dropbox_refresh_token,
+            app_key=app_key,
+            app_secret=app_secret,
+            oauth2_refresh_token=refresh_token,
+        )
+        self._folder_path = os.environ.get(
+            "DROPBOX_FOLDER_PATH", "/Press Files 2019-2020/2026"
         )
 
     def list_new_files(
@@ -50,7 +51,7 @@ class DropboxService:
                 result: ListFolderResult = self._dbx.files_list_folder_continue(cursor)
             else:
                 result = self._dbx.files_list_folder(
-                    settings.dropbox_folder_path, recursive=False
+                    self._folder_path, recursive=False
                 )
         except AuthError as e:
             logger.error(f"Dropbox auth error: {e}")
@@ -60,7 +61,7 @@ class DropboxService:
                 # Cursor expired — fall back to full rescan
                 logger.warning("Dropbox cursor reset; performing full rescan")
                 result = self._dbx.files_list_folder(
-                    settings.dropbox_folder_path, recursive=False
+                    self._folder_path, recursive=False
                 )
             else:
                 logger.error(f"Dropbox API error: {e}")

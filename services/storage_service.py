@@ -28,6 +28,7 @@ class StorageService:
         self.storage_path = settings.storage_path
 
         # Initialize storage backend
+        self._s3_bucket = ""
         if self.storage_type == "s3":
             self._init_s3_client()
         else:
@@ -57,11 +58,17 @@ class StorageService:
     def _init_s3_client(self):
         """Initialize S3 client"""
         try:
-            endpoint_url = settings.s3_endpoint_url
+            import os as _os
+            # Read S3 credentials directly from env to ensure they're always picked up
+            access_key = _os.environ.get("S3_ACCESS_KEY") or settings.s3_access_key
+            secret_key = _os.environ.get("S3_SECRET_KEY") or settings.s3_secret_key
+            region = _os.environ.get("S3_REGION") or settings.s3_region
+            bucket = _os.environ.get("S3_BUCKET") or settings.s3_bucket
+            endpoint_url = _os.environ.get("S3_ENDPOINT_URL") or settings.s3_endpoint_url
 
             # If no endpoint is specified, construct it from the region for Backblaze
-            if not endpoint_url and settings.s3_region:
-                endpoint_url = f"https://s3.{settings.s3_region}.backblazeb2.com"
+            if not endpoint_url and region:
+                endpoint_url = f"https://s3.{region}.backblazeb2.com"
             elif endpoint_url and not endpoint_url.startswith("https://"):
                 endpoint_url = f"https://{endpoint_url}"
 
@@ -69,27 +76,26 @@ class StorageService:
 
             self.s3_client = boto3.client(
                 "s3",
-                aws_access_key_id=settings.s3_access_key,
-                aws_secret_access_key=settings.s3_secret_key,
-                region_name=settings.s3_region,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                region_name=region,
                 endpoint_url=endpoint_url,
                 config=Config(
                     signature_version="s3v4", s3={"addressing_style": "path"}
                 ),
             )
+            self._s3_bucket = bucket
 
             # Test connection to the bucket
-            if not settings.s3_bucket:
+            if not bucket:
                 logger.warning("S3_BUCKET is not set — skipping bucket connectivity check")
             else:
                 try:
-                    self.s3_client.head_bucket(Bucket=settings.s3_bucket)
-                    logger.info(
-                        f"Successfully initialized S3 storage for bucket: {settings.s3_bucket}"
-                    )
+                    self.s3_client.head_bucket(Bucket=bucket)
+                    logger.info(f"Successfully initialized S3 storage for bucket: {bucket}")
                 except ClientError as e:
                     logger.error(
-                        f"Could not connect to S3 bucket '{settings.s3_bucket}'. "
+                        f"Could not connect to S3 bucket '{bucket}'. "
                         f"Error: {e}. Please verify your S3 environment variables "
                         "(S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION)."
                     )
@@ -147,7 +153,7 @@ class StorageService:
         """Save bytes to a file in storage."""
         if self.storage_type == "s3":
             self.s3_client.put_object(
-                Bucket=settings.s3_bucket,
+                Bucket=self._s3_bucket,
                 Key=filename,
                 Body=content,
                 ContentType=content_type or "application/octet-stream",
@@ -163,7 +169,7 @@ class StorageService:
         """Save bytes to a file in storage (synchronous)."""
         if self.storage_type == "s3":
             self.s3_client.put_object(
-                Bucket=settings.s3_bucket,
+                Bucket=self._s3_bucket,
                 Key=filename,
                 Body=content,
                 ContentType=content_type or "application/octet-stream",
