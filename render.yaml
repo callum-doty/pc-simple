@@ -162,6 +162,7 @@ services:
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
+      alembic upgrade head
     startCommand: "python -m jobs.dropbox_ingest"
     envVars:
       - key: PYTHON_VERSION
