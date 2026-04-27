@@ -299,6 +299,10 @@ class SearchService:
 
                 vector_subquery = None
                 if query_embedding is not None:
+                    # LIMIT forces HNSW index usage (ORDER BY distance LIMIT N),
+                    # turning O(N) sequential scan into O(log N). Without this,
+                    # pgvector ignores the HNSW index entirely.
+                    _vector_candidates = max(500, per_page * 20)
                     vector_subquery = (
                         select(
                             Document.id.label("id"),
@@ -310,6 +314,8 @@ class SearchService:
                             ).label("vector_relevance"),
                         )
                         .filter(Document.search_vector.isnot(None))
+                        .order_by(Document.search_vector.cosine_distance(query_embedding))
+                        .limit(_vector_candidates)
                         .subquery()
                     )
 
@@ -332,6 +338,7 @@ class SearchService:
                         text_subquery,
                         vector_subquery.c.id == text_subquery.c.id,
                         isouter=True,
+                        full=True,
                     )
 
                     relevance_expression = (
@@ -429,12 +436,7 @@ class SearchService:
                     func.extract("year", Document.date_created) == date_year
                 )
 
-            # 3. Get total count
-            _t_count = time.perf_counter()
-            total_count = final_query.with_entities(func.count(Document.id)).scalar()
-            logger.info(f"[PERF] Count query: {(time.perf_counter()-_t_count)*1000:.0f}ms")
-
-            # 4. Apply sorting
+            # 3. Apply sorting
             if sort_by == "relevance" and search_subquery is not None:
                 order_clause = desc("relevance")
             else:
@@ -446,13 +448,15 @@ class SearchService:
                     else asc(sort_column)
                 )
 
-            final_query = final_query.order_by(order_clause)
-
-            # 5. Apply pagination
+            # 4. Fetch documents + total count in a single query using window function.
+            # COUNT(*) OVER() returns the full result set size regardless of LIMIT/OFFSET.
             _t_fetch = time.perf_counter()
             offset = (page - 1) * per_page
-            results = (
-                final_query.options(
+            count_col = func.count(Document.id).over().label("_total_count")
+            all_rows = (
+                final_query
+                .add_columns(count_col)
+                .options(
                     load_only(
                         Document.id,
                         Document.filename,
@@ -463,17 +467,25 @@ class SearchService:
                         Document.keywords,
                         Document.thumbnail_url,
                         Document.file_path,
-                        Document.search_vector,
                         Document.client_canonical,
                         Document.state,
                         Document.date_created,
                     )
                 )
+                .order_by(order_clause)
                 .offset(offset)
                 .limit(per_page)
                 .all()
             )
-            logger.info(f"[PERF] Document fetch query: {(time.perf_counter()-_t_fetch)*1000:.0f}ms")
+            logger.info(f"[PERF] Document fetch + count query: {(time.perf_counter()-_t_fetch)*1000:.0f}ms")
+
+            if all_rows:
+                # Each row is (Document, relevance, total_count)
+                total_count = all_rows[0][2]
+                results = [(row[0], row[1]) for row in all_rows]
+            else:
+                total_count = 0
+                results = []
 
             # 6. Normalize relevance scores to better utilize (0, 1) range
             # Collect all relevance scores first
