@@ -933,6 +933,27 @@ async def get_document_details(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Year facets for filter buttons
+@app.get("/api/facets/years")
+async def get_year_facets(db: Session = Depends(get_db)):
+    """Return distinct years present in date_created, sorted ascending."""
+    try:
+        from sqlalchemy import func as sa_func, extract
+
+        rows = (
+            db.query(extract("year", Document.date_created).label("yr"))
+            .filter(Document.date_created.isnot(None))
+            .group_by("yr")
+            .order_by("yr")
+            .all()
+        )
+        return {"success": True, "years": [int(r[0]) for r in rows]}
+
+    except Exception as e:
+        logger.error(f"Year facets error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Client facets for filter dropdown
 @app.get("/api/facets/clients")
 async def get_client_facets(db: Session = Depends(get_db)):

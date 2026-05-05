@@ -140,15 +140,7 @@ endblock %} {% block content %}
         <!-- Date Created Year Filter -->
         <div class="mb-3">
           <label class="form-label">Year Created</label>
-          <div class="d-flex flex-wrap gap-1" id="yearFilterGroup">
-            <button type="button" class="btn btn-sm btn-outline-secondary year-filter-btn" data-year="2019">2019</button>
-            <button type="button" class="btn btn-sm btn-outline-secondary year-filter-btn" data-year="2020">2020</button>
-            <button type="button" class="btn btn-sm btn-outline-secondary year-filter-btn" data-year="2021">2021</button>
-            <button type="button" class="btn btn-sm btn-outline-secondary year-filter-btn" data-year="2022">2022</button>
-            <button type="button" class="btn btn-sm btn-outline-secondary year-filter-btn" data-year="2023">2023</button>
-            <button type="button" class="btn btn-sm btn-outline-secondary year-filter-btn" data-year="2024">2024</button>
-            <button type="button" class="btn btn-sm btn-outline-secondary year-filter-btn" data-year="2025">2025</button>
-          </div>
+          <div class="d-flex flex-wrap gap-1" id="yearFilterGroup"></div>
         </div>
 
         <div class="mb-3">
@@ -845,6 +837,41 @@ endblock %} {% block content %}
       });
 
       // Load top 200 clients into datalist
+      function loadYearFilters() {
+        fetch("/api/facets/years")
+          .then((response) => response.json())
+          .then((data) => {
+            const group = document.getElementById("yearFilterGroup");
+            group.innerHTML = "";
+            (data.years || []).forEach((year) => {
+              const btn = document.createElement("button");
+              btn.type = "button";
+              btn.className = "btn btn-sm btn-outline-secondary year-filter-btn";
+              btn.dataset.year = year;
+              btn.textContent = year;
+              btn.addEventListener("click", function () {
+                const y = this.dataset.year;
+                if (activeDateYear === y) {
+                  activeDateYear = "";
+                  this.classList.remove("active", "btn-primary");
+                  this.classList.add("btn-outline-secondary");
+                } else {
+                  group.querySelectorAll(".year-filter-btn").forEach((b) => {
+                    b.classList.remove("active", "btn-primary");
+                    b.classList.add("btn-outline-secondary");
+                  });
+                  activeDateYear = y;
+                  this.classList.add("active", "btn-primary");
+                  this.classList.remove("btn-outline-secondary");
+                }
+                performSearch(true);
+              });
+              group.appendChild(btn);
+            });
+          })
+          .catch((error) => console.error("Year facets error:", error));
+      }
+
       function loadClientFilters() {
         fetch("/api/facets/clients")
           .then((response) => response.json())
@@ -875,28 +902,6 @@ endblock %} {% block content %}
         performSearch(true);
       });
 
-      // Year toggle buttons
-      document.querySelectorAll(".year-filter-btn").forEach((btn) => {
-        btn.addEventListener("click", function () {
-          const year = this.dataset.year;
-          if (activeDateYear === year) {
-            // Deselect
-            activeDateYear = "";
-            this.classList.remove("active", "btn-primary");
-            this.classList.add("btn-outline-secondary");
-          } else {
-            // Deselect previously active
-            document.querySelectorAll(".year-filter-btn").forEach((b) => {
-              b.classList.remove("active", "btn-primary");
-              b.classList.add("btn-outline-secondary");
-            });
-            activeDateYear = year;
-            this.classList.add("active", "btn-primary");
-            this.classList.remove("btn-outline-secondary");
-          }
-          performSearch(true);
-        });
-      });
 
       fetch("/api/stats")
         .then((response) => response.json())
@@ -912,6 +917,7 @@ endblock %} {% block content %}
 
       performSearch(true);
       loadCanonicalTermFilters();
+      loadYearFilters();
       loadClientFilters();
       loadTopQueries();
     });

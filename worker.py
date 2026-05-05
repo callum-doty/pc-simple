@@ -6,6 +6,7 @@ from services.document_service import DocumentService
 from services.ai_service import AIService
 from services.storage_service import StorageService
 from services.preview_service import PreviewService
+from services.feature_extraction_service import extract_document_features, load_canonical_map_from_db
 from models.document import DocumentStatus
 import logging
 from typing import Generator, Tuple, List, Dict, Any
@@ -251,6 +252,10 @@ def process_document_task(document_id: int, analysis_type: str = "unified"):
             document_id, DocumentStatus.COMPLETED, progress=100
         )
 
+        # Trigger feature extraction (date, client_canonical, state) now that
+        # extracted_text and ai_analysis are populated.
+        extract_document_features_task.delay(document_id)
+
         # Clear the search cache in Redis
         try:
             if settings.redis_url:
@@ -281,6 +286,68 @@ def process_document_task(document_id: int, analysis_type: str = "unified"):
                     f"Failed to update document status after error: {db_error}"
                 )
         return False
+    finally:
+        if db:
+            db.close()
+
+
+@celery_app.task(name="extract_document_features_task", bind=True, max_retries=3, default_retry_delay=60)
+def extract_document_features_task(self, document_id: int, force: bool = False):
+    """
+    Runs feature extraction (date, client_canonical, state) for a single document
+    after AI processing completes.
+
+    Idempotent: skips documents that already have client_canonical set unless
+    force=True. Pass force=True to re-extract (e.g. after canonical map updates).
+    """
+    db = None
+    try:
+        db = next(get_db())
+        from models.document import Document
+        document = db.query(Document).get(document_id)
+        if not document:
+            logger.error(f"extract_document_features_task: document {document_id} not found")
+            return False
+
+        if document.client_canonical is not None and not force:
+            logger.info(
+                f"Document {document_id} already has client_canonical — skipping "
+                f"(pass force=True to re-extract)."
+            )
+            return True
+
+        if not document.extracted_text:
+            logger.warning(f"Document {document_id} has no extracted_text — skipping feature extraction.")
+            return False
+
+        logger.info(f"Running feature extraction for document {document_id}.")
+        canonical_map = load_canonical_map_from_db(db)
+        result = extract_document_features(document, canonical_map)
+        meta = result.pop("_meta", {})
+
+        for field, value in result.items():
+            setattr(document, field, value)
+
+        # Store traceability keys in file_metadata without requiring new DB columns.
+        document.file_metadata = {**(document.file_metadata or {}), "feature_extraction": meta}
+
+        db.commit()
+        logger.info(
+            f"Feature extraction complete for document {document_id}: "
+            f"client_canonical={document.client_canonical!r}, "
+            f"state={document.state!r}, "
+            f"date_created={document.date_created!r}, "
+            f"source={meta.get('canonical_source')!r}"
+        )
+        return True
+
+    except Exception as exc:
+        logger.error(f"Feature extraction failed for document {document_id}: {exc}")
+        try:
+            raise self.retry(exc=exc)
+        except self.MaxRetriesExceededError:
+            logger.error(f"Max retries exceeded for feature extraction on document {document_id}.")
+            return False
     finally:
         if db:
             db.close()
