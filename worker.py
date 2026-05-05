@@ -304,7 +304,7 @@ def extract_document_features_task(self, document_id: int, force: bool = False):
     try:
         db = next(get_db())
         from models.document import Document
-        document = db.query(Document).get(document_id)
+        document = db.get(Document, document_id)
         if not document:
             logger.error(f"extract_document_features_task: document {document_id} not found")
             return False
