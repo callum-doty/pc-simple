@@ -1391,6 +1391,39 @@ async def get_mapping_stats(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/admin/backfill-features")
+async def backfill_feature_extraction(password: str = Form(...), db: Session = Depends(get_db)):
+    """
+    Enqueue feature extraction for all COMPLETED documents missing client_canonical.
+    Uses the existing extract_document_features_task — no AI reprocessing, reads
+    from already-stored extracted_text and ai_analysis.
+    """
+    from worker import extract_document_features_task
+
+    admin_password = settings.upload_password or "upload123"
+    if password != admin_password:
+        raise HTTPException(status_code=401, detail="Invalid password")
+
+    pending = (
+        db.query(Document.id)
+        .filter(Document.status == "COMPLETED")
+        .filter(Document.client_canonical.is_(None))
+        .filter(Document.extracted_text.isnot(None))
+        .all()
+    )
+    doc_ids = [row[0] for row in pending]
+
+    for doc_id in doc_ids:
+        extract_document_features_task.delay(doc_id)
+
+    logger.info(f"Backfill: enqueued feature extraction for {len(doc_ids)} documents.")
+    return {
+        "success": True,
+        "enqueued": len(doc_ids),
+        "message": f"Enqueued feature extraction for {len(doc_ids)} documents. Check worker logs for progress.",
+    }
+
+
 @app.get("/api/search/top-queries")
 async def get_top_queries(
     search_service: SearchService = Depends(get_search_service),
