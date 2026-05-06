@@ -37,6 +37,7 @@ class AuthenticationMiddleware:
             "/health",
             "/static",
             "/favicon.ico",
+            "/api/admin/backfill-features",
         ]
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
