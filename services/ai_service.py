@@ -1059,6 +1059,11 @@ class AIService:
         embedding bad data. Controlled-vocabulary fields from ai_analysis carry
         inherently lower risk because the LLM selects from a fixed list.
         """
+        # JSONB null deserializes to Python None, which is distinct from SQL NULL
+        # and passes isnot(None) filters. Guard here so callers never need to check.
+        if not ai_analysis:
+            return filename, {}
+
         doc = ai_analysis.get("document_analysis", {}) or {}
         cls = ai_analysis.get("classification", {}) or {}
         ent = ai_analysis.get("entities", {}) or {}
