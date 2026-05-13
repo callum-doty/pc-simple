@@ -12,7 +12,7 @@ the backfill is safe to interrupt and resume.
 import argparse
 import logging
 import sys
-from sqlalchemy import or_, func
+from sqlalchemy import or_
 
 from database import get_db
 from models.document import Document
@@ -41,8 +41,6 @@ def run_backfill(batch_size: int = 50, dry_run: bool = False) -> None:
                     Document.embedding_version < AIService.EMBEDDING_VERSION,
                 )
             )
-            .filter(Document.ai_analysis.isnot(None))
-            .filter(func.jsonb_typeof(Document.ai_analysis) != "null")
             .order_by(Document.updated_at.desc().nullslast())
         )
 
@@ -66,8 +64,8 @@ def run_backfill(batch_size: int = 50, dry_run: bool = False) -> None:
                 state=doc.state,
                 state_confidence=doc.state_confidence,
             )
-            if not embedding_text:
-                logger.warning(f"doc {doc.id}: empty embedding text, skipping")
+            if not provenance:
+                logger.warning(f"doc {doc.id}: ai_analysis is null or empty, skipping")
                 skipped += 1
                 continue
 
@@ -76,6 +74,7 @@ def run_backfill(batch_size: int = 50, dry_run: bool = False) -> None:
                 logger.info(f"doc {doc.id}: provenance fields → {list(provenance.keys())}")
                 processed += 1
                 continue
+
 
             embeddings = ai_service.generate_embeddings_sync(embedding_text)
             if not embeddings:
