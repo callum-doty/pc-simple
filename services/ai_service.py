@@ -1026,6 +1026,119 @@ class AIService:
                 )
         return validated_mappings
 
+    EMBEDDING_MODEL = "text-embedding-3-small"
+    EMBEDDING_VERSION = 3  # Increment when synthesis strategy changes
+
+    _TRUSTED_CONFIDENCE = {"HIGH", "MEDIUM"}
+
+    @staticmethod
+    def build_embedding_text(
+        ai_analysis: dict,
+        filename: str = "",
+        client_canonical: str = None,
+        client_confidence: str = None,
+        state: str = None,
+        state_confidence: str = None,
+    ) -> tuple[str, dict]:
+        """
+        Build a labeled, field-structured embedding string from structured AI analysis.
+
+        Returns a (text, provenance) tuple. The provenance dict records, for each
+        field that appears in the embedding string, the value used, its data source,
+        and the confidence level. Store it in embedding_provenance so retrieval
+        failures can be traced to specific fields without re-running the pipeline.
+
+        Fields are ordered by semantic importance and prefixed with labels so the
+        embedding model can resolve token relationships without ambiguity (e.g.
+        "Florida" as state vs. topic). Handles both the full nested structure
+        (holistic path) and the simplified structure from chunked processing.
+
+        Post-processed flat columns (client_canonical, state) are gated on their
+        confidence scores. A wrong value is worse than no value, so fields with
+        null or unrecognised confidence are omitted rather than potentially
+        embedding bad data. Controlled-vocabulary fields from ai_analysis carry
+        inherently lower risk because the LLM selects from a fixed list.
+        """
+        doc = ai_analysis.get("document_analysis", {}) or {}
+        cls = ai_analysis.get("classification", {}) or {}
+        ent = ai_analysis.get("entities", {}) or {}
+        extracted = ai_analysis.get("extracted_text", {}) or {}
+        design = ai_analysis.get("design_elements", {}) or {}
+        comm = ai_analysis.get("communication_focus", {}) or {}
+
+        summary = doc.get("summary") or ai_analysis.get("summary")
+
+        # Canonical taxonomy terms — deduplicated, primary_issue prepended if distinct
+        mappings = ai_analysis.get("keyword_mappings") or []
+        canonical_terms = list({
+            m["mapped_canonical_term"]
+            for m in mappings
+            if isinstance(m, dict) and m.get("mapped_canonical_term")
+        })
+        primary_issue = comm.get("primary_issue")
+        if primary_issue and primary_issue not in canonical_terms:
+            canonical_terms.insert(0, primary_issue)
+
+        election_year = doc.get("election_year")
+
+        # Gate post-processed fields on confidence — omit rather than embed bad data.
+        # Controlled-vocab AI fields (document_type, category, tone, etc.) are included
+        # unconditionally because the LLM picks from fixed lists.
+        trusted = AIService._TRUSTED_CONFIDENCE
+        client_trusted = client_canonical and (client_confidence or "").upper() in trusted
+        client = client_canonical if client_trusted else ent.get("client_name")
+        state_trusted = state and (state_confidence or "").upper() in trusted
+        doc_state = state if state_trusted else None
+
+        # Provenance: track every field that ends up in the embedding string.
+        provenance: dict = {}
+
+        def line(label: str, value, source: str, confidence: str = None) -> str | None:
+            if not value:
+                return None
+            if isinstance(value, list):
+                value = ", ".join(str(v) for v in value if v)
+            if not value:
+                return None
+            provenance[label] = {"value": value, "source": source, "confidence": confidence}
+            return f"{label}: {value}"
+
+        lines = list(filter(None, [
+            # Core semantic identity — highest signal, weighted first
+            line("SUMMARY", summary, "llm_extraction"),
+            line("MAIN_MESSAGE", extracted.get("main_message"), "llm_extraction"),
+            line("CALL_TO_ACTION", extracted.get("call_to_action"), "llm_extraction"),
+            # Issue vocabulary — bridges query language to taxonomy language
+            line("ISSUES", ", ".join(canonical_terms) if canonical_terms else None, "taxonomy_mapping"),
+            # Classification context — controlled vocabularies, low risk
+            line("CATEGORY", cls.get("category"), "llm_controlled_vocab"),
+            line("SUBCATEGORY", cls.get("subcategory"), "llm_controlled_vocab"),
+            # Document structure — controlled vocabularies, low risk
+            line("DOCUMENT_TYPE", doc.get("document_type"), "llm_controlled_vocab"),
+            line("CAMPAIGN_TYPE", doc.get("campaign_type"), "llm_controlled_vocab"),
+            line("TONE", doc.get("document_tone"), "llm_controlled_vocab"),
+            # Audience anchor — optional prompt pass, null if not run
+            line("TARGET_AUDIENCE", design.get("target_audience"), "llm_extraction"),
+            # Entity anchors — confidence-gated where possible
+            line(
+                "CLIENT", client,
+                source="canonical_pipeline" if client_trusted else "llm_extraction",
+                confidence=client_confidence if client_trusted else None,
+            ),
+            line("OPPONENT", ent.get("opponent_name"), "llm_extraction"),
+            line("CAMPAIGN", design.get("campaign_name"), "llm_extraction"),
+            # Geographic and temporal context
+            line(
+                "STATE", doc_state,
+                source="canonical_pipeline",
+                confidence=state_confidence if state_trusted else None,
+            ),
+            line("ELECTION_YEAR", str(election_year) if election_year else None, "llm_controlled_vocab"),
+        ]))
+
+        text = "\n".join(lines) if lines else filename
+        return text, provenance
+
     async def generate_embeddings(self, text: str) -> Optional[List[float]]:
         """Generate embeddings for text using the configured AI provider."""
         import time, asyncio

@@ -120,15 +120,26 @@ def _process_pdf_document_by_page(
         file_type="pdf",
     )
 
-    # Generate embeddings from the consolidated summary
-    if final_summary:
-        logger.info(f"Generating embeddings from summary for document {document_id}")
-        synthesized_text = " ".join(
-            filter(None, [document.filename, final_extracted_text, final_summary])
+    # Generate embeddings from structured AI analysis
+    if final_ai_analysis:
+        logger.info(f"Generating embeddings for document {document_id}")
+        synthesized_text, provenance = AIService.build_embedding_text(
+            final_ai_analysis,
+            filename=document.filename,
+            client_canonical=document.client_canonical,
+            client_confidence=document.client_confidence,
+            state=document.state,
+            state_confidence=document.state_confidence,
         )
         embeddings = ai_service.generate_embeddings_sync(synthesized_text)
         if embeddings:
-            document_service.update_document_embeddings_sync(document_id, embeddings)
+            document_service.update_document_embeddings_sync(
+                document_id,
+                embeddings,
+                embedding_model=AIService.EMBEDDING_MODEL,
+                embedding_version=AIService.EMBEDDING_VERSION,
+                embedding_provenance=provenance,
+            )
 
 
 def _process_document_holistically(
@@ -161,13 +172,24 @@ def _process_document_holistically(
         file_type=analysis_result.get("file_type"),
     )
 
-    synthesized_text = " ".join(
-        filter(None, [document.filename, analysis_result.get("extracted_text")])
+    synthesized_text, provenance = AIService.build_embedding_text(
+        ai_analysis,
+        filename=document.filename,
+        client_canonical=document.client_canonical,
+        client_confidence=document.client_confidence,
+        state=document.state,
+        state_confidence=document.state_confidence,
     )
     if synthesized_text:
         embeddings = ai_service.generate_embeddings_sync(synthesized_text)
         if embeddings:
-            document_service.update_document_embeddings_sync(document_id, embeddings)
+            document_service.update_document_embeddings_sync(
+                document_id,
+                embeddings,
+                embedding_model=AIService.EMBEDDING_MODEL,
+                embedding_version=AIService.EMBEDDING_VERSION,
+                embedding_provenance=provenance,
+            )
 
 
 from database import get_db

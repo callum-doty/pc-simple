@@ -466,7 +466,12 @@ class DocumentService:
             return False
 
     async def update_document_embeddings(
-        self, document_id: int, embeddings: List[float]
+        self,
+        document_id: int,
+        embeddings: List[float],
+        embedding_model: str = None,
+        embedding_version: int = None,
+        embedding_provenance: dict = None,
     ) -> bool:
         """Update document search vector (embeddings)"""
         try:
@@ -475,6 +480,12 @@ class DocumentService:
                 return False
 
             document.search_vector = embeddings
+            if embedding_model is not None:
+                document.embedding_model = embedding_model
+            if embedding_version is not None:
+                document.embedding_version = embedding_version
+            if embedding_provenance is not None:
+                document.embedding_provenance = embedding_provenance
             self.db.commit()
             logger.info(f"Updated embeddings for document {document_id}")
             return True
@@ -486,7 +497,12 @@ class DocumentService:
             return False
 
     def update_document_embeddings_sync(
-        self, document_id: int, embeddings: List[float]
+        self,
+        document_id: int,
+        embeddings: List[float],
+        embedding_model: str = None,
+        embedding_version: int = None,
+        embedding_provenance: dict = None,
     ) -> bool:
         """Update document search vector (embeddings) (synchronous)"""
         try:
@@ -495,6 +511,12 @@ class DocumentService:
                 return False
 
             document.search_vector = embeddings
+            if embedding_model is not None:
+                document.embedding_model = embedding_model
+            if embedding_version is not None:
+                document.embedding_version = embedding_version
+            if embedding_provenance is not None:
+                document.embedding_provenance = embedding_provenance
             self.db.commit()
             logger.info(f"Updated embeddings for document {document_id}")
             return True

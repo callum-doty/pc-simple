@@ -210,25 +210,6 @@ class TaxonomyService:
             logger.error(f"Error getting subcategories: {str(e)}")
             return []
 
-    async def get_terms_by_category(
-        self, primary_category: str, subcategory: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
-        """Get all terms in a category/subcategory"""
-        try:
-            query = self.db.query(TaxonomyTerm).filter(
-                TaxonomyTerm.primary_category == primary_category
-            )
-
-            if subcategory:
-                query = query.filter(TaxonomyTerm.subcategory == subcategory)
-
-            terms = query.order_by(TaxonomyTerm.term).all()
-            return [term.to_dict() for term in terms]
-
-        except Exception as e:
-            logger.error(f"Error getting terms by category: {str(e)}")
-            return []
-
     async def search_terms(self, search_query: str) -> List[Dict[str, Any]]:
         """Search taxonomy terms"""
         try:
@@ -238,73 +219,6 @@ class TaxonomyService:
         except Exception as e:
             logger.error(f"Error searching terms: {str(e)}")
             return []
-
-    async def find_or_create_term(
-        self,
-        term: str,
-        primary_category: str,
-        subcategory: Optional[str] = None,
-        description: Optional[str] = None,
-    ) -> Optional[TaxonomyTerm]:
-        """Find existing term or create new one"""
-        try:
-            # Look for existing term
-            existing = (
-                self.db.query(TaxonomyTerm)
-                .filter(
-                    TaxonomyTerm.term == term,
-                    TaxonomyTerm.primary_category == primary_category,
-                )
-                .first()
-            )
-
-            if existing:
-                return existing
-
-            # Create new term
-            new_term = TaxonomyTerm(
-                term=term,
-                primary_category=primary_category,
-                subcategory=subcategory,
-                description=description,
-            )
-
-            self.db.add(new_term)
-            self.db.commit()
-
-            logger.info(f"Created new taxonomy term: {term} ({primary_category})")
-            return new_term
-
-        except Exception as e:
-            self.db.rollback()
-            logger.error(f"Error finding/creating term: {str(e)}")
-            return None
-
-    async def get_taxonomy_for_prompt(self) -> Dict[str, Any]:
-        """Get taxonomy structure formatted for AI prompts"""
-        try:
-            hierarchy = await self.get_taxonomy_hierarchy()
-
-            # Flatten for AI prompt - create a clean structure
-            prompt_structure = {}
-            for primary_category, subcategories in hierarchy.items():
-                prompt_structure[primary_category] = {}
-                for subcategory, terms in subcategories.items():
-                    # Extract just the term names for the LLM
-                    if isinstance(terms, list):
-                        term_list = [
-                            term["term"] if isinstance(term, dict) else str(term)
-                            for term in terms
-                        ]
-                    else:
-                        term_list = []
-                    prompt_structure[primary_category][subcategory] = term_list
-
-            return prompt_structure
-
-        except Exception as e:
-            logger.error(f"Error getting taxonomy for AI prompt: {str(e)}")
-        return {}
 
     async def get_term_hierarchy(self, term: str) -> Optional[Dict[str, str]]:
         """Get the full hierarchy for a given canonical term"""
@@ -321,75 +235,6 @@ class TaxonomyService:
             return None
         except Exception as e:
             logger.error(f"Error getting term hierarchy for '{term}': {str(e)}")
-            return None
-
-    async def validate_taxonomy_mapping(
-        self, primary_category: str, subcategory: str, term: str
-    ) -> bool:
-        """Validate that a taxonomy mapping exists in the database"""
-        try:
-            existing_term = (
-                self.db.query(TaxonomyTerm)
-                .filter(
-                    TaxonomyTerm.primary_category == primary_category,
-                    TaxonomyTerm.subcategory == subcategory,
-                    TaxonomyTerm.term == term,
-                )
-                .first()
-            )
-            return existing_term is not None
-
-        except Exception as e:
-            logger.error(f"Error validating taxonomy mapping: {str(e)}")
-            return False
-
-    async def get_canonical_term_id(
-        self, primary_category: str, subcategory: str, term: str
-    ) -> Optional[int]:
-        """Get the ID of a canonical taxonomy term for database foreign key relationships"""
-        try:
-            canonical_term = (
-                self.db.query(TaxonomyTerm)
-                .filter(
-                    TaxonomyTerm.primary_category == primary_category,
-                    TaxonomyTerm.subcategory == subcategory,
-                    TaxonomyTerm.term == term,
-                )
-                .first()
-            )
-            return canonical_term.id if canonical_term else None
-
-        except Exception as e:
-            logger.error(f"Error getting canonical term ID: {str(e)}")
-            return None
-
-    async def find_closest_canonical_term(
-        self, search_term: str, primary_category: str = None
-    ) -> Optional[Dict[str, str]]:
-        """Find the closest canonical term for a given search term"""
-        try:
-            # Start with exact matches
-            query = self.db.query(TaxonomyTerm).filter(
-                TaxonomyTerm.term.ilike(f"%{search_term}%")
-            )
-
-            if primary_category:
-                query = query.filter(TaxonomyTerm.primary_category == primary_category)
-
-            closest_match = query.first()
-
-            if closest_match:
-                return {
-                    "primary_category": closest_match.primary_category,
-                    "subcategory": closest_match.subcategory,
-                    "canonical_term": closest_match.term,
-                    "term_id": closest_match.id,
-                }
-
-            return None
-
-        except Exception as e:
-            logger.error(f"Error finding closest canonical term: {str(e)}")
             return None
 
     async def get_statistics(self) -> Dict[str, Any]:
@@ -420,24 +265,6 @@ class TaxonomyService:
         except Exception as e:
             logger.error(f"Error getting taxonomy statistics: {str(e)}")
             return {}
-
-    async def validate_categories(self, categories: List[str]) -> List[str]:
-        """Validate that categories exist in taxonomy"""
-        try:
-            valid_categories = []
-            existing_categories = TaxonomyTerm.get_categories(self.db)
-
-            for category in categories:
-                if category in existing_categories:
-                    valid_categories.append(category)
-                else:
-                    logger.warning(f"Category not found in taxonomy: {category}")
-
-            return valid_categories
-
-        except Exception as e:
-            logger.error(f"Error validating categories: {str(e)}")
-            return []
 
     async def get_all_canonical_terms(self) -> Dict[str, List[str]]:
         """Get a dictionary of canonical terms grouped by primary category, with fallback to all taxonomy terms."""

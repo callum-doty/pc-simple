@@ -63,6 +63,9 @@ class Document(Base):
     # Search and embeddings
     search_content = Column(Text, nullable=True)
     search_vector = Column(Vector(1536), nullable=True)
+    embedding_model = Column(String(100), nullable=True)
+    embedding_version = Column(Integer, nullable=True)
+    embedding_provenance = Column(JSONB, nullable=True)
     ts_vector = Column(
         TSVECTOR,
         Computed(

@@ -364,34 +364,6 @@ class StorageService:
         preview_path = f"previews/{Path(file_path).stem}_preview.png"
         return await self.get_file_url(preview_path)
 
-    def get_file_url_sync(
-        self, file_path: str, expires_in: int = 3600
-    ) -> Optional[str]:
-        """Get URL for file access (synchronous)"""
-        try:
-            if self.storage_type == "s3":
-                return self._get_s3_presigned_url(file_path, expires_in)
-            else:
-                return self._get_local_file_url(file_path)
-
-        except Exception as e:
-            logger.error(f"Error getting file URL {file_path}: {str(e)}")
-            return None
-
-    def get_preview_url_sync(self, file_path: str) -> Optional[str]:
-        """Get preview URL for document (synchronous)"""
-        preview_path = f"previews/{Path(file_path).stem}_preview.png"
-        return self.get_file_url_sync(preview_path)
-
-    def get_storage_info(self) -> dict:
-        """Get storage configuration info"""
-        return {
-            "storage_type": self.storage_type,
-            "storage_path": self.storage_path if self.storage_type != "s3" else None,
-            "s3_bucket": settings.s3_bucket if self.storage_type == "s3" else None,
-            "s3_region": settings.s3_region if self.storage_type == "s3" else None,
-        }
-
     async def check_file_exists(self, file_path: str) -> bool:
         """Check if file exists in storage"""
         try:
@@ -408,22 +380,3 @@ class StorageService:
             logger.error(f"Error checking file existence {file_path}: {str(e)}")
             return False
 
-    async def get_file_size(self, file_path: str) -> Optional[int]:
-        """Get file size in bytes"""
-        try:
-            if self.storage_type == "s3":
-                try:
-                    response = self.s3_client.head_object(
-                        Bucket=settings.s3_bucket, Key=file_path
-                    )
-                    return response["ContentLength"]
-                except ClientError:
-                    return None
-            else:
-                if os.path.exists(file_path):
-                    return os.path.getsize(file_path)
-                return None
-
-        except Exception as e:
-            logger.error(f"Error getting file size {file_path}: {str(e)}")
-            return None

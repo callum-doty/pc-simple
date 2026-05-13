@@ -178,7 +178,3 @@ class PreviewService:
             )
         return None
 
-    async def delete_preview(self, original_file_path: str) -> bool:
-        """Delete a preview file from storage."""
-        preview_path = self.get_preview_path(original_file_path)
-        return await self.storage.delete_file(preview_path)
