@@ -44,7 +44,13 @@ def run_backfill(batch_size: int = 50, dry_run: bool = False) -> None:
             .order_by(Document.updated_at.desc().nullslast())
         )
 
-        total = query.count()
+        # Fetch IDs only — a separate per-document query is used inside the loop.
+        # yield_per() opens a server-side cursor that is invalidated when
+        # update_document_embeddings_sync commits, crashing after the first batch.
+        doc_ids = [
+            row.id for row in query.with_entities(Document.id).all()
+        ]
+        total = len(doc_ids)
         logger.info(
             f"Found {total} documents to re-embed "
             f"(target version: {AIService.EMBEDDING_VERSION}, "
@@ -55,7 +61,12 @@ def run_backfill(batch_size: int = 50, dry_run: bool = False) -> None:
 
         processed = skipped = failed = 0
 
-        for doc in query.yield_per(batch_size):
+        for doc_id in doc_ids:
+            doc = db.query(Document).get(doc_id)
+            if doc is None:
+                skipped += 1
+                continue
+
             embedding_text, provenance = AIService.build_embedding_text(
                 doc.ai_analysis,
                 filename=doc.filename,
@@ -65,25 +76,24 @@ def run_backfill(batch_size: int = 50, dry_run: bool = False) -> None:
                 state_confidence=doc.state_confidence,
             )
             if not provenance:
-                logger.warning(f"doc {doc.id}: ai_analysis is null or empty, skipping")
+                logger.warning(f"doc {doc_id}: ai_analysis is null or empty, skipping")
                 skipped += 1
                 continue
 
             if dry_run:
-                logger.info(f"doc {doc.id}: would embed → {embedding_text[:120]!r}")
-                logger.info(f"doc {doc.id}: provenance fields → {list(provenance.keys())}")
+                logger.info(f"doc {doc_id}: would embed → {embedding_text[:120]!r}")
+                logger.info(f"doc {doc_id}: provenance fields → {list(provenance.keys())}")
                 processed += 1
                 continue
 
-
             embeddings = ai_service.generate_embeddings_sync(embedding_text)
             if not embeddings:
-                logger.error(f"doc {doc.id}: embedding generation failed")
+                logger.error(f"doc {doc_id}: embedding generation failed")
                 failed += 1
                 continue
 
             ok = doc_service.update_document_embeddings_sync(
-                doc.id,
+                doc_id,
                 embeddings,
                 embedding_model=AIService.EMBEDDING_MODEL,
                 embedding_version=AIService.EMBEDDING_VERSION,
@@ -92,12 +102,12 @@ def run_backfill(batch_size: int = 50, dry_run: bool = False) -> None:
             if ok:
                 processed += 1
                 logger.info(
-                    f"doc {doc.id} ({doc.filename[:60]}): re-embedded "
+                    f"doc {doc_id} ({doc.filename[:60]}): re-embedded "
                     f"[{processed}/{total}]"
                 )
             else:
                 failed += 1
-                logger.error(f"doc {doc.id}: DB update failed")
+                logger.error(f"doc {doc_id}: DB update failed")
 
         logger.info(
             f"Backfill complete — processed: {processed}, "
@@ -113,7 +123,7 @@ if __name__ == "__main__":
         "--batch-size",
         type=int,
         default=50,
-        help="Number of documents to load per DB fetch (default: 50)",
+        help="Unused — kept for backwards compatibility",
     )
     parser.add_argument(
         "--dry-run",
