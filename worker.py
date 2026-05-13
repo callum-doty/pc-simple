@@ -109,7 +109,9 @@ def _process_pdf_document_by_page(
         "keyword_mappings": final_mappings,
     }
 
-    # Update document with aggregated data
+    # Update document with aggregated data.
+    # Embedding is generated later in extract_document_features_task once
+    # client_canonical, state, and their confidence scores are available.
     document_service.update_document_content_sync(
         document_id,
         extracted_text=final_extracted_text,
@@ -119,27 +121,6 @@ def _process_pdf_document_by_page(
         keyword_mappings=final_mappings,
         file_type="pdf",
     )
-
-    # Generate embeddings from structured AI analysis
-    if final_ai_analysis:
-        logger.info(f"Generating embeddings for document {document_id}")
-        synthesized_text, provenance = AIService.build_embedding_text(
-            final_ai_analysis,
-            filename=document.filename,
-            client_canonical=document.client_canonical,
-            client_confidence=document.client_confidence,
-            state=document.state,
-            state_confidence=document.state_confidence,
-        )
-        embeddings = ai_service.generate_embeddings_sync(synthesized_text)
-        if embeddings:
-            document_service.update_document_embeddings_sync(
-                document_id,
-                embeddings,
-                embedding_model=AIService.EMBEDDING_MODEL,
-                embedding_version=AIService.EMBEDDING_VERSION,
-                embedding_provenance=provenance,
-            )
 
 
 def _process_document_holistically(
@@ -162,6 +143,8 @@ def _process_document_holistically(
     keywords, categories = ai_service._extract_keywords_from_analysis(ai_analysis)
     mappings = ai_service._extract_mappings_from_analysis(ai_analysis)
 
+    # Embedding is generated later in extract_document_features_task once
+    # client_canonical, state, and their confidence scores are available.
     document_service.update_document_content_sync(
         document_id,
         extracted_text=analysis_result.get("extracted_text"),
@@ -171,25 +154,6 @@ def _process_document_holistically(
         keyword_mappings=mappings,
         file_type=analysis_result.get("file_type"),
     )
-
-    synthesized_text, provenance = AIService.build_embedding_text(
-        ai_analysis,
-        filename=document.filename,
-        client_canonical=document.client_canonical,
-        client_confidence=document.client_confidence,
-        state=document.state,
-        state_confidence=document.state_confidence,
-    )
-    if synthesized_text:
-        embeddings = ai_service.generate_embeddings_sync(synthesized_text)
-        if embeddings:
-            document_service.update_document_embeddings_sync(
-                document_id,
-                embeddings,
-                embedding_model=AIService.EMBEDDING_MODEL,
-                embedding_version=AIService.EMBEDDING_VERSION,
-                embedding_provenance=provenance,
-            )
 
 
 from database import get_db
@@ -275,8 +239,9 @@ def process_document_task(document_id: int, analysis_type: str = "unified"):
         )
 
         # Trigger feature extraction (date, client_canonical, state) now that
-        # extracted_text and ai_analysis are populated.
-        extract_document_features_task.delay(document_id)
+        # extracted_text and ai_analysis are populated. force=True ensures the
+        # embedding is always regenerated when processing runs, including reprocessing.
+        extract_document_features_task.delay(document_id, force=True)
 
         # Clear the search cache in Redis
         try:
@@ -361,6 +326,34 @@ def extract_document_features_task(self, document_id: int, force: bool = False):
             f"date_created={document.date_created!r}, "
             f"source={meta.get('canonical_source')!r}"
         )
+
+        # Generate the embedding now that client_canonical, state, and their
+        # confidence values are populated. This is the single authoritative embedding
+        # call for the document — no embedding is generated during AI processing.
+        if document.ai_analysis:
+            ai_service = AIService(db)
+            synthesized_text, provenance = AIService.build_embedding_text(
+                document.ai_analysis,
+                filename=document.filename,
+                client_canonical=document.client_canonical,
+                client_confidence=document.client_confidence,
+                state=document.state,
+                state_confidence=document.state_confidence,
+            )
+            embeddings = ai_service.generate_embeddings_sync(synthesized_text)
+            if embeddings:
+                document_service = DocumentService(db)
+                document_service.update_document_embeddings_sync(
+                    document_id,
+                    embeddings,
+                    embedding_model=AIService.EMBEDDING_MODEL,
+                    embedding_version=AIService.EMBEDDING_VERSION,
+                    embedding_provenance=provenance,
+                )
+                logger.info(f"Generated embedding for document {document_id}.")
+            else:
+                raise RuntimeError(f"Embedding generation returned no result for document {document_id}")
+
         return True
 
     except Exception as exc:
