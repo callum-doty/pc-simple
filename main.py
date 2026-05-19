@@ -67,6 +67,20 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager"""
     # Startup
     logger.info("Starting up Document Catalog application...")
+
+    # Run Alembic migrations before anything else so the DB schema is always
+    # consistent with the models at the moment the app begins serving requests.
+    try:
+        from alembic.config import Config as AlembicConfig
+        from alembic import command as alembic_command
+
+        alembic_cfg = AlembicConfig("alembic.ini")
+        alembic_command.upgrade(alembic_cfg, "head")
+        logger.info("Alembic migrations applied successfully.")
+    except Exception as migration_err:
+        logger.error(f"Alembic migration failed at startup: {migration_err}")
+        raise
+
     await init_db()
 
     # Initialize taxonomy from CSV if it exists
