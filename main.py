@@ -943,14 +943,125 @@ async def get_year_facets(db: Session = Depends(get_db)):
         rows = (
             db.query(extract("year", Document.date_created).label("yr"))
             .filter(Document.date_created.isnot(None))
+            .filter(Document.needs_date_review.isnot(True))
             .group_by("yr")
             .order_by("yr")
             .all()
         )
-        return {"success": True, "years": [int(r[0]) for r in rows]}
+        years = [int(r[0]) for r in rows if 2019 <= int(r[0]) <= 2026]
+        return {"success": True, "years": years}
 
     except Exception as e:
         logger.error(f"Year facets error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Review Queue (date · client · state) ──────────────────────────────────────
+
+@app.get("/api/review/dates/count")
+async def date_review_count(db: Session = Depends(get_db)):
+    """Return the number of documents pending any field review (for nav badge)."""
+    try:
+        from sqlalchemy import or_
+        count = (
+            db.query(Document)
+            .filter(or_(Document.needs_date_review == True, Document.needs_review == True))
+            .count()
+        )
+        return {"success": True, "count": count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/review/dates")
+async def list_date_review(db: Session = Depends(get_db)):
+    """Return documents flagged for manual review of date, client, or state."""
+    try:
+        from sqlalchemy import or_
+        docs = (
+            db.query(Document)
+            .filter(or_(Document.needs_date_review == True, Document.needs_review == True))
+            .order_by(Document.created_at.desc())
+            .limit(500)
+            .all()
+        )
+        return {
+            "success": True,
+            "count": len(docs),
+            "documents": [
+                {
+                    "id": d.id,
+                    "filename": d.filename,
+                    "needs_date_review": d.needs_date_review or False,
+                    "needs_client_state_review": d.needs_review or False,
+                    "date_created": d.date_created.isoformat() if d.date_created else None,
+                    "date_confidence": d.date_confidence,
+                    "client_canonical": d.client_canonical,
+                    "client_confidence": d.client_confidence,
+                    "state": d.state.strip() if d.state else None,
+                    "state_confidence": d.state_confidence,
+                    "created_at": d.created_at.isoformat() if d.created_at else None,
+                }
+                for d in docs
+            ],
+        }
+    except Exception as e:
+        logger.error(f"Review list error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/review/dates/{document_id}")
+async def resolve_date_review(
+    document_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Save reviewer-corrected date, client, and/or state; clear review flags."""
+    try:
+        body = await request.json()
+        doc = db.query(Document).filter(Document.id == document_id).first()
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        # Date
+        raw_date = body.get("date_created")
+        if raw_date:
+            try:
+                parsed = datetime.strptime(raw_date, "%Y-%m-%d").date()
+                if not (2019 <= parsed.year <= 2026):
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Date must be between 2019 and 2026",
+                    )
+                doc.date_created = parsed
+            except ValueError:
+                raise HTTPException(status_code=422, detail="Invalid date format, use YYYY-MM-DD")
+        else:
+            doc.date_created = None
+
+        # Client
+        client_val = body.get("client_canonical")
+        if client_val is not None:
+            doc.client_canonical = client_val.strip() or None
+            doc.client_confidence = "HIGH"
+
+        # State — two-letter code or empty
+        state_val = body.get("state")
+        if state_val is not None:
+            cleaned = state_val.strip().upper()
+            if cleaned and len(cleaned) != 2:
+                raise HTTPException(status_code=422, detail="State must be a 2-letter code")
+            doc.state = cleaned or None
+            doc.state_confidence = "HIGH"
+
+        doc.needs_date_review = False
+        doc.needs_review = False
+        db.commit()
+        return {"success": True, "id": document_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Review resolve error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1123,6 +1234,12 @@ async def upload_page(request: Request):
 async def admin_page(request: Request):
     """Admin dashboard"""
     return templates.TemplateResponse("admin/dashboard.html", {"request": request})
+
+
+@app.get("/review/dates", response_class=HTMLResponse)
+async def review_dates_page(request: Request):
+    """Human-in-the-loop date review queue"""
+    return templates.TemplateResponse("review_dates.html", {"request": request})
 
 
 # Taxonomy API Endpoints

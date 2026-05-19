@@ -94,6 +94,7 @@ class Document(Base):
     client_confidence = Column(Text, nullable=True)
     state_confidence = Column(Text, nullable=True)
     needs_review = Column(Boolean, nullable=True, default=False)
+    needs_date_review = Column(Boolean, nullable=True, default=False)
 
     # Relationships
     taxonomy_terms = relationship(
@@ -350,6 +351,7 @@ class Document(Base):
             "client_canonical": self.client_canonical,
             "state": self.state.strip() if self.state else None,
             "date_created": self.date_created.isoformat() if self.date_created else None,
+            "needs_date_review": self.needs_date_review or False,
         }
 
         if full_detail:

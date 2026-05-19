@@ -172,10 +172,14 @@ def extract_document_features(document, canonical_map: dict) -> dict:
     }
 
     date_created = None
+    needs_date_review = False
     raw_date = fields.get("predicted_date")
     if raw_date:
         try:
             date_created = datetime.strptime(raw_date, "%Y-%m-%d").date()
+            if not (2019 <= date_created.year <= 2026):
+                needs_date_review = True
+                date_created = None
         except ValueError:
             pass
 
@@ -190,6 +194,7 @@ def extract_document_features(document, canonical_map: dict) -> dict:
         "state_confidence": fields.get("state_confidence"),
         "date_created": date_created,
         "date_confidence": fields.get("date_confidence"),
+        "needs_date_review": needs_date_review,
         "needs_review": needs_review_flag(review_fields),
         "_meta": {
             "canonical_source": canonical_source,

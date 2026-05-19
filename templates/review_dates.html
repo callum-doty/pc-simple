@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% block title %}Review Queue — Document Catalog{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h2 class="mb-0">
+    <i class="fas fa-clipboard-check me-2 text-warning"></i>Review Queue
+  </h2>
+  <span class="badge bg-warning text-dark fs-6" id="pendingCount">Loading…</span>
+</div>
+
+<p class="text-muted mb-4">
+  Documents below were flagged because their extracted date falls outside
+  <strong>2019–2026</strong>, or their client/state confidence was too low.
+  Correct any fields and click <strong>Save</strong> to dismiss, or
+  <strong>Skip</strong> to leave for later.
+</p>
+
+<!-- Client autocomplete source -->
+<datalist id="clientDatalist"></datalist>
+
+<div id="queueContainer">
+  <div class="text-center py-5 text-muted" id="loadingMsg">
+    <i class="fas fa-spinner fa-spin fa-2x mb-3"></i><br>Loading…
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const US_STATES = [
+  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA",
+  "HI","ID","IL","IN","IA","KS","KY","LA","ME","MD",
+  "MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
+  "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC",
+  "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC"
+];
+const VALID_MIN = 2019;
+const VALID_MAX = 2026;
+
+function escHtml(str) {
+  const d = document.createElement("div");
+  d.appendChild(document.createTextNode(str || ""));
+  return d.innerHTML;
+}
+
+function confidenceBadge(level) {
+  if (!level) return '<span class="badge bg-secondary">—</span>';
+  const cls = level === "HIGH" ? "bg-success" : level === "MEDIUM" ? "bg-warning text-dark" : "bg-danger";
+  return `<span class="badge ${cls}">${escHtml(level)}</span>`;
+}
+
+function buildStateOptions(selected) {
+  const opts = US_STATES.map(s =>
+    `<option value="${s}"${s === selected ? " selected" : ""}>${s}</option>`
+  ).join("");
+  return `<option value="">— unknown —</option>` + opts;
+}
+
+function buildCard(doc) {
+  const div = document.createElement("div");
+  div.className = "card mb-3";
+  div.id = `card-${doc.id}`;
+
+  const flags = [];
+  if (doc.needs_date_review)          flags.push('<span class="badge bg-danger me-1">Bad date</span>');
+  if (doc.needs_client_state_review)  flags.push('<span class="badge bg-warning text-dark me-1">Low confidence</span>');
+
+  div.innerHTML = `
+    <div class="card-header d-flex align-items-start justify-content-between gap-2">
+      <div>
+        <strong>${escHtml(doc.filename)}</strong>
+        <div class="mt-1">${flags.join("")}</div>
+      </div>
+      <small class="text-muted text-nowrap">#${doc.id}</small>
+    </div>
+    <div class="card-body">
+      <div class="row g-3">
+
+        <!-- Date -->
+        <div class="col-12 col-md-4">
+          <label class="form-label fw-semibold">
+            Date Created ${confidenceBadge(doc.date_confidence)}
+          </label>
+          <input type="date"
+                 id="date-${doc.id}"
+                 class="form-control"
+                 min="${VALID_MIN}-01-01"
+                 max="${VALID_MAX}-12-31"
+                 value="${doc.date_created || ""}">
+          <div class="form-text">Leave blank to set as unknown.</div>
+        </div>
+
+        <!-- Client -->
+        <div class="col-12 col-md-4">
+          <label class="form-label fw-semibold">
+            Client ${confidenceBadge(doc.client_confidence)}
+          </label>
+          <input type="text"
+                 id="client-${doc.id}"
+                 class="form-control"
+                 list="clientDatalist"
+                 value="${escHtml(doc.client_canonical || "")}"
+                 placeholder="Canonical client name">
+          <div class="form-text">Leave blank to set as unknown.</div>
+        </div>
+
+        <!-- State -->
+        <div class="col-12 col-md-4">
+          <label class="form-label fw-semibold">
+            State ${confidenceBadge(doc.state_confidence)}
+          </label>
+          <select id="state-${doc.id}" class="form-select">
+            ${buildStateOptions(doc.state || "")}
+          </select>
+        </div>
+
+      </div>
+    </div>
+    <div class="card-footer d-flex gap-2">
+      <button class="btn btn-primary" onclick="saveCard(${doc.id})">
+        <i class="fas fa-check me-1"></i>Save
+      </button>
+      <button class="btn btn-outline-secondary" onclick="skipCard(${doc.id})">
+        Skip
+      </button>
+    </div>
+  `;
+  return div;
+}
+
+function removeCard(id) {
+  const card = document.getElementById(`card-${id}`);
+  if (card) card.remove();
+  const remaining = document.querySelectorAll(".card[id^='card-']").length;
+  updateBadge(remaining);
+  if (remaining === 0) {
+    document.getElementById("queueContainer").innerHTML =
+      `<div class="alert alert-success"><i class="fas fa-check-circle me-2"></i>All documents reviewed!</div>`;
+  }
+}
+
+function updateBadge(n) {
+  const el = document.getElementById("pendingCount");
+  el.textContent = n === 1 ? "1 pending" : `${n} pending`;
+  el.className = n > 0 ? "badge bg-warning text-dark fs-6" : "badge bg-success fs-6";
+  // Also update the nav badge
+  const navBadge = document.getElementById("dateReviewBadge");
+  if (navBadge) {
+    if (n > 0) { navBadge.textContent = n; navBadge.style.display = ""; }
+    else navBadge.style.display = "none";
+  }
+}
+
+async function saveCard(id) {
+  const dateVal  = document.getElementById(`date-${id}`).value || null;
+  const clientVal = document.getElementById(`client-${id}`).value;
+  const stateVal  = document.getElementById(`state-${id}`).value;
+
+  if (dateVal) {
+    const year = parseInt(dateVal.split("-")[0], 10);
+    if (year < VALID_MIN || year > VALID_MAX) {
+      alert(`Year must be between ${VALID_MIN} and ${VALID_MAX}.`);
+      return;
+    }
+  }
+
+  try {
+    const resp = await fetch(`/api/review/dates/${id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        date_created: dateVal,
+        client_canonical: clientVal,
+        state: stateVal,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.detail || "Server error");
+    removeCard(id);
+  } catch (err) {
+    alert(`Error: ${err.message}`);
+  }
+}
+
+function skipCard(id) {
+  const card = document.getElementById(`card-${id}`);
+  if (card) {
+    card.style.opacity = "0.4";
+    card.querySelector("button").disabled = true;
+  }
+}
+
+async function loadClients() {
+  try {
+    const resp = await fetch("/api/facets/clients");
+    const data = await resp.json();
+    const dl = document.getElementById("clientDatalist");
+    (data.clients || []).forEach(c => {
+      const opt = document.createElement("option");
+      opt.value = c;
+      dl.appendChild(opt);
+    });
+  } catch (_) {}
+}
+
+async function loadQueue() {
+  try {
+    const resp = await fetch("/api/review/dates");
+    const data = await resp.json();
+    const container = document.getElementById("queueContainer");
+    document.getElementById("loadingMsg")?.remove();
+    updateBadge(data.count || 0);
+
+    if (!data.documents || data.documents.length === 0) {
+      container.innerHTML =
+        `<div class="alert alert-success"><i class="fas fa-check-circle me-2"></i>No documents pending review.</div>`;
+      return;
+    }
+
+    data.documents.forEach(doc => container.appendChild(buildCard(doc)));
+  } catch (err) {
+    document.getElementById("queueContainer").innerHTML =
+      `<div class="alert alert-danger">Failed to load queue: ${err.message}</div>`;
+  }
+}
+
+loadClients();
+loadQueue();
+</script>
+{% endblock %}
