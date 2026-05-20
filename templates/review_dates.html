@@ -24,6 +24,33 @@
     <i class="fas fa-spinner fa-spin fa-2x mb-3"></i><br>Loading…
   </div>
 </div>
+
+<!-- ── Document Preview Modal ──────────────────────────────────────────────── -->
+<div class="modal fade" id="previewModal" tabindex="-1" aria-labelledby="previewModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title text-truncate" id="previewModalLabel">Document Preview</h5>
+        <div class="ms-auto d-flex gap-2 me-2">
+          <a id="previewOpenLink" href="#" target="_blank" rel="noopener noreferrer"
+             class="btn btn-sm btn-outline-primary" style="display:none">
+            <i class="fas fa-external-link-alt me-1"></i>Open
+          </a>
+          <a id="previewDownloadLink" href="#" target="_blank" rel="noopener noreferrer"
+             class="btn btn-sm btn-outline-secondary" style="display:none">
+            <i class="fas fa-download me-1"></i>Download
+          </a>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body p-0" id="previewModalBody">
+        <div class="text-center py-5 text-muted" id="previewSpinner">
+          <i class="fas fa-spinner fa-spin fa-2x mb-3"></i><br>Loading preview…
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -72,7 +99,12 @@ function buildCard(doc) {
         <strong>${escHtml(doc.filename)}</strong>
         <div class="mt-1">${flags.join("")}</div>
       </div>
-      <small class="text-muted text-nowrap">#${doc.id}</small>
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-sm btn-outline-info" onclick="openPreview(${doc.id}, ${JSON.stringify(escHtml(doc.filename))})">
+          <i class="fas fa-eye me-1"></i>Preview
+        </button>
+        <small class="text-muted text-nowrap">#${doc.id}</small>
+      </div>
     </div>
     <div class="card-body">
       <div class="row g-3">
@@ -129,6 +161,84 @@ function buildCard(doc) {
   return div;
 }
 
+// ── Preview modal ────────────────────────────────────────────────────────────
+
+const previewModal = new bootstrap.Modal(document.getElementById("previewModal"));
+
+async function openPreview(id, filename) {
+  // Reset modal state
+  document.getElementById("previewModalLabel").textContent = filename;
+  document.getElementById("previewOpenLink").style.display = "none";
+  document.getElementById("previewDownloadLink").style.display = "none";
+  document.getElementById("previewModalBody").innerHTML = `
+    <div class="text-center py-5 text-muted">
+      <i class="fas fa-spinner fa-spin fa-2x mb-3"></i><br>Loading preview…
+    </div>`;
+  previewModal.show();
+
+  try {
+    const resp = await fetch(`/api/documents/${id}/details`);
+    if (!resp.ok) throw new Error("Failed to load document details");
+    const data = await resp.json();
+
+    const previewUrl  = data.preview_url  || null;
+    const downloadUrl = data.download_url || null;
+
+    // Wire up header action buttons
+    if (previewUrl) {
+      const openLink = document.getElementById("previewOpenLink");
+      openLink.href = previewUrl;
+      openLink.style.display = "";
+    }
+    if (downloadUrl) {
+      const dlLink = document.getElementById("previewDownloadLink");
+      dlLink.href = downloadUrl;
+      dlLink.style.display = "";
+    }
+
+    // Render preview
+    const body = document.getElementById("previewModalBody");
+    if (previewUrl) {
+      // Try rendering as an image (thumbnail PNG); fall back to iframe for PDFs
+      const ext = previewUrl.split("?")[0].split(".").pop().toLowerCase();
+      if (ext === "png" || ext === "jpg" || ext === "jpeg" || ext === "gif" || ext === "webp") {
+        body.innerHTML = `
+          <div class="text-center bg-light p-3">
+            <img src="${escHtml(previewUrl)}"
+                 alt="Document preview"
+                 class="img-fluid"
+                 style="max-height:80vh; object-fit:contain;">
+          </div>`;
+      } else {
+        // PDF or unknown — use iframe
+        body.innerHTML = `
+          <iframe src="${escHtml(previewUrl)}"
+                  style="width:100%; height:80vh; border:none;"
+                  title="Document preview"></iframe>`;
+      }
+    } else {
+      body.innerHTML = `
+        <div class="text-center py-5 text-muted">
+          <i class="fas fa-file-alt fa-3x mb-3"></i><br>
+          No preview available for this document.
+          ${downloadUrl ? `<br><a href="${escHtml(downloadUrl)}" target="_blank" class="btn btn-outline-primary mt-3"><i class="fas fa-download me-1"></i>Download to view</a>` : ""}
+        </div>`;
+    }
+  } catch (err) {
+    document.getElementById("previewModalBody").innerHTML = `
+      <div class="alert alert-danger m-3">Failed to load preview: ${escHtml(err.message)}</div>`;
+  }
+}
+
+// Clear iframe/image when modal closes to stop any ongoing load
+document.getElementById("previewModal").addEventListener("hidden.bs.modal", () => {
+  document.getElementById("previewModalBody").innerHTML = "";
+  document.getElementById("previewOpenLink").style.display = "none";
+  document.getElementById("previewDownloadLink").style.display = "none";
+});
+
+// ── Card actions ─────────────────────────────────────────────────────────────
+
 function removeCard(id) {
   const card = document.getElementById(`card-${id}`);
   if (card) card.remove();
@@ -144,7 +254,6 @@ function updateBadge(n) {
   const el = document.getElementById("pendingCount");
   el.textContent = n === 1 ? "1 pending" : `${n} pending`;
   el.className = n > 0 ? "badge bg-warning text-dark fs-6" : "badge bg-success fs-6";
-  // Also update the nav badge
   const navBadge = document.getElementById("dateReviewBadge");
   if (navBadge) {
     if (n > 0) { navBadge.textContent = n; navBadge.style.display = ""; }
@@ -153,7 +262,7 @@ function updateBadge(n) {
 }
 
 async function saveCard(id) {
-  const dateVal  = document.getElementById(`date-${id}`).value || null;
+  const dateVal   = document.getElementById(`date-${id}`).value || null;
   const clientVal = document.getElementById(`client-${id}`).value;
   const stateVal  = document.getElementById(`state-${id}`).value;
 
@@ -169,11 +278,7 @@ async function saveCard(id) {
     const resp = await fetch(`/api/review/dates/${id}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        date_created: dateVal,
-        client_canonical: clientVal,
-        state: stateVal,
-      }),
+      body: JSON.stringify({ date_created: dateVal, client_canonical: clientVal, state: stateVal }),
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.detail || "Server error");
@@ -187,9 +292,11 @@ function skipCard(id) {
   const card = document.getElementById(`card-${id}`);
   if (card) {
     card.style.opacity = "0.4";
-    card.querySelector("button").disabled = true;
+    card.querySelectorAll("button").forEach(b => b.disabled = true);
   }
 }
+
+// ── Data loading ─────────────────────────────────────────────────────────────
 
 async function loadClients() {
   try {
