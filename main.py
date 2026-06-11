@@ -1130,6 +1130,61 @@ async def get_document_preview(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Bulk Document Download
+@app.post("/api/documents/bulk-download")
+async def bulk_download_documents(
+    request: Request,
+    document_service: DocumentService = Depends(get_document_service),
+    storage_service: StorageService = Depends(get_storage_service),
+):
+    """Download multiple documents as a single ZIP archive"""
+    import zipfile
+    import io
+    from fastapi.responses import StreamingResponse
+
+    try:
+        body = await request.json()
+        document_ids = body.get("document_ids", [])
+
+        if not document_ids:
+            raise HTTPException(status_code=400, detail="No document IDs provided")
+        if len(document_ids) > 100:
+            raise HTTPException(status_code=400, detail="Too many documents (max 100)")
+
+        zip_buffer = io.BytesIO()
+        seen_names: dict[str, int] = {}
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for doc_id in document_ids:
+                document = await document_service.get_document(doc_id)
+                if not document:
+                    continue
+                file_content = await storage_service.get_file(document.file_path)
+                if not file_content:
+                    continue
+                # Deduplicate filenames inside the archive
+                name = document.filename
+                if name in seen_names:
+                    seen_names[name] += 1
+                    stem, _, ext = name.rpartition(".")
+                    name = f"{stem}_{seen_names[name]}.{ext}" if ext else f"{name}_{seen_names[name]}"
+                else:
+                    seen_names[name] = 0
+                zf.writestr(name, file_content)
+
+        zip_buffer.seek(0)
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": "attachment; filename=documents.zip"},
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Bulk download error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Document Download
 @app.get("/api/documents/{document_id}/download")
 async def download_document(

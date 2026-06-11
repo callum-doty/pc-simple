@@ -58,6 +58,23 @@ endblock %} {% block content %}
       </div>
     </div>
 
+    <!-- Selected Documents -->
+    <div class="card mb-4" id="selectedDocsCard">
+      <div class="card-header">
+        <h6 class="mb-0">
+          <i class="fas fa-check-square me-2"></i>Selected Documents (<span id="selectedCount">0</span>)
+        </h6>
+      </div>
+      <div class="card-body p-3">
+        <div id="selectedDocsList">
+          <p class="text-muted small mb-2">No documents selected.</p>
+        </div>
+        <button type="button" class="btn btn-primary btn-sm w-100 mt-2" id="downloadSelectedBtn" disabled>
+          <i class="fas fa-download me-1"></i>Download Selected
+        </button>
+      </div>
+    </div>
+
     <!-- Filters -->
     <div class="card mb-4">
       <div class="card-header">
@@ -227,12 +244,19 @@ endblock %} {% block content %}
       <div class="card-body">
         <!-- Header with title and toggle button -->
         <div class="d-flex justify-content-between align-items-start mb-3">
-          <h6 class="card-title mb-0 flex-grow-1">
-            <a
-              href="#"
-              class="document-link-filename filename text-decoration-none text-dark"
-            ></a>
-          </h6>
+          <div class="d-flex align-items-start gap-2 flex-grow-1">
+            <input
+              type="checkbox"
+              class="doc-select-checkbox form-check-input mt-1"
+              style="flex-shrink:0; cursor:pointer"
+            >
+            <h6 class="card-title mb-0">
+              <a
+                href="#"
+                class="document-link-filename filename text-decoration-none text-dark"
+              ></a>
+            </h6>
+          </div>
           <div class="d-flex align-items-center gap-2">
             <span class="badge bg-info relevance-score"></span>
             <button
@@ -326,6 +350,7 @@ endblock %} {% block content %}
       let hasMore = true;
       let currentSearchQuery = "";
       let allDocuments = [];
+      let selectedDocs = new Map(); // id -> {id, filename, downloadUrl}
 
       const searchResultsContainer = document.getElementById(
         "searchResultsContainer"
@@ -498,6 +523,37 @@ endblock %} {% block content %}
         performSearch(true);
       });
 
+      function updateSelectedPanel() {
+        const count = selectedDocs.size;
+        document.getElementById("selectedCount").textContent = count;
+        const listEl = document.getElementById("selectedDocsList");
+        const btn = document.getElementById("downloadSelectedBtn");
+        if (count === 0) {
+          listEl.innerHTML = '<p class="text-muted small mb-2">No documents selected.</p>';
+          btn.disabled = true;
+          return;
+        }
+        btn.disabled = false;
+        listEl.innerHTML = "";
+        selectedDocs.forEach((doc, id) => {
+          const item = document.createElement("div");
+          item.className = "d-flex align-items-center gap-2 mb-1";
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.className = "form-check-input panel-doc-checkbox";
+          cb.checked = true;
+          cb.dataset.docId = id;
+          const label = document.createElement("span");
+          label.className = "small text-truncate";
+          label.title = doc.filename;
+          label.style.maxWidth = "190px";
+          label.textContent = doc.filename;
+          item.appendChild(cb);
+          item.appendChild(label);
+          listEl.appendChild(item);
+        });
+      }
+
       function performSearch(isNewSearch = false) {
         const query = document.getElementById("searchQuery").value;
         const sortBy = document.getElementById("sortBy").value;
@@ -644,6 +700,20 @@ endblock %} {% block content %}
         // Add event listener to fetch details on expand
         toggleButton.addEventListener("click", () => {
           loadDocumentDetails(card, doc.id);
+        });
+
+        // Wire up selection checkbox
+        const checkbox = card.querySelector(".doc-select-checkbox");
+        checkbox.dataset.docId = doc.id;
+        checkbox.checked = selectedDocs.has(doc.id);
+        checkbox.addEventListener("change", function (e) {
+          e.stopPropagation();
+          if (this.checked) {
+            selectedDocs.set(doc.id, { id: doc.id, filename: doc.filename, downloadUrl });
+          } else {
+            selectedDocs.delete(doc.id);
+          }
+          updateSelectedPanel();
         });
 
         return card;
@@ -914,6 +984,48 @@ endblock %} {% block content %}
           }
         })
         .catch((error) => console.error("Stats error:", error));
+
+      // Deselect from the panel list
+      document.getElementById("selectedDocsList").addEventListener("change", function (e) {
+        if (e.target.classList.contains("panel-doc-checkbox")) {
+          const docId = parseInt(e.target.dataset.docId);
+          selectedDocs.delete(docId);
+          updateSelectedPanel();
+          const cardCb = document.querySelector(`.doc-select-checkbox[data-doc-id="${docId}"]`);
+          if (cardCb) cardCb.checked = false;
+        }
+      });
+
+      // Bulk download handler
+      document.getElementById("downloadSelectedBtn").addEventListener("click", async function () {
+        if (selectedDocs.size === 0) return;
+        const ids = Array.from(selectedDocs.keys());
+        this.disabled = true;
+        this.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Preparing ZIP...';
+        try {
+          const response = await fetch("/api/documents/bulk-download", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ document_ids: ids }),
+          });
+          if (!response.ok) throw new Error("Download failed");
+          const blob = await response.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "documents.zip";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        } catch (err) {
+          console.error("Bulk download error:", err);
+          alert("Download failed. Please try again.");
+        } finally {
+          this.disabled = selectedDocs.size === 0;
+          this.innerHTML = '<i class="fas fa-download me-1"></i>Download Selected';
+        }
+      });
 
       performSearch(true);
       loadCanonicalTermFilters();
