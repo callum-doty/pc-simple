@@ -247,8 +247,7 @@ def process_document_task(document_id: int, analysis_type: str = "unified"):
         try:
             if settings.redis_url:
                 redis_client = redis.from_url(settings.redis_url)
-                # Invalidate all search-related keys
-                search_keys = redis_client.keys("search:*")
+                search_keys = list(redis_client.scan_iter("search:*"))
                 if search_keys:
                     redis_client.delete(*search_keys)
                     logger.info(f"Invalidated {len(search_keys)} search cache keys.")

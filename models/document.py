@@ -401,6 +401,11 @@ Index("idx_status_created", Document.status, Document.created_at)
 Index("idx_status_updated", Document.status, Document.updated_at)
 Index("idx_status_processed", Document.status, Document.processed_at)
 Index("idx_filename_status", Document.filename, Document.status)
+# Filter-path indexes: state/client filters and review-queue queries
+Index("idx_state_status", Document.state, Document.status)
+Index("idx_client_canonical_status", Document.client_canonical, Document.status)
+Index("idx_needs_review_status", Document.needs_review, Document.status)
+Index("idx_needs_date_review_status", Document.needs_date_review, Document.status)
 
 
 # Status constants

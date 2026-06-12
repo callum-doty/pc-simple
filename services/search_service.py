@@ -282,8 +282,6 @@ class SearchService:
                     if query_embedding is None:
                         query_embedding = await self.ai_service.generate_embeddings(query)
                         logger.info(f"[PERF] OpenAI embedding (cold): {(time.perf_counter()-_t_embed)*1000:.0f}ms")
-                    else:
-                        logger.info(f"[PERF] Embedding from Redis cache: {(time.perf_counter()-_t_embed)*1000:.0f}ms")
                         if query_embedding and self.redis_client:
                             try:
                                 self.redis_client.set(
@@ -291,6 +289,8 @@ class SearchService:
                                 )
                             except redis.exceptions.RedisError as e:
                                 logger.error(f"Redis SET error for embedding: {e}")
+                    else:
+                        logger.info(f"[PERF] Embedding from Redis cache: {(time.perf_counter()-_t_embed)*1000:.0f}ms")
                 else:
                     logger.info(f"Skipping embedding generation for short query: '{query}'")
 

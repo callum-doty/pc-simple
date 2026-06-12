@@ -723,9 +723,9 @@ async def clear_redis_cache(password: str = Form(...)):
         redis_client = redis_lib.from_url(settings.redis_url, decode_responses=True)
         redis_client.ping()
 
-        # Get all cache keys
-        search_keys = redis_client.keys("search:*")
-        facet_keys = redis_client.keys("facets:*")
+        # Get all cache keys (non-blocking scan)
+        search_keys = list(redis_client.scan_iter("search:*"))
+        facet_keys = list(redis_client.scan_iter("facets:*"))
         all_keys = search_keys + facet_keys
 
         if not all_keys:
@@ -923,28 +923,6 @@ async def get_document(
         logger.error(f"Get document error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# Document Details (for collapsible card section)
-@app.get("/api/documents/{document_id}/details")
-async def get_document_details(
-    document_id: int, document_service: DocumentService = Depends(get_document_service)
-):
-    """Get full document details for the card collapsible section"""
-    try:
-        document = await document_service.get_document(document_id)
-        if not document:
-            raise HTTPException(status_code=404, detail="Document not found")
-
-        return {
-            "success": True,
-            **document.to_dict(full_detail=True, include_heavy_fields=True),
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Get document details error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Year facets for filter buttons
@@ -1249,38 +1227,6 @@ async def get_processing_status(
         raise
     except Exception as e:
         logger.error(f"Status error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# Reprocess Document
-@app.post("/api/documents/{document_id}/reprocess")
-async def reprocess_document(
-    document_id: int,
-    analysis_type: str = "unified",
-    document_service: DocumentService = Depends(get_document_service),
-):
-    """Reprocess a document with optional analysis type"""
-    try:
-        document = await document_service.get_document(document_id)
-        if not document:
-            raise HTTPException(status_code=404, detail="Document not found")
-
-        # Reset status
-        await document_service.update_document_status(document_id, "PENDING")
-
-        # Queue for reprocessing with Celery
-        task = process_document_task.delay(document.id, analysis_type)
-
-        return {
-            "success": True,
-            "message": f"Document {document.filename} queued for reprocessing with {analysis_type} analysis",
-            "task_id": task.id,
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Reprocess error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

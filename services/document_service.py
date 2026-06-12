@@ -3,7 +3,7 @@ Document service - handles document CRUD operations and management
 """
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc, asc
+from sqlalchemy import func, desc, asc, update as sa_update
 from typing import List, Optional, Dict, Any
 import logging
 from datetime import datetime, timedelta
@@ -24,6 +24,15 @@ class DocumentService:
 
     def __init__(self, db: Session):
         self.db = db
+        try:
+            if settings.redis_url:
+                self.redis_client = redis.from_url(settings.redis_url, decode_responses=True)
+                self.redis_client.ping()
+            else:
+                self.redis_client = None
+        except redis.exceptions.ConnectionError as e:
+            logger.warning(f"DocumentService could not connect to Redis: {e}")
+            self.redis_client = None
 
     async def create_document(
         self, filename: str, file_path: str, file_size: int, **metadata
@@ -101,15 +110,19 @@ class DocumentService:
     async def update_document_status(
         self, document_id: int, status: str, progress: int = None, error: str = None
     ) -> bool:
-        """Update document processing status"""
+        """Update document processing status via targeted UPDATE (no full-row fetch)."""
         try:
-            document = await self.get_document(document_id)
-            if not document:
-                return False
+            values: dict = {"status": status}
+            if progress is not None:
+                values["processing_progress"] = max(0, min(100, progress))
+            if error:
+                values["processing_error"] = error
+            if status == DocumentStatus.COMPLETED:
+                values["processing_progress"] = 100
+                values["processed_at"] = datetime.utcnow()
 
-            document.update_processing_status(status, progress, error)
+            self.db.execute(sa_update(Document).where(Document.id == document_id).values(**values))
             self.db.commit()
-
             logger.info(f"Updated document {document_id} status to {status}")
             return True
 
@@ -402,15 +415,19 @@ class DocumentService:
     def update_document_status_sync(
         self, document_id: int, status: str, progress: int = None, error: str = None
     ) -> bool:
-        """Update document processing status (synchronous)"""
+        """Update document processing status via targeted UPDATE (no full-row fetch)."""
         try:
-            document = self.get_document_sync(document_id)
-            if not document:
-                return False
+            values: dict = {"status": status}
+            if progress is not None:
+                values["processing_progress"] = max(0, min(100, progress))
+            if error:
+                values["processing_error"] = error
+            if status == DocumentStatus.COMPLETED:
+                values["processing_progress"] = 100
+                values["processed_at"] = datetime.utcnow()
 
-            document.update_processing_status(status, progress, error)
+            self.db.execute(sa_update(Document).where(Document.id == document_id).values(**values))
             self.db.commit()
-
             logger.info(f"Updated document {document_id} status to {status}")
             return True
 
@@ -661,30 +678,18 @@ class DocumentService:
             return False
 
     def _invalidate_search_cache(self):
-        """
-        Invalidate Redis search and facet caches.
-        Called after document deletion, bulk deletion, or reprocessing.
-        """
+        """Invalidate Redis search and facet caches using non-blocking scan_iter."""
+        if not self.redis_client:
+            logger.debug("No Redis client available, skipping cache invalidation")
+            return
         try:
-            if not settings.redis_url:
-                logger.debug("No Redis URL configured, skipping cache invalidation")
-                return
-            
-            redis_client = redis.from_url(settings.redis_url, decode_responses=True)
-            
-            # Get all search and facet cache keys
-            search_keys = redis_client.keys("search:*")
-            facet_keys = redis_client.keys("facets:*")
-            
+            search_keys = list(self.redis_client.scan_iter("search:*"))
+            facet_keys = list(self.redis_client.scan_iter("facets:*"))
             all_keys = search_keys + facet_keys
-            
             if all_keys:
-                deleted = redis_client.delete(*all_keys)
+                deleted = self.redis_client.delete(*all_keys)
                 logger.info(f"Invalidated {deleted} cache keys ({len(search_keys)} search, {len(facet_keys)} facet)")
             else:
                 logger.debug("No cache keys to invalidate")
-                
-        except redis.exceptions.ConnectionError as e:
-            logger.warning(f"Could not connect to Redis for cache invalidation: {e}")
-        except Exception as e:
-            logger.error(f"Error invalidating cache: {e}")
+        except redis.exceptions.RedisError as e:
+            logger.warning(f"Cache invalidation failed: {e}")
