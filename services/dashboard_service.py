@@ -275,7 +275,7 @@ class DashboardService:
                     (Document.ai_analysis.is_(None))
                     | (Document.ai_analysis["summary"].astext.is_(None))
                     | (Document.ai_analysis["summary"].astext == "")
-                    | (Document.ai_analysis["summary"].astext == "No summary available")
+                    | (Document.ai_analysis["summary"].astext.ilike("%no summary available%"))
                     | (Document.ai_analysis["error"].astext.isnot(None))
                 )
                 .order_by(desc(Document.created_at))
