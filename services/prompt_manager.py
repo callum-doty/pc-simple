@@ -16,7 +16,7 @@ Provide accurate, objective analysis in the exact JSON format requested."""
 
     def _get_model_capabilities(self):
         """Get capabilities based on configured model"""
-        model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
+        model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
 
         if "claude-sonnet-4" in model:
             return {"vision": True, "structure": "high", "detail": "high"}
