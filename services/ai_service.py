@@ -1238,6 +1238,11 @@ class AIService:
                     prompt_data["system"], enhanced_prompt
                 )
 
+                # Propagate API-level errors so the caller can set status=FAILED
+                # rather than silently storing placeholder values.
+                if isinstance(analysis_result, dict) and "error" in analysis_result:
+                    raise Exception(f"AI API call failed: {analysis_result['error']}")
+
                 # Validate keyword mappings
                 mappings = self._extract_mappings_from_analysis(analysis_result)
                 validated_mappings = await self._validate_keyword_mappings(mappings)
@@ -1247,18 +1252,10 @@ class AIService:
                 # Normalize the analysis result to ensure a consistent structure
                 if "document_analysis" not in analysis_result:
                     analysis_result["document_analysis"] = {
-                        "summary": analysis_result.get(
-                            "summary", "No summary available"
-                        ),
-                        "document_type": analysis_result.get(
-                            "document_type", "unknown"
-                        ),
-                        "campaign_type": analysis_result.get(
-                            "campaign_type", "unknown"
-                        ),
-                        "document_tone": analysis_result.get(
-                            "document_tone", "neutral"
-                        ),
+                        "summary": analysis_result.get("summary", ""),
+                        "document_type": analysis_result.get("document_type", ""),
+                        "campaign_type": analysis_result.get("campaign_type", ""),
+                        "document_tone": analysis_result.get("document_tone", ""),
                     }
             else:
                 # For simplicity, this example only implements the 'unified' chunk analysis
@@ -1270,7 +1267,7 @@ class AIService:
             return analysis_result
         except Exception as e:
             logger.error(f"Error analyzing text chunk for {filename}: {str(e)}")
-            return {"error": str(e)}
+            raise
 
     def analyze_document_sync(
         self, file_path: str, filename: str, analysis_type: str = "unified"

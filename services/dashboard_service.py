@@ -264,18 +264,19 @@ class DashboardService:
         This is particularly useful for identifying documents that failed during AI processing due to quota issues.
         """
         try:
-            # Find documents missing summary (in ai_analysis)
-            # Note: Using JSON type (not JSONB), so can't use has_key()
-            # Check for: NULL, empty string, or null value — includes FAILED docs
-            # because they never received AI analysis (e.g. due to API errors).
+            # Find documents missing summary (in ai_analysis).
+            # Includes FAILED docs and COMPLETED docs where AI silently produced
+            # placeholder values ("No summary available") instead of real content.
             incomplete_statuses = ["COMPLETED", "FAILED"]
             missing_summary = (
                 self.db.query(Document)
                 .filter(Document.status.in_(incomplete_statuses))
                 .filter(
                     (Document.ai_analysis.is_(None))
-                    | (Document.ai_analysis["summary"].astext == "")
                     | (Document.ai_analysis["summary"].astext.is_(None))
+                    | (Document.ai_analysis["summary"].astext == "")
+                    | (Document.ai_analysis["summary"].astext == "No summary available")
+                    | (Document.ai_analysis["error"].astext.isnot(None))
                 )
                 .order_by(desc(Document.created_at))
                 .limit(100)
@@ -295,12 +296,15 @@ class DashboardService:
                 .all()
             )
 
-            # Find documents missing keywords
-            # Check for: NULL or empty/missing keywords array
+            # Find documents missing keywords — NULL or where AI analysis failed
+            # (error key present means analysis was never actually completed).
             missing_keywords = (
                 self.db.query(Document)
                 .filter(Document.status.in_(incomplete_statuses))
-                .filter((Document.keywords.is_(None)))
+                .filter(
+                    (Document.keywords.is_(None))
+                    | (Document.ai_analysis["error"].astext.isnot(None))
+                )
                 .order_by(desc(Document.created_at))
                 .limit(100)
                 .all()
