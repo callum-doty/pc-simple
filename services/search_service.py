@@ -260,9 +260,6 @@ class SearchService:
         from sqlalchemy.orm import undefer
 
         try:
-            if query.strip():
-                await self.log_search_query(query)
-
             search_subquery = None
             if query.strip():
                 # Skip expensive embedding generation for empty or very short queries
@@ -542,6 +539,17 @@ class SearchService:
                 except redis.exceptions.RedisError as e:
                     logger.error(f"Redis SET error: {e}")
 
+            # Log the search after results are known so we can capture filters + result count.
+            # Always log when there is a text query OR at least one filter applied.
+            if query.strip() or client_canonical or state or date_year:
+                await self.log_search_query(
+                    query,
+                    filter_client=client_canonical,
+                    filter_state=state,
+                    filter_date_year=date_year,
+                    result_count=total_count,
+                )
+
             logger.info(f"[PERF] Total search time: {(time.perf_counter()-_t0)*1000:.0f}ms | query='{query}'")
             return result
 
@@ -675,10 +683,25 @@ class SearchService:
             if keyword.strip() and keyword not in stop_words
         ]
 
-    async def log_search_query(self, query: str, user_id: Optional[str] = None):
-        """Logs a search query to the database."""
+    async def log_search_query(
+        self,
+        query: str,
+        user_id: Optional[str] = None,
+        filter_client: Optional[str] = None,
+        filter_state: Optional[str] = None,
+        filter_date_year: Optional[int] = None,
+        result_count: Optional[int] = None,
+    ):
+        """Logs a search query with applied filters and result count to the database."""
         try:
-            search_query = SearchQuery(query=query.strip(), user_id=user_id)
+            search_query = SearchQuery(
+                query=query.strip() if query.strip() else "(filter only)",
+                user_id=user_id,
+                filter_client=filter_client,
+                filter_state=filter_state,
+                filter_date_year=filter_date_year,
+                result_count=result_count,
+            )
             self.db.add(search_query)
             self.db.commit()
         except Exception as e:

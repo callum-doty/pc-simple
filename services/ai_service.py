@@ -1238,10 +1238,12 @@ class AIService:
                     prompt_data["system"], enhanced_prompt
                 )
 
-                # Propagate API-level errors so the caller can set status=FAILED
-                # rather than silently storing placeholder values.
+                # Propagate API-level errors and unparseable responses so the caller
+                # can set status=FAILED rather than silently storing bad data.
                 if isinstance(analysis_result, dict) and "error" in analysis_result:
                     raise Exception(f"AI API call failed: {analysis_result['error']}")
+                if isinstance(analysis_result, dict) and "raw_response" in analysis_result:
+                    raise Exception("AI returned unparseable response (not valid JSON)")
 
                 # Validate keyword mappings
                 mappings = self._extract_mappings_from_analysis(analysis_result)

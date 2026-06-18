@@ -97,6 +97,20 @@ async def get_frank_analysis(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Internal server error.")
 
 
+@router.get("/filter-usage", summary="Get search filter adoption and zero-result stats", tags=["Dashboard"])
+async def get_filter_usage(db: Session = Depends(get_db)):
+    """
+    Returns how often users apply each filter (client, state, date_year), the top values
+    per filter, zero-result searches, and filter-only (no text query) search counts.
+    """
+    try:
+        dashboard_service = DashboardService(db)
+        return await dashboard_service.get_filter_usage()
+    except Exception as e:
+        logger.error(f"Error fetching filter usage: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error.")
+
+
 @router.get("/temporal", summary="Get document timeline by date_created", tags=["Dashboard"])
 async def get_temporal_analysis(db: Session = Depends(get_db)):
     try:

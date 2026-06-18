@@ -117,6 +117,8 @@ class DocumentService:
                 values["processing_progress"] = max(0, min(100, progress))
             if error:
                 values["processing_error"] = error
+            if status == DocumentStatus.PROCESSING:
+                values["processing_started_at"] = datetime.utcnow()
             if status == DocumentStatus.COMPLETED:
                 values["processing_progress"] = 100
                 values["processed_at"] = datetime.utcnow()
@@ -422,6 +424,8 @@ class DocumentService:
                 values["processing_progress"] = max(0, min(100, progress))
             if error:
                 values["processing_error"] = error
+            if status == DocumentStatus.PROCESSING:
+                values["processing_started_at"] = datetime.utcnow()
             if status == DocumentStatus.COMPLETED:
                 values["processing_progress"] = 100
                 values["processed_at"] = datetime.utcnow()

@@ -227,9 +227,9 @@
       <!-- Key Metrics Cards -->
       <div class="key-metrics">
         <div class="key-metric-card" id="total-docs-card">
-          <div class="key-metric-label">Total Documents</div>
+          <div class="key-metric-label">Processed Documents</div>
           <div class="key-metric-value" id="total-docs">...</div>
-          <div class="key-metric-subtitle">All time</div>
+          <div class="key-metric-subtitle">Completed all time</div>
         </div>
         <div class="key-metric-card" id="success-rate-card">
           <div class="key-metric-label">Success Rate</div>
@@ -239,7 +239,7 @@
         <div class="key-metric-card">
           <div class="key-metric-label">Avg Processing Time</div>
           <div class="key-metric-value" id="avg-time">...</div>
-          <div class="key-metric-subtitle">Seconds per document</div>
+          <div class="key-metric-subtitle">Worker time per document</div>
         </div>
         <div class="key-metric-card" id="queue-depth-card">
           <div class="key-metric-label">Queue Depth</div>
@@ -538,8 +538,8 @@
       function updateKeyMetrics(data) {
         const metrics = data.key_metrics;
 
-        // Total Documents
-        document.getElementById("total-docs").textContent = metrics.total_documents || 0;
+        // Processed (completed) documents
+        document.getElementById("total-docs").textContent = metrics.completed_documents || 0;
 
         // Success Rate with color coding
         const successRate = metrics.success_rate_7d || 0;

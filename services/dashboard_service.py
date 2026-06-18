@@ -374,8 +374,13 @@ class DashboardService:
     async def _get_key_metrics(self) -> dict:
         """Calculate key dashboard metrics."""
         try:
-            # Total documents
-            total_docs = self.db.query(func.count(Document.id)).scalar() or 0
+            # Completed documents only — excludes pending/processing/failed uploads
+            completed_docs = (
+                self.db.query(func.count(Document.id))
+                .filter(Document.status == DocumentStatus.COMPLETED)
+                .scalar()
+                or 0
+            )
 
             # Success rate (7 days)
             seven_days_ago = datetime.utcnow() - timedelta(days=7)
@@ -407,15 +412,15 @@ class DashboardService:
                 else 100.0
             )
 
-            # Average processing time
+            # Worker processing time: processing_started_at → processed_at.
+            # Falls back to created_at → processed_at for legacy rows without the new column.
             avg_processing_time = self.db.query(
-                func.avg(Document.processed_at - Document.created_at)
+                func.avg(Document.processed_at - Document.processing_started_at)
             ).filter(
                 Document.status == DocumentStatus.COMPLETED,
                 Document.processed_at.isnot(None),
-            ).scalar() or timedelta(
-                seconds=0
-            )
+                Document.processing_started_at.isnot(None),
+            ).scalar() or timedelta(seconds=0)
 
             # Queue depth
             queue_depth = (
@@ -426,7 +431,7 @@ class DashboardService:
             )
 
             return {
-                "total_documents": total_docs,
+                "completed_documents": completed_docs,
                 "success_rate_7d": success_rate_7d,
                 "avg_processing_time_seconds": round(
                     avg_processing_time.total_seconds(), 2
@@ -436,7 +441,7 @@ class DashboardService:
         except Exception as e:
             logger.error(f"Error calculating key metrics: {e}")
             return {
-                "total_documents": 0,
+                "completed_documents": 0,
                 "success_rate_7d": 0,
                 "avg_processing_time_seconds": 0,
                 "queue_depth": 0,
@@ -809,6 +814,113 @@ class DashboardService:
             }
         except Exception as e:
             logger.error(f"Error getting frank analysis: {e}")
+            return {}
+
+    async def get_filter_usage(self) -> dict:
+        """
+        Breakdown of how users apply filters during search.
+
+        Surfaces:
+        - Which filters are used most (client / state / date_year)
+        - Top values per filter (so you can see which clients/states users search most)
+        - Zero-result searches (searches + filter combos that find nothing)
+        - Filter-only searches (no text query, just filters — power-user pattern)
+        """
+        try:
+            total_logged = self.db.query(func.count(SearchQuery.id)).scalar() or 0
+
+            # Counts of searches that used each filter dimension
+            used_client = (
+                self.db.query(func.count(SearchQuery.id))
+                .filter(SearchQuery.filter_client.isnot(None))
+                .scalar() or 0
+            )
+            used_state = (
+                self.db.query(func.count(SearchQuery.id))
+                .filter(SearchQuery.filter_state.isnot(None))
+                .scalar() or 0
+            )
+            used_date_year = (
+                self.db.query(func.count(SearchQuery.id))
+                .filter(SearchQuery.filter_date_year.isnot(None))
+                .scalar() or 0
+            )
+
+            # Top filter values per dimension
+            top_clients = (
+                self.db.query(SearchQuery.filter_client, func.count(SearchQuery.id).label("cnt"))
+                .filter(SearchQuery.filter_client.isnot(None))
+                .group_by(SearchQuery.filter_client)
+                .order_by(desc("cnt"))
+                .limit(10)
+                .all()
+            )
+            top_states = (
+                self.db.query(SearchQuery.filter_state, func.count(SearchQuery.id).label("cnt"))
+                .filter(SearchQuery.filter_state.isnot(None))
+                .group_by(SearchQuery.filter_state)
+                .order_by(desc("cnt"))
+                .limit(10)
+                .all()
+            )
+            top_years = (
+                self.db.query(SearchQuery.filter_date_year, func.count(SearchQuery.id).label("cnt"))
+                .filter(SearchQuery.filter_date_year.isnot(None))
+                .group_by(SearchQuery.filter_date_year)
+                .order_by(desc("cnt"))
+                .limit(10)
+                .all()
+            )
+
+            # Zero-result searches (result_count == 0, not null)
+            zero_results = (
+                self.db.query(func.count(SearchQuery.id))
+                .filter(SearchQuery.result_count == 0)
+                .scalar() or 0
+            )
+            top_zero_result_queries = (
+                self.db.query(SearchQuery.query, func.count(SearchQuery.id).label("cnt"))
+                .filter(SearchQuery.result_count == 0)
+                .group_by(SearchQuery.query)
+                .order_by(desc("cnt"))
+                .limit(10)
+                .all()
+            )
+
+            # Filter-only searches (empty / placeholder query, at least one filter set)
+            filter_only = (
+                self.db.query(func.count(SearchQuery.id))
+                .filter(
+                    SearchQuery.query == "(filter only)",
+                    (
+                        SearchQuery.filter_client.isnot(None)
+                        | SearchQuery.filter_state.isnot(None)
+                        | SearchQuery.filter_date_year.isnot(None)
+                    ),
+                )
+                .scalar() or 0
+            )
+
+            return {
+                "total_searches_logged": total_logged,
+                "filter_adoption": {
+                    "client": used_client,
+                    "state": used_state,
+                    "date_year": used_date_year,
+                },
+                "top_filter_values": {
+                    "clients": [{"value": r[0], "count": r[1]} for r in top_clients],
+                    "states": [{"value": r[0], "count": r[1]} for r in top_states],
+                    "years": [{"value": r[0], "count": r[1]} for r in top_years],
+                },
+                "zero_result_searches": zero_results,
+                "top_zero_result_queries": [
+                    {"query": r[0], "count": r[1]} for r in top_zero_result_queries
+                ],
+                "filter_only_searches": filter_only,
+            }
+        except Exception as e:
+            logger.error(f"Error getting filter usage: {e}")
             return {}
 
     async def get_temporal_analysis(self) -> dict:

@@ -65,31 +65,24 @@ Provide accurate, objective analysis in the exact JSON format requested."""
         return {
             "system": self.base_system_prompt,
             "user": f"""
-Analyze the document '{filename}' by following these steps precisely.
+Analyze the document '{filename}'. Think through the following internally before writing your response — do NOT output your reasoning, only the final JSON.
 
-**Step 1: Initial Analysis & Evidence Gathering**
-First, write down your reasoning and cite direct evidence from the document.
-- **Summary:** What is the document's core message?
-- **Document Type Evidence:** What visual or text clues indicate the type of document?
-- **Election Year Evidence:** Is there a date or a phrase like 'Vote on November 5th'?
-- **Tone Evidence:** Quote words or phrases that establish the tone.
-- **Category Evidence:** What is the main goal?
-- **Keyword Evidence:** Identify 10-15 of the most important and specific keywords or keyphrases mentioned in the document. These should be the exact phrases used.
-
-**Step 2: Map Keywords to Canonical Taxonomy**
-For each verbatim keyphrase you extracted, map it to the single most relevant canonical term from the official taxonomy provided below.
+Internal checklist (do not output):
+- Summary: what is the document's core message?
+- Document type: what visual/text clues indicate the type?
+- Election year: is there a date or phrase like "Vote on November 5th"?
+- Tone: what words establish the tone?
+- Category: what is the main goal?
+- Verbatim keyphrases: identify 10-15 important phrases used in the document.
+- Map each keyphrase to the single most relevant canonical term from the taxonomy below.
 
 **Official Canonical Taxonomy:**
 ```json
 {taxonomy_for_prompt}
 ```
 
-**Step 3: JSON Output Generation**
-Now, based ONLY on your reasoning in the previous steps, provide the final analysis in the exact JSON format below.
-- If you cannot find evidence for a field, its value in the JSON MUST be null.
-- For fields with a specific list of choices, you MUST use one of the provided options.
+Output ONLY the following JSON — no explanation, no markdown, no text before or after it:
 
-```json
 {{
   "document_analysis": {{
     "summary": "Clear 1-2 sentence overview of the document's purpose.",
@@ -101,12 +94,12 @@ Now, based ONLY on your reasoning in the previous steps, provide the final analy
   "classification": {{
     "category": "Choose ONLY from: ['GOTV', 'attack', 'comparison', 'endorsement', 'issue', 'biographical']",
     "subcategory": "A specific, one-to-three word description of the narrower topic (e.g., 'Taxes', 'Healthcare Policy'). MUST be null if not applicable.",
-    "rationale": "Briefly reference the evidence from Step 1 that justifies the category choice."
+    "rationale": "One sentence justifying the category choice."
   }},
   "entities": {{
-    "client_name": "Full name of the client/candidate. If not mentioned, this value MUST be null.",
-    "opponent_name": "Full name of any opponent mentioned. If no opponent is mentioned, this value MUST be null.",
-    "creation_date": "The creation or print date shown on the document (YYYY-MM-DD format). If no date is visible, this value MUST be null."
+    "client_name": "Full name of the client/candidate. MUST be null if not mentioned.",
+    "opponent_name": "Full name of any opponent mentioned. MUST be null if none.",
+    "creation_date": "Creation or print date (YYYY-MM-DD). MUST be null if not visible."
   }},
   "keyword_mappings": [
     {{
@@ -117,9 +110,8 @@ Now, based ONLY on your reasoning in the previous steps, provide the final analy
     }}
   ]
 }}
-```
 
-Your response MUST be valid JSON formatted exactly as requested above.
+Rules: if you cannot find evidence for a field its value MUST be null. For enum fields use only the listed options. Output raw JSON only — no code fences, no extra text.
 """,
         }
 
