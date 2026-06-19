@@ -76,6 +76,8 @@ services:
         value: "true"
       - key: SESSION_TIMEOUT_HOURS
         value: "24"
+      - key: ALLOWED_ORIGINS
+        sync: false
       - key: DROPBOX_APP_KEY
         sync: false
       - key: DROPBOX_APP_SECRET

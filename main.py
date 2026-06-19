@@ -21,8 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # from starlette.middleware.sessions import SessionMiddleware  # Replaced with Redis-based solution
 from contextlib import asynccontextmanager
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 import os
@@ -32,7 +31,7 @@ from sqlalchemy.orm import Session
 from pathlib import Path
 from datetime import datetime, timedelta
 
-from config import get_settings
+from config import get_settings, validate_storage_config
 from database import init_db, get_db
 from services.document_service import DocumentService
 from services.ai_service import AIService
@@ -43,6 +42,11 @@ from services.preview_service import PreviewService
 from services.security_service import security_service
 from api.dashboard import router as dashboard_router
 from api.documents import router as documents_router
+from api.search import router as search_router
+from api.taxonomy import router as taxonomy_router
+from api.review import router as review_router
+from api.admin import router as admin_router
+from api.dependencies import app_state, limiter
 from worker import process_document_task
 from celery.result import AsyncResult
 from models.search_query import SearchQuery
@@ -68,20 +72,21 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting up Document Catalog application...")
 
-    # Run Alembic migrations before anything else so the DB schema is always
-    # consistent with the models at the moment the app begins serving requests.
-    try:
-        from alembic.config import Config as AlembicConfig
-        from alembic import command as alembic_command
-
-        alembic_cfg = AlembicConfig("alembic.ini")
-        alembic_command.upgrade(alembic_cfg, "head")
-        logger.info("Alembic migrations applied successfully.")
-    except Exception as migration_err:
-        logger.error(f"Alembic migration failed at startup: {migration_err}")
-        raise
+    # Schema migrations are applied by the build process (render.yaml buildCommand)
+    # before any instance starts. Running them here as well creates a race condition
+    # if two instances start simultaneously. See docs/architecture-fixes/FIX-003.
+    logger.info("Schema migrations are applied during the build phase before startup.")
 
     await init_db()
+
+    # Validate storage configuration — raises RuntimeError in production if S3
+    # credentials are missing when STORAGE_TYPE=s3. See docs/architecture-fixes/FIX-005.
+    try:
+        validate_storage_config(settings)
+        logger.info(f"Storage configuration validated: type={settings.storage_type}")
+    except RuntimeError as storage_err:
+        logger.error(f"Storage configuration error: {storage_err}")
+        raise
 
     # Initialize taxonomy from CSV if it exists
     taxonomy_csv_path = "taxonomy.csv"
@@ -226,8 +231,9 @@ def prepare_redis_session_middleware():
         return False, None
 
 
-# Initialize rate limiter (do this before adding middleware)
-limiter = Limiter(key_func=get_remote_address, default_limits=["1000/hour"])
+# Shared limiter instance imported from api/dependencies.py.
+# Registering the same object in app.state ensures SlowAPIMiddleware and
+# all @limiter.limit decorators (across every router file) use one backend.
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -237,13 +243,22 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Add rate limiting middleware FIRST (will execute LAST)
 app.add_middleware(SlowAPIMiddleware)
 
-# Add CORS middleware SECOND (will execute SECOND-TO-LAST)
+# Add CORS middleware SECOND (will execute SECOND-TO-LAST).
+# Origins are read from ALLOWED_ORIGINS env var (comma-separated).
+# allow_origins=["*"] is intentionally avoided — browsers block credentialed
+# requests to wildcard origins. See docs/architecture-fixes/FIX-004.
+_allowed_origins = settings.get_allowed_origins_list()
+if not _allowed_origins:
+    logger.warning(
+        "ALLOWED_ORIGINS is not configured. CORS is disabled for cross-origin requests. "
+        "Set ALLOWED_ORIGINS=https://your-domain.onrender.com to enable."
+    )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
 
 # Prepare Redis session middleware config (but don't add it yet)
@@ -267,6 +282,11 @@ else:
     logger.warning("Adding fallback session middleware due to Redis session failure")
     app.add_middleware(FallbackSessionMiddleware)
     redis_session_middleware_installed = False
+
+# Publish session state to the shared app_state so routers can read it
+# without importing from main.py (which would create a circular import).
+app_state.redis_session_middleware_installed = redis_session_middleware_installed
+app_state.session_middleware_error = session_middleware_error
 
 
 # Helper function for non-cacheable redirects
@@ -318,6 +338,10 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 app.include_router(dashboard_router, prefix="/api", tags=["Dashboard"])
 app.include_router(documents_router, prefix="/api", tags=["Documents"])
+app.include_router(search_router, prefix="/api", tags=["Search"])
+app.include_router(taxonomy_router, prefix="/api", tags=["Taxonomy"])
+app.include_router(review_router, prefix="/api", tags=["Review"])
+app.include_router(admin_router, prefix="/api", tags=["Admin"])
 
 # Mount files directory for serving uploaded documents
 if settings.storage_type == "local":
@@ -705,59 +729,7 @@ async def session_health_check(request: Request):
         }
 
 
-@app.post("/api/admin/clear-cache")
-async def clear_redis_cache(password: str = Form(...)):
-    """Clear Redis search and facet caches - Admin only"""
-    import redis as redis_lib
-
-    try:
-        # Verify admin password
-        admin_password = settings.upload_password or "upload123"
-        if password != admin_password:
-            raise HTTPException(status_code=401, detail="Invalid password")
-
-        # Connect to Redis
-        if not settings.redis_url:
-            raise HTTPException(status_code=500, detail="Redis not configured")
-
-        redis_client = redis_lib.from_url(settings.redis_url, decode_responses=True)
-        redis_client.ping()
-
-        # Get all cache keys (non-blocking scan)
-        search_keys = list(redis_client.scan_iter("search:*"))
-        facet_keys = list(redis_client.scan_iter("facets:*"))
-        all_keys = search_keys + facet_keys
-
-        if not all_keys:
-            return {
-                "success": True,
-                "message": "Cache already empty",
-                "deleted_count": 0,
-                "search_keys": 0,
-                "facet_keys": 0,
-            }
-
-        # Delete all cache keys
-        deleted = redis_client.delete(*all_keys)
-
-        logger.info(f"Cleared {deleted} cache keys from Redis")
-
-        return {
-            "success": True,
-            "message": f"Successfully cleared {deleted} cache entries",
-            "deleted_count": deleted,
-            "search_keys": len(search_keys),
-            "facet_keys": len(facet_keys),
-            "use_direct_urls": settings.use_direct_urls,
-            "storage_type": settings.storage_type,
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error clearing cache: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
+# /api/admin/clear-cache → api/admin.py
 
 # Document Upload
 @app.post("/api/documents/upload")
@@ -826,82 +798,7 @@ async def upload_documents(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Document Search
-@app.get("/api/documents/search")
-@limiter.limit("30/minute")
-async def search_documents(
-    request: Request,
-    q: str = "",
-    page: int = 1,
-    per_page: int = 20,
-    primary_category: Optional[str] = None,
-    subcategory: Optional[str] = None,
-    canonical_term: Optional[str] = None,
-    client_canonical: Optional[str] = None,
-    state: Optional[str] = None,
-    date_year: Optional[int] = None,
-    sort_by: str = "relevance",
-    sort_direction: str = "desc",
-    include_facets: bool = True,
-    search_service: SearchService = Depends(get_search_service),
-):
-    """Search documents - PUBLIC ENDPOINT
-    
-    Args:
-        include_facets: Set to false to skip expensive facet generation for faster initial page load
-    """
-    try:
-        # Validate and sanitize search query
-        safe_query = security_service.validate_search_query(q)
-
-        # Validate pagination parameters
-        if page < 1:
-            page = 1
-        if per_page < 1 or per_page > 100:
-            per_page = 20
-
-        # Validate sort parameters
-        allowed_sort_fields = [
-            "relevance",
-            "created_at",
-            "updated_at",
-            "filename",
-            "file_size",
-        ]
-        if sort_by not in allowed_sort_fields:
-            sort_by = "relevance"
-
-        if sort_direction.lower() not in ["asc", "desc"]:
-            sort_direction = "desc"
-
-        results = await search_service.search(
-            query=safe_query,
-            page=page,
-            per_page=per_page,
-            primary_category=primary_category,
-            subcategory=subcategory,
-            canonical_term=canonical_term,
-            client_canonical=client_canonical,
-            state=state,
-            date_year=date_year,
-            sort_by=sort_by,
-            sort_direction=sort_direction,
-            include_facets=include_facets,
-        )
-
-        return {
-            "success": True,
-            "documents": results["documents"],
-            "pagination": results["pagination"],
-            "facets": results["facets"],
-            "total_count": results["total_count"],
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Search error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+# /api/documents/search and /api/search/* routes → api/search.py
 
 
 # Get Document
@@ -925,160 +822,7 @@ async def get_document(
 
 
 
-# Year facets for filter buttons
-@app.get("/api/facets/years")
-async def get_year_facets(db: Session = Depends(get_db)):
-    """Return distinct years present in date_created, sorted ascending."""
-    try:
-        from sqlalchemy import func as sa_func, extract
-
-        rows = (
-            db.query(extract("year", Document.date_created).label("yr"))
-            .filter(Document.date_created.isnot(None))
-            .filter(Document.needs_date_review.isnot(True))
-            .group_by("yr")
-            .order_by("yr")
-            .all()
-        )
-        years = [int(r[0]) for r in rows if 2019 <= int(r[0]) <= 2026]
-        return {"success": True, "years": years}
-
-    except Exception as e:
-        logger.error(f"Year facets error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ── Review Queue (date · client · state) ──────────────────────────────────────
-
-@app.get("/api/review/dates/count")
-async def date_review_count(db: Session = Depends(get_db)):
-    """Return the number of documents pending any field review (for nav badge)."""
-    try:
-        from sqlalchemy import or_
-        count = (
-            db.query(Document)
-            .filter(or_(Document.needs_date_review == True, Document.needs_review == True))
-            .count()
-        )
-        return {"success": True, "count": count}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/review/dates")
-async def list_date_review(db: Session = Depends(get_db)):
-    """Return documents flagged for manual review of date, client, or state."""
-    try:
-        from sqlalchemy import or_
-        docs = (
-            db.query(Document)
-            .filter(or_(Document.needs_date_review == True, Document.needs_review == True))
-            .order_by(Document.created_at.desc())
-            .limit(500)
-            .all()
-        )
-        return {
-            "success": True,
-            "count": len(docs),
-            "documents": [
-                {
-                    "id": d.id,
-                    "filename": d.filename,
-                    "needs_date_review": d.needs_date_review or False,
-                    "needs_client_state_review": d.needs_review or False,
-                    "date_created": d.date_created.isoformat() if d.date_created else None,
-                    "date_confidence": d.date_confidence,
-                    "client_canonical": d.client_canonical,
-                    "client_confidence": d.client_confidence,
-                    "state": d.state.strip() if d.state else None,
-                    "state_confidence": d.state_confidence,
-                    "created_at": d.created_at.isoformat() if d.created_at else None,
-                }
-                for d in docs
-            ],
-        }
-    except Exception as e:
-        logger.error(f"Review list error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/review/dates/{document_id}")
-async def resolve_date_review(
-    document_id: int,
-    request: Request,
-    db: Session = Depends(get_db),
-):
-    """Save reviewer-corrected date, client, and/or state; clear review flags."""
-    try:
-        body = await request.json()
-        doc = db.query(Document).filter(Document.id == document_id).first()
-        if not doc:
-            raise HTTPException(status_code=404, detail="Document not found")
-
-        # Date
-        raw_date = body.get("date_created")
-        if raw_date:
-            try:
-                parsed = datetime.strptime(raw_date, "%Y-%m-%d").date()
-                if not (2019 <= parsed.year <= 2026):
-                    raise HTTPException(
-                        status_code=422,
-                        detail="Date must be between 2019 and 2026",
-                    )
-                doc.date_created = parsed
-            except ValueError:
-                raise HTTPException(status_code=422, detail="Invalid date format, use YYYY-MM-DD")
-        else:
-            doc.date_created = None
-
-        # Client
-        client_val = body.get("client_canonical")
-        if client_val is not None:
-            doc.client_canonical = client_val.strip() or None
-            doc.client_confidence = "HIGH"
-
-        # State — two-letter code or empty
-        state_val = body.get("state")
-        if state_val is not None:
-            cleaned = state_val.strip().upper()
-            if cleaned and len(cleaned) != 2:
-                raise HTTPException(status_code=422, detail="State must be a 2-letter code")
-            doc.state = cleaned or None
-            doc.state_confidence = "HIGH"
-
-        doc.needs_date_review = False
-        doc.needs_review = False
-        db.commit()
-        return {"success": True, "id": document_id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Review resolve error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# Client facets for filter dropdown
-@app.get("/api/facets/clients")
-async def get_client_facets(db: Session = Depends(get_db)):
-    """Return top 200 client_canonical values by document count"""
-    try:
-        from sqlalchemy import func as sa_func
-
-        rows = (
-            db.query(Document.client_canonical, sa_func.count(Document.id).label("cnt"))
-            .filter(Document.client_canonical.isnot(None))
-            .filter(Document.client_canonical != "")
-            .group_by(Document.client_canonical)
-            .order_by(sa_func.count(Document.id).desc())
-            .limit(200)
-            .all()
-        )
-        return {"success": True, "clients": [r[0] for r in rows]}
-
-    except Exception as e:
-        logger.error(f"Client facets error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
+# /api/facets/* and /api/review/* routes → api/review.py
 
 # Document Preview
 @app.get("/api/documents/{document_id}/preview")
@@ -1257,194 +1001,10 @@ async def review_dates_page(request: Request):
     return templates.TemplateResponse("review_dates.html", {"request": request})
 
 
-# Taxonomy API Endpoints
-@app.get("/api/taxonomy/categories")
-async def get_taxonomy_categories(
-    taxonomy_service: TaxonomyService = Depends(get_taxonomy_service),
-):
-    """Get all primary categories from taxonomy"""
-    try:
-        categories = await taxonomy_service.get_primary_categories()
-        return {"success": True, "categories": categories}
-
-    except Exception as e:
-        logger.error(f"Taxonomy categories error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/taxonomy/categories/{primary_category}/subcategories")
-async def get_taxonomy_subcategories(
-    primary_category: str,
-    taxonomy_service: TaxonomyService = Depends(get_taxonomy_service),
-):
-    """Get subcategories for a primary category"""
-    try:
-        subcategories = await taxonomy_service.get_subcategories(primary_category)
-        return {"success": True, "subcategories": subcategories}
-
-    except Exception as e:
-        logger.error(f"Taxonomy subcategories error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/taxonomy/hierarchy")
-async def get_taxonomy_hierarchy(
-    taxonomy_service: TaxonomyService = Depends(get_taxonomy_service),
-):
-    """Get complete taxonomy hierarchy"""
-    try:
-        hierarchy = await taxonomy_service.get_taxonomy_hierarchy()
-        return {"success": True, "hierarchy": hierarchy}
-
-    except Exception as e:
-        logger.error(f"Taxonomy hierarchy error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/taxonomy/filter-data")
-async def get_filter_taxonomy(
-    taxonomy_service: TaxonomyService = Depends(get_taxonomy_service),
-):
-    """Get taxonomy data structured for UI filters"""
-    try:
-        filter_data = await taxonomy_service.get_filter_taxonomy_data()
-        return {"success": True, "data": filter_data}
-    except Exception as e:
-        logger.error(f"Filter taxonomy data error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/taxonomy/canonical-terms")
-async def get_canonical_terms(
-    taxonomy_service: TaxonomyService = Depends(get_taxonomy_service),
-):
-    """Get a flat list of all canonical terms"""
-    try:
-        terms = await taxonomy_service.get_all_canonical_terms()
-        return {"success": True, "terms": terms}
-    except Exception as e:
-        logger.error(f"Error getting canonical terms: {e}")
-        raise HTTPException(status_code=500, detail="Internal Server Error")
-
-
-@app.get("/api/taxonomy/search")
-async def search_taxonomy_terms(
-    q: str,
-    taxonomy_service: TaxonomyService = Depends(get_taxonomy_service),
-):
-    """Search taxonomy terms"""
-    try:
-        terms = await taxonomy_service.search_terms(q)
-        return {"success": True, "terms": terms}
-
-    except Exception as e:
-        logger.error(f"Taxonomy search error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/taxonomy/stats")
-async def get_taxonomy_statistics(
-    taxonomy_service: TaxonomyService = Depends(get_taxonomy_service),
-):
-    """Get taxonomy statistics"""
-    try:
-        stats = await taxonomy_service.get_statistics()
-        return {"success": True, "stats": stats}
-
-    except Exception as e:
-        logger.error(f"Taxonomy stats error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# AI Service API Endpoints
-@app.get("/api/ai/info")
-async def get_ai_info(
-    ai_service: AIService = Depends(get_ai_service),
-):
-    """Get AI service configuration and capabilities"""
-    try:
-        info = ai_service.get_ai_info()
-        return {"success": True, "ai_info": info}
-
-    except Exception as e:
-        logger.error(f"AI info error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/ai/analysis-types")
-async def get_analysis_types(
-    ai_service: AIService = Depends(get_ai_service),
-):
-    """Get available analysis types"""
-    try:
-        types = ai_service.get_available_analysis_types()
-        return {"success": True, "analysis_types": types}
-
-    except Exception as e:
-        logger.error(f"Analysis types error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/documents/{document_id}/analyze")
-async def analyze_document_with_type(
-    document_id: int,
-    analysis_type: str = "unified",
-    ai_service: AIService = Depends(get_ai_service),
-    document_service: DocumentService = Depends(get_document_service),
-    storage_service: StorageService = Depends(get_storage_service),
-):
-    """Perform immediate analysis on a document with specified type"""
-    try:
-        # Get document
-        document = await document_service.get_document(document_id)
-        if not document:
-            raise HTTPException(status_code=404, detail="Document not found")
-
-        # Perform analysis
-        result = await ai_service.analyze_document(
-            document.file_path, document.filename, analysis_type
-        )
-
-        return {
-            "success": True,
-            "document_id": document_id,
-            "analysis_type": analysis_type,
-            "result": result,
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Document analysis error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# Statistics API
-@app.get("/api/tasks/{task_id}/status")
-async def get_task_status(task_id: str):
-    """Get the status of a Celery task"""
-    task_result = AsyncResult(task_id)
-    result = {
-        "task_id": task_id,
-        "status": task_result.status,
-        "result": task_result.result,
-    }
-    return {"success": True, "task": result}
-
-
-@app.get("/api/stats")
-async def get_statistics(
-    document_service: DocumentService = Depends(get_document_service),
-):
-    """Get application statistics"""
-    try:
-        stats = await document_service.get_statistics()
-        return {"success": True, "stats": stats}
-
-    except Exception as e:
-        logger.error(f"Stats error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
+# /api/taxonomy/* routes → api/taxonomy.py
+# /api/ai/* routes → api/admin.py
+# /api/tasks/* routes → api/admin.py
+# /api/stats routes → api/admin.py
 
 if __name__ == "__main__":
     import uvicorn
@@ -1461,109 +1021,4 @@ if __name__ == "__main__":
     )
 
 
-@app.get("/api/search/canonical/{canonical_term}")
-async def search_by_canonical_term(
-    canonical_term: str,
-    q: str = "",
-    search_service: SearchService = Depends(get_search_service),
-):
-    """Search documents by canonical term with optional query"""
-    try:
-        results = await search_service.search_by_canonical_term(canonical_term, query=q)
-        return {"success": True, "documents": results}
-    except Exception as e:
-        logger.error(f"Canonical term search error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/search/verbatim/{verbatim_term}")
-async def search_by_verbatim_term(
-    verbatim_term: str,
-    q: str = "",
-    search_service: SearchService = Depends(get_search_service),
-):
-    """Search documents by verbatim term with optional query"""
-    try:
-        results = await search_service.search_by_verbatim_term(verbatim_term, query=q)
-        return {"success": True, "documents": results}
-    except Exception as e:
-        logger.error(f"Verbatim term search error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/documents/{document_id}/mappings")
-async def get_document_mappings(
-    document_id: int,
-    document_service: DocumentService = Depends(get_document_service),
-):
-    """Get keyword mappings for a document"""
-    try:
-        document = await document_service.get_document(document_id)
-        if not document:
-            raise HTTPException(status_code=404, detail="Document not found")
-        mappings = document.get_keyword_mappings()
-        return {"success": True, "mappings": mappings}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Document mappings error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/stats/mappings")
-async def get_mapping_stats(
-    search_service: SearchService = Depends(get_search_service),
-):
-    """Get statistics about keyword mappings"""
-    try:
-        stats = await search_service.get_mapping_statistics()
-        return {"success": True, "stats": stats}
-    except Exception as e:
-        logger.error(f"Mapping stats error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/admin/backfill-features")
-async def backfill_feature_extraction(password: str = Form(...), db: Session = Depends(get_db)):
-    """
-    Enqueue feature extraction for all COMPLETED documents missing client_canonical.
-    Uses the existing extract_document_features_task — no AI reprocessing, reads
-    from already-stored extracted_text and ai_analysis.
-    """
-    from worker import extract_document_features_task
-
-    admin_password = settings.upload_password or "upload123"
-    if password != admin_password:
-        raise HTTPException(status_code=401, detail="Invalid password")
-
-    pending = (
-        db.query(Document.id)
-        .filter(Document.status == "COMPLETED")
-        .filter(Document.client_canonical.is_(None))
-        .filter(Document.extracted_text.isnot(None))
-        .all()
-    )
-    doc_ids = [row[0] for row in pending]
-
-    for doc_id in doc_ids:
-        extract_document_features_task.delay(doc_id)
-
-    logger.info(f"Backfill: enqueued feature extraction for {len(doc_ids)} documents.")
-    return {
-        "success": True,
-        "enqueued": len(doc_ids),
-        "message": f"Enqueued feature extraction for {len(doc_ids)} documents. Check worker logs for progress.",
-    }
-
-
-@app.get("/api/search/top-queries")
-async def get_top_queries(
-    search_service: SearchService = Depends(get_search_service),
-):
-    """Get top 8 search queries"""
-    try:
-        queries = await search_service.get_top_queries(limit=8)
-        return {"success": True, "queries": queries}
-    except Exception as e:
-        logger.error(f"Top queries error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+# Remaining routes moved to api/search.py, api/admin.py — see FIX-006.

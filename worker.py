@@ -9,12 +9,72 @@ from services.preview_service import PreviewService
 from services.feature_extraction_service import extract_document_features, load_canonical_map_from_db
 from models.document import DocumentStatus
 import logging
-from typing import Generator, Tuple, List, Dict, Any
+from typing import Generator, Tuple, List, Dict, Any, Optional
 from collections import defaultdict
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
-
 settings = get_settings()
+
+# ---------------------------------------------------------------------------
+# Processing lock constants — must be consistent with task timeout settings.
+# LOCK_TTL_SECONDS must exceed the longest possible task duration so that a
+# crashed worker's lock expires before the recovery scheduler reschedules the
+# document. See docs/architecture-fixes/FIX-001.
+# ---------------------------------------------------------------------------
+TASK_TIMEOUT_SECONDS = 300         # matches config.settings.processing_timeout
+HEARTBEAT_INTERVAL_PAGES = 1       # emit heartbeat every N PDF pages
+LOCK_TTL_SECONDS = TASK_TIMEOUT_SECONDS + 60  # grace period beyond task timeout
+
+
+def _acquire_processing_lock(document_id: int) -> tuple:
+    """
+    Attempt to acquire an exclusive processing lock for a document via Redis SET NX.
+    Returns (acquired: bool, redis_client | None).
+
+    If Redis is unavailable, returns (True, None) so processing continues in
+    degraded mode — zombie recovery via processing_heartbeat_at still works.
+    """
+    try:
+        r = redis.from_url(settings.redis_url, decode_responses=True)
+        lock_key = f"doc_processing_lock:{document_id}"
+        acquired = r.set(lock_key, "1", nx=True, ex=LOCK_TTL_SECONDS)
+        return bool(acquired), r
+    except Exception as e:
+        logger.warning(
+            f"Could not acquire Redis lock for document {document_id} (Redis unavailable?): {e}. "
+            f"Proceeding without lock — zombie recovery via heartbeat still active."
+        )
+        return True, None
+
+
+def _release_processing_lock(document_id: int, redis_client) -> None:
+    """Release the processing lock. Safe to call even if lock was never acquired."""
+    if redis_client is None:
+        return
+    try:
+        redis_client.delete(f"doc_processing_lock:{document_id}")
+    except Exception as e:
+        logger.warning(f"Could not release Redis lock for document {document_id}: {e}")
+
+
+def _emit_heartbeat(document_id: int, db) -> None:
+    """
+    Update processing_heartbeat_at to signal the worker is still alive.
+    Called at task start and periodically during long PDF processing runs.
+    The scheduler uses this timestamp to detect zombie PROCESSING documents.
+    """
+    try:
+        from models.document import Document
+        from sqlalchemy import update
+        db.execute(
+            update(Document)
+            .where(Document.id == document_id)
+            .values(processing_heartbeat_at=datetime.now(timezone.utc))
+        )
+        db.commit()
+    except Exception as e:
+        logger.warning(f"Heartbeat update failed for document {document_id}: {e}")
 
 celery_app = Celery(
     "worker",
@@ -44,22 +104,43 @@ def _process_pdf_document_by_page(
     ai_service: AIService,
     storage_service: StorageService,
     analysis_type: str,
+    db=None,
 ):
-    """Helper function to process PDF documents page by page."""
+    """
+    Process PDF documents page by page with heartbeat emission (FIX-001) and
+    per-page checkpointing for cost-efficient retries (FIX-002).
+    """
     logger.info(f"Processing PDF document {document_id} page by page.")
     file_content = storage_service.get_file_sync(document.file_path)
     if not file_content:
         raise ValueError(f"Could not retrieve file content for {document.filename}")
+
+    # --- FIX-002: Resume from checkpoint if this is a retry ---
+    existing_meta = document.get_file_metadata()
+    resume_from_page = existing_meta.processing_checkpoint or 0
+    if resume_from_page:
+        logger.info(
+            f"Document {document_id}: resuming from checkpoint page {resume_from_page}."
+        )
 
     text_generator = ai_service.extract_text_from_pdf_sync_generator(file_content)
 
     aggregated_results: Dict[str, Any] = defaultdict(list)
     full_extracted_text = []
     page_summaries = []
-    total_pages = 0  # We don't know total pages beforehand with a generator
+    total_pages = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
+    provider_used = None
 
     for page_num, page_text in text_generator:
-        total_pages = page_num  # Keep track of the latest page number
+        total_pages = page_num
+
+        # --- FIX-002: Skip already-processed pages on retry ---
+        if page_num <= resume_from_page:
+            logger.debug(f"Skipping page {page_num} (already checkpointed).")
+            continue
+
         logger.info(f"Analyzing page {page_num} for document {document_id}")
         full_extracted_text.append(f"--- Page {page_num} ---\n{page_text}")
 
@@ -67,6 +148,14 @@ def _process_pdf_document_by_page(
         chunk_analysis = ai_service.analyze_text_chunk_sync(
             page_text, document.filename, analysis_type
         )
+
+        # --- FIX-002: Capture token usage if returned as (result, usage) tuple ---
+        usage: Dict[str, Any] = {}
+        if isinstance(chunk_analysis, tuple) and len(chunk_analysis) == 2:
+            chunk_analysis, usage = chunk_analysis
+        total_input_tokens += usage.get("input_tokens", 0)
+        total_output_tokens += usage.get("output_tokens", 0)
+        provider_used = provider_used or usage.get("provider")
 
         # Aggregate results
         keywords, categories = ai_service._extract_keywords_from_analysis(
@@ -87,10 +176,27 @@ def _process_pdf_document_by_page(
             if summary:
                 page_summaries.append(summary)
 
-        # Update progress (estimate)
-        # This is tricky with a generator. We can't know the total number of pages.
-        # For now, we'll just show it's working. A better approach might be to
-        # get page count first, but that adds an extra read operation.
+        # --- FIX-001: Emit heartbeat every N pages so the scheduler knows we're alive ---
+        if db and page_num % HEARTBEAT_INTERVAL_PAGES == 0:
+            _emit_heartbeat(document_id, db)
+
+        # --- FIX-002: Persist checkpoint so a retry can resume from here ---
+        # Use read-modify-write (not a raw SQL || operator) so SQLAlchemy correctly
+        # handles the JSONB dict serialisation without a manual CAST.
+        if db:
+            try:
+                from models.document import Document as _Document
+                _doc = db.get(_Document, document_id)
+                if _doc is not None:
+                    _doc.set_metadata(processing_checkpoint=page_num)
+                    db.commit()
+            except Exception as cp_err:
+                logger.warning(f"Checkpoint write failed for page {page_num}: {cp_err}")
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+
         document_service.update_document_status_sync(
             document_id, DocumentStatus.PROCESSING, progress=50
         )
@@ -103,10 +209,22 @@ def _process_pdf_document_by_page(
     final_extracted_text = "\n\n".join(full_extracted_text)
 
     final_ai_analysis = {
+        "schema_version": 1,
         "summary": final_summary,
         "page_count": total_pages,
         "analysis_type": "chunked_unified",
         "keyword_mappings": final_mappings,
+    }
+
+    # --- FIX-002: Build cost metadata to persist alongside document content ---
+    cost_metadata = {
+        "processing_cost": {
+            "input_tokens": total_input_tokens,
+            "output_tokens": total_output_tokens,
+            "provider": provider_used or ai_service.ai_provider,
+            "processed_at": datetime.utcnow().isoformat(),
+        },
+        "processing_checkpoint": None,  # clear checkpoint on successful completion
     }
 
     # Update document with aggregated data.
@@ -120,6 +238,7 @@ def _process_pdf_document_by_page(
         categories=final_categories,
         keyword_mappings=final_mappings,
         file_type="pdf",
+        **cost_metadata,
     )
 
 
@@ -180,14 +299,36 @@ def enqueue_documents_task():
             db.close()
 
 
-@celery_app.task(name="process_document_task")
-def process_document_task(document_id: int, analysis_type: str = "unified"):
+@celery_app.task(
+    name="process_document_task",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,  # 1-minute base; doubled on each retry
+)
+def process_document_task(self, document_id: int, analysis_type: str = "unified"):
     """
     Celery task to process a single document.
-    Delegates to chunked processing for PDFs and holistic for others.
+
+    Changes vs original:
+    - FIX-001: Acquires a Redis distributed lock to prevent duplicate concurrent
+      processing. Emits processing_heartbeat_at so the recovery scheduler can
+      detect and rescue zombie tasks.
+    - FIX-002: Checkpoints PDF progress per page so retries resume mid-document
+      rather than restarting from page 1. Retries rate-limit errors with
+      exponential backoff.
     """
     db = None
+    redis_client = None
     try:
+        # --- FIX-001: Idempotency guard — prevent two workers processing the same doc ---
+        acquired, redis_client = _acquire_processing_lock(document_id)
+        if not acquired:
+            logger.info(
+                f"Document {document_id} is already being processed by another worker. "
+                f"Skipping to prevent duplicate LLM calls."
+            )
+            return False
+
         db = next(get_db())
         document_service = DocumentService(db)
         ai_service = AIService(db)
@@ -206,6 +347,8 @@ def process_document_task(document_id: int, analysis_type: str = "unified"):
         document_service.update_document_status_sync(
             document_id, DocumentStatus.PROCESSING, progress=10
         )
+        # --- FIX-001: Record initial heartbeat so the scheduler knows processing started ---
+        _emit_heartbeat(document_id, db)
 
         # Determine file type and processing strategy
         file_type = ai_service._get_file_type(document.filename)
@@ -218,6 +361,7 @@ def process_document_task(document_id: int, analysis_type: str = "unified"):
                 ai_service,
                 storage_service,
                 analysis_type,
+                db=db,  # passed for heartbeat + checkpoint writes
             )
         else:
             _process_document_holistically(
@@ -246,10 +390,10 @@ def process_document_task(document_id: int, analysis_type: str = "unified"):
         # Clear the search cache in Redis
         try:
             if settings.redis_url:
-                redis_client = redis.from_url(settings.redis_url)
-                search_keys = list(redis_client.scan_iter("search:*"))
+                cache_client = redis.from_url(settings.redis_url)
+                search_keys = list(cache_client.scan_iter("search:*"))
                 if search_keys:
-                    redis_client.delete(*search_keys)
+                    cache_client.delete(*search_keys)
                     logger.info(f"Invalidated {len(search_keys)} search cache keys.")
         except Exception as redis_error:
             logger.error(f"Could not clear Redis cache: {redis_error}")
@@ -261,6 +405,29 @@ def process_document_task(document_id: int, analysis_type: str = "unified"):
 
     except Exception as e:
         logger.error(f"Error processing document {document_id}: {str(e)}")
+
+        # --- FIX-002: Retry transient LLM errors with exponential backoff ---
+        try:
+            import anthropic as _anthropic
+            import openai as _openai
+            _is_rate_limit = isinstance(
+                e, (_anthropic.RateLimitError, _openai.RateLimitError)
+            )
+        except ImportError:
+            _is_rate_limit = False
+
+        if _is_rate_limit and self.request.retries < self.max_retries:
+            countdown = 60 * (2 ** self.request.retries)
+            logger.warning(
+                f"Rate limit hit for document {document_id}. "
+                f"Retrying in {countdown}s (attempt {self.request.retries + 1}/{self.max_retries})."
+            )
+            # Release lock before retry so the next attempt can acquire it
+            _release_processing_lock(document_id, redis_client)
+            redis_client = None
+            raise self.retry(exc=e, countdown=countdown)
+
+        # Non-retryable error or max retries exceeded — mark FAILED
         if db:
             try:
                 document_service = DocumentService(db)
@@ -273,6 +440,8 @@ def process_document_task(document_id: int, analysis_type: str = "unified"):
                 )
         return False
     finally:
+        # Always release the lock, even on unexpected exceptions
+        _release_processing_lock(document_id, redis_client)
         if db:
             db.close()
 

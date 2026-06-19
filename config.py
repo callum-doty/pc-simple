@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     s3_region: str = "us-east-1"
     s3_endpoint_url: str = ""
 
+    # CORS settings
+    allowed_origins: str = ""  # Comma-separated list of allowed origins, e.g. "https://app.onrender.com"
+
     # Direct URL settings for performance optimization
     use_direct_urls: bool = True  # Use direct Backblaze URLs instead of proxy
     preview_url_expires_hours: int = 24  # Preview URLs expire after 24 hours
@@ -84,6 +87,12 @@ class Settings(BaseSettings):
     dropbox_app_secret: str = ""
     dropbox_refresh_token: str = ""
     dropbox_folder_path: str = "/Press Files 2019-2020/2026"
+
+    def get_allowed_origins_list(self) -> list:
+        """Parse the comma-separated ALLOWED_ORIGINS string into a list."""
+        if not self.allowed_origins:
+            return []
+        return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
 
     class Config:
         env_file = ".env"
@@ -175,6 +184,50 @@ class RenderSettings(ProductionSettings):
             logger.info(
                 "Configured Render disk storage. Note: Not suitable for multi-container setups."
             )
+
+
+def validate_storage_config(settings: "Settings") -> None:
+    """
+    Validate storage configuration at startup.
+    Raises RuntimeError if production is configured to use S3 but credentials are missing.
+    Logs a WARNING for render_disk or local storage in production (allowed but discouraged).
+    See docs/architecture-fixes/FIX-005.
+    """
+    env = getattr(settings, "environment", "development")
+    if env not in ("production", "worker"):
+        return  # skip in development
+
+    storage_type = getattr(settings, "storage_type", "local")
+
+    if storage_type == "s3":
+        missing = []
+        if not settings.s3_bucket:
+            missing.append("S3_BUCKET")
+        if not settings.s3_access_key:
+            missing.append("S3_ACCESS_KEY")
+        if not settings.s3_secret_key:
+            missing.append("S3_SECRET_KEY")
+        if not settings.s3_region and not settings.s3_endpoint_url:
+            missing.append("S3_REGION or S3_ENDPOINT_URL")
+        if missing:
+            raise RuntimeError(
+                f"STORAGE_TYPE=s3 but required S3 credentials are missing: "
+                f"{', '.join(missing)}. Configure these in the Render environment "
+                f"variables. Set STORAGE_TYPE=local to use local disk (not recommended "
+                f"for production — files will be lost on service migration)."
+            )
+    elif storage_type == "render_disk":
+        logger.warning(
+            "STORAGE_TYPE=render_disk is set in production. This backend is tied to a "
+            "single container — data will be lost on service migrations or scaling events. "
+            "Switch to STORAGE_TYPE=s3 with Backblaze B2 for durable production storage."
+        )
+    elif storage_type == "local":
+        logger.warning(
+            "STORAGE_TYPE=local in production. Files are stored on the container's "
+            "ephemeral filesystem and will not be accessible to other containers. "
+            "Switch to STORAGE_TYPE=s3 for production deployments."
+        )
 
 
 @lru_cache()

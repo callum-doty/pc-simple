@@ -26,6 +26,7 @@ from pgvector.sqlalchemy import Vector
 from database import Base
 from models.document_taxonomy_map import document_taxonomy_map
 from models.taxonomy import TaxonomyTerm
+from models.schemas import AIAnalysis, KeywordsData, FileMetadata, EmbeddingProvenance
 
 
 class Document(Base):
@@ -52,6 +53,10 @@ class Document(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     processing_started_at = Column(DateTime(timezone=True), nullable=True)
     processed_at = Column(DateTime(timezone=True), nullable=True)
+    # Updated periodically by the worker while processing. A PROCESSING document
+    # whose heartbeat has not been refreshed within (task_timeout + grace_period)
+    # is considered a zombie and eligible for recovery. See FIX-001.
+    processing_heartbeat_at = Column(DateTime(timezone=True), nullable=True)
 
     # Content and analysis (JSON fields for flexibility)
     extracted_text = Column(
@@ -107,18 +112,45 @@ class Document(Base):
     def __repr__(self):
         return f"<Document(id={self.id}, filename='{self.filename}', status='{self.status}')>"
 
-    def get_summary(self) -> Optional[str]:
-        """Get document summary from AI analysis"""
-        if self.ai_analysis and isinstance(self.ai_analysis, dict):
-            # Try to get summary from nested document_analysis structure first
-            if "document_analysis" in self.ai_analysis:
-                doc_analysis = self.ai_analysis["document_analysis"]
-                if isinstance(doc_analysis, dict) and "summary" in doc_analysis:
-                    return doc_analysis["summary"]
+    # ------------------------------------------------------------------
+    # Typed JSONB accessors (use these in all new code).
+    # Raw dict access via self.ai_analysis / self.keywords / etc. still works
+    # for legacy callers — these typed methods are an additive layer.
+    # See docs/architecture-fixes/FIX-007.
+    # ------------------------------------------------------------------
 
-            # Fallback to direct summary field for backward compatibility
-            return self.ai_analysis.get("summary")
-        return None
+    def get_ai_analysis(self) -> AIAnalysis:
+        """Return ai_analysis as a validated, typed object. Handles all schema versions."""
+        return AIAnalysis.from_raw(self.ai_analysis)
+
+    def get_keywords_data(self) -> KeywordsData:
+        """Return keywords as a validated, typed object."""
+        return KeywordsData.from_raw(self.keywords)
+
+    def get_file_metadata(self) -> FileMetadata:
+        """Return file_metadata as a validated, typed object."""
+        return FileMetadata.from_raw(self.file_metadata)
+
+    def get_embedding_provenance(self) -> EmbeddingProvenance:
+        """Return embedding_provenance as a validated, typed object."""
+        return EmbeddingProvenance.from_raw(self.embedding_provenance)
+
+    def set_ai_analysis(self, analysis: AIAnalysis) -> None:
+        """Validate and store ai_analysis via the typed schema."""
+        self.ai_analysis = analysis.to_storage()
+
+    def set_keywords_data(self, data: KeywordsData) -> None:
+        """Validate and store keywords via the typed schema, then refresh search content."""
+        self.keywords = data.to_storage()
+        self._update_search_content()
+
+    def set_file_metadata(self, meta: FileMetadata) -> None:
+        """Validate and store file_metadata via the typed schema."""
+        self.file_metadata = meta.to_storage()
+
+    def get_summary(self) -> Optional[str]:
+        """Get document summary from AI analysis, handling all historical schema shapes."""
+        return self.get_ai_analysis().get_summary()
 
     def get_categories(self) -> List[str]:
         """Get document categories from keywords"""
