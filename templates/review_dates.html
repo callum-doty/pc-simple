@@ -16,6 +16,36 @@
   <strong>Skip</strong> to leave for later.
 </p>
 
+<!-- Search any document -->
+<div class="card mb-4">
+  <div class="card-header fw-semibold">
+    <i class="fas fa-search me-2"></i>Search &amp; Edit Any Document
+  </div>
+  <div class="card-body">
+    <div class="row g-2 align-items-end">
+      <div class="col">
+        <label class="form-label mb-1">Filename or client name</label>
+        <input type="text" id="searchInput" class="form-control"
+               placeholder="e.g. Smith_Contract or AcmeCorp"
+               onkeydown="if(event.key==='Enter') runSearch()">
+      </div>
+      <div class="col-auto">
+        <label class="form-label mb-1">Document ID</label>
+        <input type="number" id="searchId" class="form-control" style="width:110px"
+               placeholder="e.g. 4821"
+               onkeydown="if(event.key==='Enter') runSearch()">
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-secondary" onclick="runSearch()">
+          <i class="fas fa-search me-1"></i>Search
+        </button>
+      </div>
+    </div>
+    <div id="searchStatus" class="mt-2 text-muted small"></div>
+  </div>
+  <div id="searchResults"></div>
+</div>
+
 <!-- Client autocomplete source -->
 <datalist id="clientDatalist"></datalist>
 
@@ -229,6 +259,141 @@ async function loadQueue() {
   } catch (err) {
     document.getElementById("queueContainer").innerHTML =
       `<div class="alert alert-danger">Failed to load queue: ${err.message}</div>`;
+  }
+}
+
+// ── Search & edit any document ────────────────────────────────────────────────
+
+function buildSearchCard(doc) {
+  const div = document.createElement("div");
+  div.className = "card border-0 border-top rounded-0";
+  div.id = `scard-${doc.id}`;
+
+  const flags = [];
+  if (doc.needs_date_review)         flags.push('<span class="badge bg-danger me-1">Bad date</span>');
+  if (doc.needs_client_state_review) flags.push('<span class="badge bg-warning text-dark me-1">Low confidence</span>');
+
+  div.innerHTML = `
+    <div class="card-header d-flex align-items-start justify-content-between gap-2 bg-light">
+      <div>
+        <strong>${escHtml(doc.filename)}</strong>
+        <div class="mt-1">${flags.join("") || '<span class="badge bg-secondary">No flags</span>'}</div>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <a class="btn btn-sm btn-outline-info"
+           href="/api/documents/${doc.id}/download"
+           target="_blank" rel="noopener noreferrer">
+          <i class="fas fa-eye me-1"></i>Preview
+        </a>
+        <small class="text-muted text-nowrap">#${doc.id}</small>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-12 col-md-4">
+          <label class="form-label fw-semibold">Date Created ${confidenceBadge(doc.date_confidence)}</label>
+          <input type="date" id="sdate-${doc.id}" class="form-control"
+                 min="${VALID_MIN}-01-01" max="${VALID_MAX}-12-31"
+                 value="${doc.date_created || ""}">
+          <div class="form-text">Leave blank to set as unknown.</div>
+        </div>
+        <div class="col-12 col-md-4">
+          <label class="form-label fw-semibold">Client ${confidenceBadge(doc.client_confidence)}</label>
+          <input type="text" id="sclient-${doc.id}" class="form-control"
+                 list="clientDatalist"
+                 value="${escHtml(doc.client_canonical || "")}"
+                 placeholder="Canonical client name">
+          <div class="form-text">Leave blank to set as unknown.</div>
+        </div>
+        <div class="col-12 col-md-4">
+          <label class="form-label fw-semibold">State ${confidenceBadge(doc.state_confidence)}</label>
+          <select id="sstate-${doc.id}" class="form-select">
+            ${buildStateOptions(doc.state || "")}
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="card-footer d-flex gap-2 align-items-center">
+      <button class="btn btn-primary" onclick="saveSearchCard(${doc.id})">
+        <i class="fas fa-check me-1"></i>Save
+      </button>
+      <span id="smsg-${doc.id}" class="text-muted small"></span>
+    </div>
+  `;
+  return div;
+}
+
+async function saveSearchCard(id) {
+  const dateVal   = document.getElementById(`sdate-${id}`).value || null;
+  const clientVal = document.getElementById(`sclient-${id}`).value;
+  const stateVal  = document.getElementById(`sstate-${id}`).value;
+  const msgEl     = document.getElementById(`smsg-${id}`);
+
+  if (dateVal) {
+    const year = parseInt(dateVal.split("-")[0], 10);
+    if (year < VALID_MIN || year > VALID_MAX) {
+      msgEl.textContent = `Year must be between ${VALID_MIN} and ${VALID_MAX}.`;
+      msgEl.className = "text-danger small";
+      return;
+    }
+  }
+
+  msgEl.textContent = "Saving…";
+  msgEl.className = "text-muted small";
+
+  try {
+    const resp = await fetch(`/api/review/dates/${id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date_created: dateVal, client_canonical: clientVal, state: stateVal }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.detail || "Server error");
+
+    msgEl.textContent = "Saved!";
+    msgEl.className = "text-success small fw-semibold";
+
+    // Also remove from the flagged queue if it was there
+    const qCard = document.getElementById(`card-${id}`);
+    if (qCard) removeCard(id);
+  } catch (err) {
+    msgEl.textContent = `Error: ${err.message}`;
+    msgEl.className = "text-danger small";
+  }
+}
+
+async function runSearch() {
+  const q      = document.getElementById("searchInput").value.trim();
+  const docId  = document.getElementById("searchId").value.trim();
+  const status = document.getElementById("searchStatus");
+  const results = document.getElementById("searchResults");
+
+  if (!q && !docId) {
+    status.textContent = "Enter a search term or document ID.";
+    return;
+  }
+
+  status.textContent = "Searching…";
+  results.innerHTML = "";
+
+  try {
+    const params = new URLSearchParams();
+    if (docId) params.set("doc_id", docId);
+    else       params.set("q", q);
+
+    const resp = await fetch(`/api/review/search?${params}`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Server error");
+
+    if (!data.documents || data.documents.length === 0) {
+      status.textContent = "No documents found.";
+      return;
+    }
+
+    status.textContent = `${data.count} document${data.count === 1 ? "" : "s"} found.`;
+    data.documents.forEach(doc => results.appendChild(buildSearchCard(doc)));
+  } catch (err) {
+    status.textContent = `Error: ${err.message}`;
   }
 }
 

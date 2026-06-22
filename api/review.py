@@ -76,6 +76,55 @@ async def date_review_count(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/review/search")
+async def search_documents(
+    q: str = "",
+    doc_id: int = None,
+    db: Session = Depends(get_db),
+):
+    """Search any document by filename, client name, or ID for manual editing."""
+    try:
+        if not q and not doc_id:
+            return {"success": True, "count": 0, "documents": []}
+
+        query = db.query(Document)
+        if doc_id:
+            query = query.filter(Document.id == doc_id)
+        else:
+            like = f"%{q}%"
+            query = query.filter(
+                or_(
+                    Document.filename.ilike(like),
+                    Document.client_canonical.ilike(like),
+                )
+            )
+
+        docs = query.order_by(Document.created_at.desc()).limit(25).all()
+        return {
+            "success": True,
+            "count": len(docs),
+            "documents": [
+                {
+                    "id": d.id,
+                    "filename": d.filename,
+                    "needs_date_review": d.needs_date_review or False,
+                    "needs_client_state_review": d.needs_review or False,
+                    "date_created": d.date_created.isoformat() if d.date_created else None,
+                    "date_confidence": d.date_confidence,
+                    "client_canonical": d.client_canonical,
+                    "client_confidence": d.client_confidence,
+                    "state": d.state.strip() if d.state else None,
+                    "state_confidence": d.state_confidence,
+                    "created_at": d.created_at.isoformat() if d.created_at else None,
+                }
+                for d in docs
+            ],
+        }
+    except Exception as e:
+        logger.error(f"Document search error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/review/dates")
 async def list_date_review(db: Session = Depends(get_db)):
     """Return documents flagged for manual review of date, client, or state."""
