@@ -53,7 +53,6 @@ async def get_client_facets(db: Session = Depends(get_db)):
             .filter(Document.client_canonical != "")
             .group_by(Document.client_canonical)
             .order_by(sa_func.count(Document.id).desc())
-            .limit(200)
             .all()
         )
         return {"success": True, "clients": [r[0] for r in rows]}
