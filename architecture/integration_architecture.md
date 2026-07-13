@@ -16,10 +16,8 @@ graph TB
     end
 
     subgraph "AI Service Integrations"
-        ANTHROPIC_API[Anthropic Claude API]
-        OPENAI_API[OpenAI GPT API]
-        GEMINI_API[Google Gemini API]
-        OCR_ENGINE[Tesseract OCR Engine]
+        ANTHROPIC_API[Anthropic Claude API - Analysis + OCR]
+        OPENAI_API[OpenAI API - Embeddings Only]
     end
 
     subgraph "Storage Integrations"
@@ -52,11 +50,8 @@ graph TB
 
     FASTAPI_APP --> ANTHROPIC_API
     FASTAPI_APP --> OPENAI_API
-    FASTAPI_APP --> GEMINI_API
     CELERY_WORKERS --> ANTHROPIC_API
     CELERY_WORKERS --> OPENAI_API
-    CELERY_WORKERS --> GEMINI_API
-    CELERY_WORKERS --> OCR_ENGINE
 
     FASTAPI_APP --> AWS_S3
     FASTAPI_APP --> S3_COMPATIBLE
@@ -86,40 +81,32 @@ graph TB
 
 ## AI Service Integration Architecture
 
+There is no dynamic provider selection, fallback, or load balancing between
+providers — Anthropic and OpenAI have fixed, non-interchangeable roles.
+Anthropic performs all document analysis and OCR; OpenAI performs embeddings
+only. See `services/ai_service.py`.
+
 ```mermaid
 graph TD
     subgraph "AI Service Abstraction"
         AI_SERVICE[AIService Class]
-        PROVIDER_SELECTION[Provider Selection Logic]
-        FALLBACK_MECHANISM[Fallback Mechanism]
-        LOAD_BALANCING[Load Balancing]
     end
 
-    subgraph "Anthropic Integration"
+    subgraph "Anthropic Integration - Analysis + OCR"
         ANTHROPIC_CLIENT[Anthropic Client]
-        CLAUDE_MODELS[Claude Models]
+        CLAUDE_MODELS[Claude Sonnet Models]
         ANTHROPIC_AUTH[API Key Authentication]
-        ANTHROPIC_RATE_LIMITS[Rate Limiting]
         ANTHROPIC_ERROR_HANDLING[Error Handling]
     end
 
-    subgraph "OpenAI Integration"
+    subgraph "OpenAI Integration - Embeddings Only"
         OPENAI_CLIENT[OpenAI Client]
-        GPT_MODELS[GPT Models]
+        EMBEDDING_MODEL[text-embedding-3-small]
         OPENAI_AUTH[API Key Authentication]
-        OPENAI_RATE_LIMITS[Rate Limiting]
         OPENAI_ERROR_HANDLING[Error Handling]
     end
 
-    subgraph "Google Gemini Integration"
-        GEMINI_CLIENT[Gemini Client]
-        GEMINI_MODELS[Gemini Models]
-        GEMINI_AUTH[API Key Authentication]
-        GEMINI_RATE_LIMITS[Rate Limiting]
-        GEMINI_ERROR_HANDLING[Error Handling]
-    end
-
-    subgraph "Request Processing"
+    subgraph "Analysis Request Processing"
         REQUEST_FORMATTING[Request Formatting]
         PROMPT_MANAGEMENT[Prompt Management]
         RESPONSE_PARSING[Response Parsing]
@@ -127,49 +114,29 @@ graph TD
     end
 
     subgraph "Error Handling & Retry"
-        CIRCUIT_BREAKER[Circuit Breaker Pattern]
-        EXPONENTIAL_BACKOFF[Exponential Backoff]
-        RETRY_LOGIC[Retry Logic]
-        FALLBACK_RESPONSES[Fallback Responses]
+        RATE_LIMIT_RETRY[Rate-Limit Retry, Exponential Backoff]
+        MARK_FAILED[Mark Document FAILED]
     end
 
-    AI_SERVICE --> PROVIDER_SELECTION
-    PROVIDER_SELECTION --> FALLBACK_MECHANISM
-    FALLBACK_MECHANISM --> LOAD_BALANCING
-
-    PROVIDER_SELECTION --> ANTHROPIC_CLIENT
-    PROVIDER_SELECTION --> OPENAI_CLIENT
-    PROVIDER_SELECTION --> GEMINI_CLIENT
+    AI_SERVICE --> ANTHROPIC_CLIENT
+    AI_SERVICE --> OPENAI_CLIENT
 
     ANTHROPIC_CLIENT --> CLAUDE_MODELS
     ANTHROPIC_CLIENT --> ANTHROPIC_AUTH
-    ANTHROPIC_CLIENT --> ANTHROPIC_RATE_LIMITS
     ANTHROPIC_CLIENT --> ANTHROPIC_ERROR_HANDLING
 
-    OPENAI_CLIENT --> GPT_MODELS
+    OPENAI_CLIENT --> EMBEDDING_MODEL
     OPENAI_CLIENT --> OPENAI_AUTH
-    OPENAI_CLIENT --> OPENAI_RATE_LIMITS
     OPENAI_CLIENT --> OPENAI_ERROR_HANDLING
 
-    GEMINI_CLIENT --> GEMINI_MODELS
-    GEMINI_CLIENT --> GEMINI_AUTH
-    GEMINI_CLIENT --> GEMINI_RATE_LIMITS
-    GEMINI_CLIENT --> GEMINI_ERROR_HANDLING
-
     ANTHROPIC_CLIENT --> REQUEST_FORMATTING
-    OPENAI_CLIENT --> REQUEST_FORMATTING
-    GEMINI_CLIENT --> REQUEST_FORMATTING
-
     REQUEST_FORMATTING --> PROMPT_MANAGEMENT
     PROMPT_MANAGEMENT --> RESPONSE_PARSING
     RESPONSE_PARSING --> RESULT_VALIDATION
 
-    ANTHROPIC_ERROR_HANDLING --> CIRCUIT_BREAKER
-    OPENAI_ERROR_HANDLING --> EXPONENTIAL_BACKOFF
-    GEMINI_ERROR_HANDLING --> RETRY_LOGIC
-    CIRCUIT_BREAKER --> FALLBACK_RESPONSES
-    EXPONENTIAL_BACKOFF --> FALLBACK_RESPONSES
-    RETRY_LOGIC --> FALLBACK_RESPONSES
+    ANTHROPIC_ERROR_HANDLING --> RATE_LIMIT_RETRY
+    OPENAI_ERROR_HANDLING --> RATE_LIMIT_RETRY
+    RATE_LIMIT_RETRY --> MARK_FAILED
 ```
 
 ## Storage Integration Architecture

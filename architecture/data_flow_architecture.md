@@ -70,12 +70,9 @@ flowchart TD
     end
 
     subgraph "AI Services"
-        AI_ANALYZE --> ANTHROPIC[Anthropic Claude]
-        AI_ANALYZE --> OPENAI[OpenAI GPT]
-        AI_ANALYZE --> GEMINI[Google Gemini]
+        AI_ANALYZE --> ANTHROPIC[Anthropic Claude - Analysis/OCR]
         AI_ANALYZE_PAGE --> ANTHROPIC
-        AI_ANALYZE_PAGE --> OPENAI
-        AI_ANALYZE_PAGE --> GEMINI
+        GENERATE_EMBEDDINGS --> OPENAI[OpenAI - Embeddings]
     end
 
     subgraph "Database Updates"
@@ -102,13 +99,12 @@ flowchart LR
     end
 
     subgraph "Text Extraction"
-        PDF --> PDF_EXTRACT[PDF Text Extraction]
-        IMAGE --> OCR[Tesseract OCR]
+        PDF --> AI_OCR[Claude Vision OCR - page rendered to image]
+        IMAGE --> AI_OCR
         TEXT --> DIRECT_READ[Direct Text Read]
         DOCX --> DOCX_EXTRACT[DOCX Text Extraction]
 
-        PDF_EXTRACT --> EXTRACTED_TEXT[Extracted Text]
-        OCR --> EXTRACTED_TEXT
+        AI_OCR --> EXTRACTED_TEXT[Extracted Text]
         DIRECT_READ --> EXTRACTED_TEXT
         DOCX_EXTRACT --> EXTRACTED_TEXT
     end

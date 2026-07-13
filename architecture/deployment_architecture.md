@@ -44,9 +44,8 @@ graph TB
     end
 
     subgraph "External Services"
-        ANTHROPIC[Anthropic Claude API]
-        OPENAI[OpenAI API]
-        GEMINI[Google Gemini API]
+        ANTHROPIC[Anthropic Claude API - Analysis + OCR]
+        OPENAI[OpenAI API - Embeddings Only]
     end
 
     subgraph "Monitoring & Logging"
@@ -95,11 +94,17 @@ graph TB
     WORKER3 --> S3
 
     WEB1 --> ANTHROPIC
+    WEB1 --> OPENAI
+    WEB2 --> ANTHROPIC
     WEB2 --> OPENAI
-    WEB3 --> GEMINI
+    WEB3 --> ANTHROPIC
+    WEB3 --> OPENAI
     WORKER1 --> ANTHROPIC
+    WORKER1 --> OPENAI
+    WORKER2 --> ANTHROPIC
     WORKER2 --> OPENAI
-    WORKER3 --> GEMINI
+    WORKER3 --> ANTHROPIC
+    WORKER3 --> OPENAI
 
     WEB1 --> RENDER_LOGS
     WEB2 --> RENDER_LOGS

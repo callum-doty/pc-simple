@@ -169,10 +169,8 @@ graph LR
     end
 
     subgraph "AI & Machine Learning"
-        ANTHROPIC_TECH[Anthropic Claude]
-        OPENAI_TECH[OpenAI GPT]
-        GEMINI_TECH[Google Gemini]
-        TESSERACT[Tesseract OCR]
+        ANTHROPIC_TECH[Anthropic Claude - Analysis + OCR]
+        OPENAI_TECH[OpenAI - Embeddings Only]
         EMBEDDINGS[Vector Embeddings]
     end
 

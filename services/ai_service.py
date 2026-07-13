@@ -2,20 +2,24 @@
 AI service - handles document analysis using LLM APIs
 Consolidates OCR, text extraction, and AI analysis into a single service
 Now integrated with PromptManager for sophisticated analysis
+
+Provider split: Anthropic (Claude) performs all document analysis and OCR.
+OpenAI is used solely for embeddings (text-embedding-3-small). There is no
+Gemini or OpenAI-as-analysis-provider path — the pipeline commits to this
+split rather than carrying unused multi-provider branching.
 """
 
 import asyncio
+import io
 import logging
 from typing import Dict, Any, List, Optional, Tuple, AsyncGenerator, Generator
 import json
 import base64
 from pathlib import Path
-import io
-from PIL import Image
 import fitz  # PyMuPDF
 import anthropic
 import openai
-import google.generativeai as genai
+from docx import Document as DocxDocument
 from sqlalchemy.orm import Session
 
 from config import get_settings
@@ -36,18 +40,10 @@ class AIService:
         self.taxonomy_service = TaxonomyService(db=self.db)
         self.prompt_manager = PromptManager(taxonomy_service=self.taxonomy_service)
 
-        # Initialize AI clients with explicit parameter handling
+        # Initialize AI clients with explicit parameter handling.
+        # anthropic_client performs all analysis/OCR; openai_client is embeddings-only.
         self.anthropic_client = None
         self.openai_client = None
-        self.gemini_client = None
-
-        if settings.gemini_api_key:
-            try:
-                genai.configure(api_key=settings.gemini_api_key)
-                self.gemini_client = genai.GenerativeModel("gemini-pro-vision")
-            except Exception as e:
-                logger.warning(f"Failed to initialize Gemini client: {str(e)}")
-                self.gemini_client = None
 
         if settings.anthropic_api_key:
             try:
@@ -65,28 +61,17 @@ class AIService:
                 logger.warning(f"Failed to initialize OpenAI client: {str(e)}")
                 self.openai_client = None
 
-        # Determine which AI provider to use
+        # Anthropic is the sole document-analysis/OCR provider.
         self.ai_provider = self._determine_ai_provider()
 
     def _determine_ai_provider(self) -> str:
-        """Determine which AI provider to use"""
-        if settings.default_ai_provider == "gemini" and self.gemini_client:
-            return "gemini"
-        elif settings.default_ai_provider == "anthropic" and self.anthropic_client:
+        """Anthropic is the sole analysis/OCR provider; OpenAI is embeddings-only."""
+        if self.anthropic_client:
             return "anthropic"
-        elif settings.default_ai_provider == "openai" and self.openai_client:
-            return "openai"
-        elif self.gemini_client:
-            return "gemini"
-        elif self.anthropic_client:
-            return "anthropic"
-        elif self.openai_client:
-            return "openai"
-        else:
-            logger.warning(
-                "No AI provider configured. AI analysis will be disabled. Please set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY"
-            )
-            return "none"
+        logger.warning(
+            "No AI provider configured. AI analysis will be disabled. Please set ANTHROPIC_API_KEY."
+        )
+        return "none"
 
     async def analyze_document(
         self, file_path: str, filename: str, analysis_type: str = "unified"
@@ -122,6 +107,17 @@ class AIService:
             # Step 2: Determine file type and extract text
             file_type = self._get_file_type(filename)
             extracted_text = await self._extract_text(file_content, file_type, filename)
+
+            # Image and PDF types send the rendered page/image itself to the model,
+            # so empty extracted_text is fine there. Every other type relies entirely
+            # on extracted_text — if it's empty, there's nothing to analyze, and
+            # calling the model anyway produces a fabricated result grounded in
+            # nothing but the filename. Fail loudly instead.
+            if not extracted_text.strip() and file_type not in ("image", "pdf"):
+                raise ValueError(
+                    f"No text could be extracted from '{filename}' (file_type={file_type}). "
+                    f"The file may be empty, corrupted, or in an unsupported format."
+                )
 
             # Step 3: Perform AI analysis based on type
             if analysis_type == "unified":
@@ -383,22 +379,12 @@ class AIService:
             )
 
             # Call the AI service
-            if self.ai_provider == "gemini":
-                return await self._call_gemini_api_with_system(
-                    prompt_data["system"], enhanced_prompt, image_data
-                )
-            elif self.ai_provider == "anthropic":
+            if self.ai_provider == "anthropic":
                 return await self._call_anthropic_api_with_system(
                     prompt_data["system"], enhanced_prompt, image_data
                 )
-            elif self.ai_provider == "openai":
-                return await self._call_openai_api_with_system(
-                    prompt_data["system"], enhanced_prompt, image_data
-                )
-            elif self.ai_provider == "none":
-                return {"error": "No AI provider configured"}
             else:
-                raise ValueError(f"Unsupported AI provider: {self.ai_provider}")
+                return {"error": "No AI provider configured"}
 
         except Exception as e:
             logger.error(f"Error running analysis prompt: {str(e)}")
@@ -563,15 +549,29 @@ class AIService:
             return ""
 
     async def _extract_text_from_document(self, file_content: bytes) -> str:
-        """Extract text from Word documents"""
+        """
+        Extract text from a .docx Word document via python-docx.
+        Legacy binary .doc files are not supported — python-docx raises on them,
+        which surfaces as empty text and fails the document with a clear error
+        rather than silently analyzing nothing.
+        """
         try:
-            # For now, return empty string
-            # In a full implementation, you'd use python-docx or similar
-            logger.warning("Document text extraction not implemented yet")
-            return ""
+            document = DocxDocument(io.BytesIO(file_content))
+
+            parts = [p.text for p in document.paragraphs if p.text.strip()]
+
+            for table in document.tables:
+                for row in table.rows:
+                    row_text = " | ".join(
+                        cell.text.strip() for cell in row.cells if cell.text.strip()
+                    )
+                    if row_text:
+                        parts.append(row_text)
+
+            return "\n".join(parts)
 
         except Exception as e:
-            logger.error(f"Error extracting text from document: {str(e)}")
+            logger.error(f"Error extracting text from Word document: {str(e)}")
             return ""
 
     def _prepare_image_data(self, file_content: bytes, file_type: str) -> Optional[str]:
@@ -598,86 +598,39 @@ class AIService:
     async def _call_ai_for_raw_text(
         self, system_prompt: str, user_prompt: str, image_data: Optional[str] = None
     ) -> str:
-        """Call the configured AI provider and return the raw text response."""
+        """Call Anthropic and return the raw text response."""
         try:
-            model_map = {
-                "anthropic": "claude-sonnet-4-6",
-                "openai": "gpt-4o",
-                "gemini": "gemini-pro-vision",
-            }
-            model = model_map.get(self.ai_provider)
-
-            if not model:
-                logger.warning(
-                    f"OCR not supported for the '{self.ai_provider}' provider."
-                )
+            if not self.anthropic_client:
+                logger.warning("OCR not available: ANTHROPIC_API_KEY not configured.")
                 return ""
 
-            if self.ai_provider == "anthropic" and self.anthropic_client:
-                messages = [
-                    {
-                        "role": "user",
-                        "content": (
-                            [
-                                {
-                                    "type": "image",
-                                    "source": {
-                                        "type": "base64",
-                                        "media_type": "image/png",
-                                        "data": image_data,
-                                    },
+            messages = [
+                {
+                    "role": "user",
+                    "content": (
+                        [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/png",
+                                    "data": image_data,
                                 },
-                                {"type": "text", "text": user_prompt},
-                            ]
-                            if image_data
-                            else user_prompt
-                        ),
-                    }
-                ]
-                response = self.anthropic_client.messages.create(
-                    model=model,
-                    max_tokens=4000,
-                    system=system_prompt,
-                    messages=messages,
-                )
-                return response.content[0].text.strip()
-
-            elif self.ai_provider == "openai" and self.openai_client:
-                content = [{"type": "text", "text": user_prompt}]
-                if image_data:
-                    content.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{image_data}"},
-                        }
-                    )
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": content},
-                ]
-                response = self.openai_client.chat.completions.create(
-                    model=model, messages=messages, max_tokens=4000
-                )
-                return response.choices[0].message.content.strip()
-
-            elif self.ai_provider == "gemini" and self.gemini_client:
-                prompt_parts = []
-                if image_data:
-                    image_bytes = base64.b64decode(image_data)
-                    img = Image.open(io.BytesIO(image_bytes))
-                    prompt_parts.append(img)
-
-                # Gemini doesn't have a system prompt, so prepend it.
-                full_prompt = (
-                    f"System Prompt: {system_prompt}\n\nUser Prompt: {user_prompt}"
-                )
-                prompt_parts.append(full_prompt)
-
-                response = self.gemini_client.generate_content(prompt_parts)
-                return response.text.strip()
-
-            else:
-                return ""
+                            },
+                            {"type": "text", "text": user_prompt},
+                        ]
+                        if image_data
+                        else user_prompt
+                    ),
+                }
+            ]
+            response = self.anthropic_client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=4000,
+                system=system_prompt,
+                messages=messages,
+            )
+            return response.content[0].text.strip()
 
         except Exception as e:
             logger.error(f"Error calling AI for raw text OCR: {str(e)}")
@@ -728,73 +681,6 @@ class AIService:
 
         except Exception as e:
             logger.error(f"Error calling Anthropic API: {str(e)}")
-            return {"error": str(e)}
-
-    async def _call_gemini_api_with_system(
-        self, system_prompt: str, user_prompt: str, image_data: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Call Gemini API with system and user prompts"""
-        try:
-            prompt_parts = [user_prompt]
-            if image_data:
-                image_bytes = base64.b64decode(image_data)
-                img = Image.open(io.BytesIO(image_bytes))
-                prompt_parts.insert(0, img)
-
-            response = self.gemini_client.generate_content(prompt_parts)
-            response_text = response.text
-
-            try:
-                return json.loads(response_text)
-            except json.JSONDecodeError:
-                return self._extract_json_from_response(response_text)
-
-        except Exception as e:
-            logger.error(f"Error calling Gemini API: {str(e)}")
-            return {"error": str(e)}
-
-    async def _call_openai_api_with_system(
-        self, system_prompt: str, user_prompt: str, image_data: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Call OpenAI API with system and user prompts"""
-        try:
-            messages = [{"role": "system", "content": system_prompt}]
-
-            if image_data:
-                # Include image in the message
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": user_prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{image_data}"
-                                },
-                            },
-                        ],
-                    }
-                )
-            else:
-                messages.append({"role": "user", "content": user_prompt})
-
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4o" if image_data else "gpt-4",
-                messages=messages,
-                max_tokens=3000,  # Increased for more detailed responses
-            )
-
-            # Parse JSON response
-            response_text = response.choices[0].message.content
-            try:
-                return json.loads(response_text)
-            except json.JSONDecodeError:
-                # If JSON parsing fails, try to extract JSON from response
-                return self._extract_json_from_response(response_text)
-
-        except Exception as e:
-            logger.error(f"Error calling OpenAI API: {str(e)}")
             return {"error": str(e)}
 
     def _extract_json_from_response(self, response_text: str) -> Dict[str, Any]:
@@ -1145,40 +1031,27 @@ class AIService:
         return text, provenance
 
     async def generate_embeddings(self, text: str) -> Optional[List[float]]:
-        """Generate embeddings for text using the configured AI provider."""
+        """Generate embeddings for text using OpenAI (embeddings-only provider)."""
         import time, asyncio
         _t = time.perf_counter()
         try:
-            if self.ai_provider == "openai" and self.openai_client:
-                # NOTE: openai_client is the synchronous client — run in executor to avoid
-                # blocking the event loop. Replace with AsyncOpenAI to remove this overhead.
-                loop = asyncio.get_event_loop()
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: self.openai_client.embeddings.create(
-                        model="text-embedding-3-small",
-                        input=text,
-                    ),
-                )
-                logger.info(f"[PERF] openai embeddings.create: {(time.perf_counter()-_t)*1000:.0f}ms")
-                return response.data[0].embedding
-            elif self.ai_provider == "gemini" and self.gemini_client:
-                # Use Gemini for embeddings
-                response = genai.embed_content(
-                    model="models/embedding-001",
-                    content=text,
-                    task_type="retrieval_document",
-                )
-                return response["embedding"]
-            else:
-                logger.warning(
-                    f"Embeddings not supported for the '{self.ai_provider}' provider."
-                )
+            if not self.openai_client:
+                logger.warning("Embeddings not available: OPENAI_API_KEY not configured.")
                 return None
-        except Exception as e:
-            logger.error(
-                f"Error generating embeddings with {self.ai_provider}: {str(e)}"
+            # NOTE: openai_client is the synchronous client — run in executor to avoid
+            # blocking the event loop. Replace with AsyncOpenAI to remove this overhead.
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.openai_client.embeddings.create(
+                    model="text-embedding-3-small",
+                    input=text,
+                ),
             )
+            logger.info(f"[PERF] openai embeddings.create: {(time.perf_counter()-_t)*1000:.0f}ms")
+            return response.data[0].embedding
+        except Exception as e:
+            logger.error(f"Error generating embeddings with openai: {str(e)}")
             return None
 
     def get_ai_info(self) -> Dict[str, Any]:
@@ -1187,10 +1060,8 @@ class AIService:
             "ai_provider": self.ai_provider,
             "anthropic_available": self.anthropic_client is not None,
             "openai_available": self.openai_client is not None,
-            "gemini_available": self.gemini_client is not None,
             "supports_vision": True,
-            "supports_embeddings": self.openai_client is not None
-            or self.gemini_client is not None,
+            "supports_embeddings": self.openai_client is not None,
             "prompt_manager_enabled": True,
             "available_analysis_types": [
                 "unified",

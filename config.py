@@ -31,11 +31,10 @@ class Settings(BaseSettings):
     max_file_size: int = 100 * 1024 * 1024  # 100MB
     allowed_extensions: list = [".pdf", ".jpg", ".jpeg", ".png", ".txt", ".docx"]
 
-    # AI/LLM settings
+    # AI/LLM settings.
+    # Anthropic performs all document analysis and OCR; OpenAI is embeddings-only.
     anthropic_api_key: str = ""
     openai_api_key: str = ""
-    gemini_api_key: str = ""
-    default_ai_provider: str = "openai"  # anthropic, openai, gemini
 
     # Search settings
     search_results_per_page: int = 20
@@ -137,12 +136,14 @@ class ProductionSettings(Settings):
         ):
             raise ValueError("SECRET_KEY must be set in production")
 
-        if (
-            not self.anthropic_api_key
-            and not self.openai_api_key
-            and not self.gemini_api_key
-        ):
-            raise ValueError("At least one AI API key must be set in production")
+        if not self.anthropic_api_key:
+            raise ValueError(
+                "ANTHROPIC_API_KEY must be set in production (used for all document analysis and OCR)"
+            )
+        if not self.openai_api_key:
+            raise ValueError(
+                "OPENAI_API_KEY must be set in production (used for embeddings/vector search)"
+            )
 
         # Ensure password protection is properly configured
         if self.require_app_auth:

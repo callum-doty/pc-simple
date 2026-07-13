@@ -7,7 +7,7 @@ An AI-powered document processing and search system built with FastAPI. Upload d
 ### 🤖 AI-Powered Analysis
 
 - **Automatic Text Extraction**: OCR for images, direct extraction for PDFs and text files
-- **AI Content Analysis**: Powered by Claude, GPT, or Gemini for intelligent document understanding
+- **AI Content Analysis**: Powered by Claude for document understanding/OCR, with OpenAI embeddings for vector search
 - **Smart Categorization**: Automatic taxonomy classification and keyword extraction
 - **Content Summarization**: AI-generated summaries and insights
 
@@ -60,8 +60,7 @@ An AI-powered document processing and search system built with FastAPI. Upload d
 - Python 3.11+
 - PostgreSQL (or SQLite for development)
 - Redis (for background processing)
-- AI API Key (Anthropic, OpenAI, or Google)
-- Tesseract OCR (for image text extraction)
+- Anthropic API key (document analysis/OCR) and OpenAI API key (embeddings)
 
 ### Installation
 
@@ -90,10 +89,9 @@ DATABASE_URL=postgresql://user:password@localhost/documents
 # or for development:
 DATABASE_URL=sqlite:///./documents.db
 
-# AI Service (choose one)
-ANTHROPIC_API_KEY=your-anthropic-key
-OPENAI_API_KEY=your-openai-key
-GEMINI_API_KEY=your-gemini-key
+# AI Service — both are required
+ANTHROPIC_API_KEY=your-anthropic-key    # document analysis + OCR
+OPENAI_API_KEY=your-openai-key          # embeddings for vector search
 
 # Background Processing
 REDIS_URL=redis://localhost:6379/0
@@ -129,16 +127,13 @@ celery -A worker worker --loglevel=info
 | Variable            | Description                                    | Default                    | Required |
 | ------------------- | ---------------------------------------------- | -------------------------- | -------- |
 | `DATABASE_URL`      | Database connection string                     | SQLite                     | No       |
-| `ANTHROPIC_API_KEY` | Anthropic Claude API key                       | -                          | Yes\*    |
-| `OPENAI_API_KEY`    | OpenAI API key                                 | -                          | Yes\*    |
-| `GEMINI_API_KEY`    | Google Gemini API key                          | -                          | Yes\*    |
+| `ANTHROPIC_API_KEY` | Anthropic Claude API key — document analysis + OCR | -                     | Yes      |
+| `OPENAI_API_KEY`    | OpenAI API key — embeddings for vector search  | -                          | Yes      |
 | `REDIS_URL`         | Redis connection for background tasks          | `redis://localhost:6379/0` | Yes      |
 | `STORAGE_TYPE`      | Storage backend (`local`, `s3`, `render_disk`) | `local`                    | No       |
 | `STORAGE_PATH`      | Local storage directory                        | `./storage`                | No       |
 | `MAX_FILE_SIZE`     | Maximum file size in bytes                     | `100MB`                    | No       |
 | `SECRET_KEY`        | Application secret key                         | Generated                  | Yes      |
-
-\*At least one AI API key is required
 
 ### Storage Options
 
@@ -290,7 +285,6 @@ CMD ["python", "main.py"]
 
 ```bash
 pip install -r requirements.txt
-sudo apt-get install tesseract-ocr  # For OCR
 ```
 
 2. **Setup Services**

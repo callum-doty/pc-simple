@@ -9,13 +9,25 @@ Ordered by operational risk — implement P0 fixes before P1, P1 before P2.
 
 | ID | Title | Priority | Effort | Status |
 |----|-------|----------|--------|--------|
-| [FIX-001](FIX-001-zombie-idempotency.md) | Zombie task recovery + processing lock | P0 | 3 hrs | TODO |
-| [FIX-002](FIX-002-llm-cost-governance.md) | LLM cost governance + retry checkpointing | P0 | 4 hrs | TODO |
-| [FIX-003](FIX-003-migration-pre-deploy.md) | Remove Alembic from app startup | P0 | 30 min | TODO |
-| [FIX-004](FIX-004-cors-restriction.md) | Restrict CORS from wildcard to specific origin | P0 | 30 min | TODO |
-| [FIX-005](FIX-005-s3-production-enforcement.md) | Enforce S3 storage in production startup | P1 | 1 hr | TODO |
-| [FIX-006](FIX-006-main-py-extraction.md) | Extract routes out of main.py | P1 | 1–2 days | TODO |
-| [FIX-007](FIX-007-jsonb-typed-schemas.md) | Typed Pydantic schemas for JSONB fields | P1 | 1 day | TODO |
+| [FIX-001](FIX-001-zombie-idempotency.md) | Zombie task recovery + processing lock | P0 | 3 hrs | Done |
+| [FIX-002](FIX-002-llm-cost-governance.md) | LLM cost governance + retry checkpointing | P0 | 4 hrs | Done |
+| [FIX-003](FIX-003-migration-pre-deploy.md) | Remove Alembic from app startup | P0 | 30 min | Done |
+| [FIX-004](FIX-004-cors-restriction.md) | Restrict CORS from wildcard to specific origin | P0 | 30 min | Done |
+| [FIX-005](FIX-005-s3-production-enforcement.md) | Enforce S3 storage in production startup | P1 | 1 hr | Done |
+| [FIX-006](FIX-006-main-py-extraction.md) | Extract routes out of main.py | P1 | 1–2 days | Partial — see note below |
+| [FIX-007](FIX-007-jsonb-typed-schemas.md) | Typed Pydantic schemas for JSONB fields | P1 | 1 day | Done |
+
+All seven fixes were implemented in commit `1216073` ("architecture fixes"). This
+table was not updated at the time, so it read "TODO" for all seven long after the
+work landed — treat status columns in this repo's docs as unverified until checked
+against code.
+
+**FIX-006 note:** `api/search.py`, `api/taxonomy.py`, `api/review.py`, and `api/admin.py`
+were extracted as planned. `api/pages.py` and `api/system.py` were not — `main.py`
+still holds the page routes (`/`, `/login`, `/logout`, `/search`, `/upload`,
+`/admin/dashboard`, `/review/dates`) and the system routes (`/health`, `/health/*`,
+`/previews/*`, `/files/*`), leaving `main.py` at ~1,024 lines. Not urgent, but the
+original doc's route-group table above is still accurate for what's left.
 
 ---
 

@@ -43,11 +43,9 @@ graph TB
     end
 
     subgraph "External Services"
-        ANTHROPIC[Anthropic Claude]
-        OPENAI[OpenAI GPT]
-        GEMINI[Google Gemini]
+        ANTHROPIC[Anthropic Claude - Analysis + OCR]
+        OPENAI[OpenAI - Embeddings]
         S3[AWS S3 / Compatible]
-        TESSERACT[Tesseract OCR]
     end
 
     subgraph "Infrastructure"
@@ -81,8 +79,6 @@ graph TB
     DASHBOARD_SVC --> POSTGRES
     AI_SVC --> ANTHROPIC
     AI_SVC --> OPENAI
-    AI_SVC --> GEMINI
-    AI_SVC --> TESSERACT
     STORAGE_SVC --> S3
     STORAGE_SVC --> STORAGE
     PREVIEW_SVC --> STORAGE_SVC
@@ -135,11 +131,9 @@ graph LR
     end
 
     subgraph "AI & ML"
-        ANTHROPIC_API[Anthropic Claude]
-        OPENAI_API[OpenAI GPT]
-        GEMINI_API[Google Gemini]
+        ANTHROPIC_API[Anthropic Claude - Analysis + OCR]
+        OPENAI_API[OpenAI - Embeddings Only]
         EMBEDDINGS[Vector Embeddings]
-        OCR[Tesseract OCR]
     end
 
     subgraph "Storage & Files"
@@ -200,15 +194,14 @@ graph LR
   - JSONB for flexible schema storage
   - Optimized indexes for performance
 
-### 4. **Multi-Provider AI Integration**
+### 4. **AI Integration**
 
-- **Providers**: Anthropic Claude, OpenAI GPT, Google Gemini
+- **Providers**: Anthropic Claude (document analysis, OCR), OpenAI (embeddings only)
 - **Capabilities**:
-  - Text extraction from documents and images
-  - Content analysis and summarization
-  - Keyword extraction and categorization
-  - Vector embedding generation
-  - OCR processing with Tesseract
+  - Text extraction from documents and images (Claude vision)
+  - Content analysis and summarization (Claude)
+  - Keyword extraction and categorization (Claude)
+  - Vector embedding generation (OpenAI `text-embedding-3-small`)
 
 ### 5. **Flexible Storage System**
 
@@ -224,9 +217,8 @@ graph LR
 ```mermaid
 graph TD
     subgraph "AI Services"
-        ANTHROPIC[Anthropic Claude API]
-        OPENAI[OpenAI API]
-        GEMINI[Google Gemini API]
+        ANTHROPIC[Anthropic Claude API - Analysis + OCR]
+        OPENAI[OpenAI API - Embeddings]
     end
 
     subgraph "Storage Services"
@@ -242,19 +234,16 @@ graph TD
     end
 
     subgraph "System Dependencies"
-        TESSERACT_OCR[Tesseract OCR Engine]
         PYTHON_LIBS[Python Libraries]
         OS_DEPS[Operating System Dependencies]
     end
 
     APP[Document Catalog Application] --> ANTHROPIC
     APP --> OPENAI
-    APP --> GEMINI
     APP --> AWS_S3
     APP --> COMPATIBLE_S3
     APP --> LOCAL_FS
     APP --> RENDER_PLATFORM
-    APP --> TESSERACT_OCR
 ```
 
 ## System Characteristics
