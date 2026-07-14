@@ -41,6 +41,12 @@ class KeywordMapping(BaseModel):
 
 class AIAnalysis(BaseModel):
     schema_version: int = 1
+    # Which PromptManager.PROMPT_VERSION produced this analysis. None means the
+    # document was processed before prompt versioning was introduced — treat as
+    # unknown, not as version 1. A later prompt_version on otherwise-similar
+    # documents is a signal that a prompt wording change may explain a shift
+    # in extracted data, before assuming a real-world trend. See PromptManager.
+    prompt_version: Optional[int] = None
     summary: Optional[str] = None
     page_count: Optional[int] = None
     analysis_type: Optional[str] = None
@@ -162,6 +168,11 @@ class FileMetadata(BaseModel):
     # checkpointing (FIX-002). Cleared on task completion or reprocess reset.
     processing_checkpoint: Optional[int] = None
     feature_extraction: Optional[FeatureExtractionMeta] = None
+    # Which AIService.OCR_PROMPT_VERSION produced extracted_text (only set for
+    # pdf/image documents, which go through OCR — text/docx don't use OCR).
+    # None means either no OCR was used, or the document predates this field.
+    # See AIService._extract_text_from_image.
+    ocr_prompt_version: Optional[int] = None
 
     # Extra keys (e.g. legacy fields, forward-compatible additions) are passed
     # through transparently so old documents never fail deserialisation.

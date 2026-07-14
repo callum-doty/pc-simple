@@ -8,6 +8,22 @@ from services.taxonomy_service import TaxonomyService
 class PromptManager:
     """Manager for document analysis prompts with dynamic taxonomy injection"""
 
+    # Bump this whenever the wording of any prompt template in this class
+    # changes in a way that could plausibly change extracted data (not just
+    # cosmetic edits) — e.g. changing the taxonomy instructions, the output
+    # schema, or the analysis instructions. This is deliberately coarse (one
+    # version for the whole class, not per prompt method): the "unified"
+    # prompt is the only one exercised by the normal document pipeline, and
+    # the modular/specific prompts are reachable only via manual admin
+    # reprocessing, so a single counter is enough to flag "something in the
+    # prompt set changed" for downstream data analysis without the overhead
+    # of tracking each of the ~8 prompt methods independently.
+    #
+    # Changelog:
+    #   1 — initial versioned baseline (2026-07-14). No prompt wording changed
+    #       when this was introduced; this just establishes the starting point.
+    PROMPT_VERSION = 1
+
     def __init__(self, taxonomy_service=None):
         self.model_capabilities = self._get_model_capabilities()
         self.base_system_prompt = """You are an expert document analyzer specializing in political and campaign materials. 

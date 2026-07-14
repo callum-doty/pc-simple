@@ -10,8 +10,10 @@ split rather than carrying unused multi-provider branching.
 """
 
 import asyncio
+import html
 import io
 import logging
+import re
 from typing import Dict, Any, List, Optional, Tuple, AsyncGenerator, Generator
 import json
 import base64
@@ -33,6 +35,22 @@ settings = get_settings()
 
 class AIService:
     """Unified AI service for document analysis with PromptManager integration"""
+
+    # Bump whenever the OCR system/user prompt wording changes in a way that
+    # could change what gets extracted (not just cosmetic). Stored in
+    # Document.file_metadata.ocr_prompt_version for every OCR'd document (pdf
+    # or image) so a shift in extracted_text quality/shape can be correlated
+    # with a known prompt change instead of investigated as a data mystery.
+    #
+    # Changelog:
+    #   1 — original prompt ("preserve original formatting as much as
+    #       possible" with no output-format constraint). Undocumented at the
+    #       time; not recorded on any document processed under it.
+    #   2 — (2026-07-14) explicit plain-text-only instruction: forbids
+    #       markdown (**bold**, # headers) and HTML entities (&nbsp;), which
+    #       version 1 allowed the model to produce (e.g. representing a
+    #       whitespace gap in a print slug line as repeated &nbsp; entities).
+    OCR_PROMPT_VERSION = 2
 
     def __init__(self, db: Session):
         self.db = db
@@ -158,6 +176,11 @@ class AIService:
                 "file_type": file_type,
                 "analysis_provider": self.ai_provider,
                 "analysis_type": analysis_type,
+                # Only pdf/image go through OCR — text/docx extraction doesn't
+                # use a model prompt at all, so there's no OCR version to record.
+                "ocr_prompt_version": (
+                    self.OCR_PROMPT_VERSION if file_type in ("image", "pdf") else None
+                ),
             }
 
             logger.info(f"Completed {analysis_type} analysis for document: {filename}")
@@ -210,6 +233,8 @@ class AIService:
                     "document_tone": analysis_result.get("document_tone", "neutral"),
                 }
 
+            if "error" not in analysis_result:
+                analysis_result["prompt_version"] = self.prompt_manager.PROMPT_VERSION
             return analysis_result
 
         except Exception as e:
@@ -277,7 +302,7 @@ class AIService:
 
             # Step 6: Taxonomy keywords
             keyword_result = await self._run_analysis_prompt(
-                self.prompt_manager.get_taxonomy_keyword_prompt(
+                await self.prompt_manager.get_taxonomy_keyword_prompt(
                     filename, metadata_result
                 ),
                 extracted_text,
@@ -313,6 +338,7 @@ class AIService:
                     "document_tone": document_tone,
                 }
 
+            results["prompt_version"] = self.prompt_manager.PROMPT_VERSION
             return results
 
         except Exception as e:
@@ -357,9 +383,12 @@ class AIService:
                 raise ValueError(f"Unsupported analysis type: {analysis_type}")
 
             # Run the analysis
-            return await self._run_analysis_prompt(
+            result = await self._run_analysis_prompt(
                 prompt_data, extracted_text, image_data
             )
+            if "error" not in result:
+                result["prompt_version"] = self.prompt_manager.PROMPT_VERSION
+            return result
 
         except Exception as e:
             logger.error(f"Error in {analysis_type} analysis: {str(e)}")
@@ -537,16 +566,59 @@ class AIService:
 
             image_data = base64.b64encode(file_content).decode("utf-8")
 
-            system_prompt = "You are an expert OCR engine. Your task is to extract any and all text from the given image, accurately. Preserve the original formatting as much as possible. Only return the extracted text, with no additional comments, introductions, or summaries."
+            system_prompt = (
+                "You are an expert OCR engine. Extract all text visible in the image, "
+                "accurately and completely. Output plain text only — no markdown "
+                "formatting (no **bold**, no # headers, no bullet/list syntax) and no "
+                "HTML entities (never write &nbsp; or similar; use a real space "
+                "character). Use line breaks to reflect the reading order and layout, "
+                "but represent every character as plain text exactly as printed. "
+                "Only return the extracted text, with no additional comments, "
+                "introductions, or summaries."
+            )
             user_prompt = "Please extract all text from this image."
 
-            return await self._call_ai_for_raw_text(
+            raw_text = await self._call_ai_for_raw_text(
                 system_prompt, user_prompt, image_data
             )
+            return self._sanitize_ocr_text(raw_text)
 
         except Exception as e:
             logger.error(f"Error extracting text from image with AI: {str(e)}")
             return ""
+
+    @staticmethod
+    def _sanitize_ocr_text(text: str) -> str:
+        """
+        Defensive cleanup for OCR output. The OCR prompt asks for plain text,
+        but the model doesn't always comply — e.g. representing a visual
+        whitespace gap in a print-production slug line as a run of `&nbsp;`
+        entities instead of a real space, or wrapping perceived headings/bold
+        text in markdown syntax. This is a best-effort net on top of the
+        prompt fix, not a full markdown parser.
+        """
+        if not text:
+            return text
+
+        # Decode HTML entities (&nbsp; -> U+00A0 non-breaking space, &amp; -> &, etc.)
+        text = html.unescape(text)
+
+        # Strip markdown bold/emphasis markers, keeping the text inside them.
+        # DOTALL: OCR'd headline text often wraps a bold span across multiple lines.
+        # Bold (**/__) first, then leftover single */_ italic pairs.
+        text = re.sub(r"\*\*(.+?)\*\*", r"\1", text, flags=re.DOTALL)
+        text = re.sub(r"__(.+?)__", r"\1", text, flags=re.DOTALL)
+        text = re.sub(r"\*(.+?)\*", r"\1", text, flags=re.DOTALL)
+        text = re.sub(r"(?<!\w)_(.+?)_(?!\w)", r"\1", text, flags=re.DOTALL)
+
+        # Strip ATX-style markdown headers ("# Heading" -> "Heading").
+        text = re.sub(r"(?m)^#{1,6}\s+", "", text)
+
+        # Collapse runs of horizontal whitespace (regular + non-breaking spaces)
+        # down to a single space, without touching intentional line breaks.
+        text = re.sub(r"[ \t ]{2,}", " ", text)
+
+        return text.strip()
 
     async def _extract_text_from_document(self, file_content: bytes) -> str:
         """
@@ -1130,6 +1202,8 @@ class AIService:
                         "campaign_type": analysis_result.get("campaign_type", ""),
                         "document_tone": analysis_result.get("document_tone", ""),
                     }
+
+                analysis_result["prompt_version"] = self.prompt_manager.PROMPT_VERSION
             else:
                 # For simplicity, this example only implements the 'unified' chunk analysis
                 logger.warning(

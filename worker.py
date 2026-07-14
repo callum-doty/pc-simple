@@ -210,6 +210,9 @@ def _process_pdf_document_by_page(
 
     final_ai_analysis = {
         "schema_version": 1,
+        # Freshly built here from per-page results rather than copied from any
+        # single chunk_analysis, so it needs its own prompt_version stamp.
+        "prompt_version": ai_service.prompt_manager.PROMPT_VERSION,
         "summary": final_summary,
         "page_count": total_pages,
         "analysis_type": "chunked_unified",
@@ -225,6 +228,10 @@ def _process_pdf_document_by_page(
             "processed_at": datetime.utcnow().isoformat(),
         },
         "processing_checkpoint": None,  # clear checkpoint on successful completion
+        # Every page went through OCR (_extract_text_from_image) to produce the
+        # text handed to analyze_text_chunk_sync — record which OCR prompt
+        # version produced it. See AIService.OCR_PROMPT_VERSION.
+        "ocr_prompt_version": ai_service.OCR_PROMPT_VERSION,
     }
 
     # Update document with aggregated data.
@@ -272,6 +279,9 @@ def _process_document_holistically(
         categories=categories,
         keyword_mappings=mappings,
         file_type=analysis_result.get("file_type"),
+        # None for text/docx (no OCR involved); set for pdf/image. See
+        # AIService.OCR_PROMPT_VERSION.
+        ocr_prompt_version=analysis_result.get("ocr_prompt_version"),
     )
 
 
