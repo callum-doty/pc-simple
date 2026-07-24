@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from config import get_settings
 from services.security_service import security_service
+from api.dependencies import app_state
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -23,13 +24,8 @@ class AuthenticationMiddleware:
     Must be added AFTER RedisSessionMiddleware to ensure session is loaded.
     """
 
-    def __init__(
-        self,
-        app: ASGIApp,
-        redis_session_middleware_installed: bool = True,
-    ):
+    def __init__(self, app: ASGIApp):
         self.app = app
-        self.redis_session_middleware_installed = redis_session_middleware_installed
 
         # Whitelist of paths that don't require authentication
         self.skip_auth_paths = [
@@ -59,8 +55,12 @@ class AuthenticationMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # FAIL-CLOSED: If Redis session middleware failed to initialize, deny access
-        if not self.redis_session_middleware_installed:
+        # FAIL-CLOSED: If Redis is not currently reachable, deny access.
+        # app_state.redis_session_middleware_installed is refreshed on a
+        # timer by the background loop in main.py, so this reopens on its
+        # own once Redis reconnects (e.g. a suspended free-tier instance
+        # is resumed) — no app restart required.
+        if not app_state.redis_session_middleware_installed:
             logger.error(
                 f"CRITICAL: Session middleware not available. Denying access to: {request.url.path}"
             )

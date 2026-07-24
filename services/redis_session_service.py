@@ -27,6 +27,8 @@ class RedisSessionService:
         self.encryption_key = None
         self.session_prefix = "session:"
         self.default_ttl = settings.session_timeout_hours * 3600  # Convert to seconds
+        self._last_connectivity_check = 0.0
+        self._last_connectivity_result = False
         self._initialize_redis()
         self._initialize_encryption()
 
@@ -55,6 +57,33 @@ class RedisSessionService:
 
         logger.error("All Redis connection attempts failed. Session service will operate in fallback mode.")
         self.redis_client = None
+
+    def is_connected(self, cache_seconds: float = 15.0) -> bool:
+        """Cheap connectivity check, cached for `cache_seconds`.
+
+        Re-attempts a connection each time the cache expires, so a suspended
+        or restarted Redis instance is picked up automatically by callers
+        that poll this (e.g. the background health loop in main.py) without
+        requiring an app restart.
+        """
+        now = time.time()
+        if now - self._last_connectivity_check < cache_seconds:
+            return self._last_connectivity_result
+
+        healthy = False
+        try:
+            if self.redis_client is None:
+                self._initialize_redis(retries=1, retry_delay=0)
+            if self.redis_client is not None:
+                self.redis_client.ping()
+                healthy = True
+        except Exception as e:
+            logger.warning(f"Redis connectivity check failed: {e}")
+            self.redis_client = None
+
+        self._last_connectivity_check = now
+        self._last_connectivity_result = healthy
+        return healthy
 
     def _initialize_encryption(self):
         """Initialize session data encryption"""

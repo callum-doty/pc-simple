@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Redirect
 from fastapi.middleware.cors import CORSMiddleware
 
 # from starlette.middleware.sessions import SessionMiddleware  # Replaced with Redis-based solution
+import asyncio
 from contextlib import asynccontextmanager
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -102,10 +103,19 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning(f"Taxonomy initialization failed: {message}")
 
+    # Keep Redis session availability self-healing after a transient outage
+    # (see refresh_redis_session_status / _redis_session_health_loop above).
+    health_task = asyncio.create_task(_redis_session_health_loop())
+
     logger.info("Application startup complete")
     yield
 
     # Shutdown
+    health_task.cancel()
+    try:
+        await health_task
+    except asyncio.CancelledError:
+        pass
     logger.info("Shutting down application...")
 
 
@@ -161,14 +171,29 @@ from services.redis_session_middleware import (
 from services.redis_session_service import redis_session_service
 from services.authentication_middleware import AuthenticationMiddleware
 
-# Global flag to track if Redis session middleware is properly installed
+# Live flag read by the login/home routes and AuthenticationMiddleware (via
+# app_state). Reflects current Redis reachability, refreshed continuously by
+# refresh_redis_session_status() below — NOT a one-time boot snapshot. This is
+# what lets the app recover automatically after a transient Redis outage
+# (e.g. a suspended free-tier instance being resumed) without a restart.
 redis_session_middleware_installed = False
 session_middleware_error = None
 
+# Whether the session secret/timeout config itself is valid. Unlike Redis
+# reachability this can't self-heal — it requires a config/env fix and
+# redeploy — so it's tracked separately and gates redis_session_middleware_installed.
+_session_config_valid = False
+_session_config_error = None
+
 
 def prepare_redis_session_middleware():
-    """Prepare Redis session middleware config (but don't add it yet)"""
-    global redis_session_middleware_installed, session_middleware_error
+    """Validate session config and prepare RedisSessionMiddleware's kwargs.
+
+    Does NOT check live Redis connectivity — that's polled continuously by
+    refresh_redis_session_status() instead, so transient Redis outages don't
+    require a restart to recover from.
+    """
+    global _session_config_valid, _session_config_error
 
     try:
         # Validate session secret before attempting to initialize
@@ -193,13 +218,6 @@ def prepare_redis_session_middleware():
             f"Environment: {settings.environment}"
         )
 
-        # Check Redis health first
-        redis_health = redis_session_service.health_check()
-        if redis_health["status"] != "healthy":
-            raise ValueError(
-                f"Redis session service not healthy: {redis_health.get('error', 'Unknown error')}"
-            )
-
         # Configure Redis session middleware
         config = {
             "secret_key": session_secret,
@@ -208,13 +226,15 @@ def prepare_redis_session_middleware():
             "https_only": not settings.debug,
         }
 
-        redis_session_middleware_installed = True
+        _session_config_valid = True
+        _session_config_error = None
         logger.info("Redis Session Middleware config prepared successfully")
         return True, config
 
     except Exception as e:
-        session_middleware_error = str(e)
-        logger.error(f"CRITICAL: Redis Session Middleware preparation failed: {e}")
+        _session_config_valid = False
+        _session_config_error = str(e)
+        logger.error(f"CRITICAL: Redis Session Middleware config invalid: {e}")
         logger.error(f"Session secret present: {bool(session_secret)}")
         logger.error(
             f"Session secret length: {len(session_secret) if session_secret else 0}"
@@ -223,12 +243,56 @@ def prepare_redis_session_middleware():
         logger.error(f"Environment: {settings.environment}")
         logger.error(f"Debug mode: {settings.debug}")
 
-        redis_session_middleware_installed = False
-
         logger.warning(
-            "Redis session middleware preparation failed - will use fallback"
+            "Redis session middleware config invalid - will use fallback"
         )
         return False, None
+
+
+def refresh_redis_session_status() -> bool:
+    """Re-check live Redis connectivity and update the shared flags.
+
+    Called once at startup and then every _REDIS_HEALTH_CHECK_INTERVAL
+    seconds by the background loop started in `lifespan`. This is what makes
+    Redis outages self-healing: once the suspended/restarted instance starts
+    accepting connections again, this flips redis_session_middleware_installed
+    back to True on its own within one poll interval.
+    """
+    global redis_session_middleware_installed, session_middleware_error
+
+    if not _session_config_valid:
+        healthy = False
+        error = _session_config_error
+    else:
+        try:
+            healthy = redis_session_service.is_connected()
+            error = None if healthy else "Redis session service unavailable"
+        except Exception as e:
+            logger.error(f"Redis connectivity check failed: {e}")
+            healthy = False
+            error = str(e)
+
+    if healthy != redis_session_middleware_installed:
+        logger.info(
+            f"Redis session availability changed: "
+            f"{redis_session_middleware_installed} -> {healthy}"
+        )
+
+    redis_session_middleware_installed = healthy
+    session_middleware_error = error
+    app_state.redis_session_middleware_installed = healthy
+    app_state.session_middleware_error = error
+    return healthy
+
+
+_REDIS_HEALTH_CHECK_INTERVAL = 20  # seconds
+
+
+async def _redis_session_health_loop():
+    """Background task: keeps redis_session_middleware_installed live."""
+    while True:
+        await asyncio.sleep(_REDIS_HEALTH_CHECK_INTERVAL)
+        await asyncio.to_thread(refresh_redis_session_status)
 
 
 # Shared limiter instance imported from api/dependencies.py.
@@ -264,29 +328,30 @@ app.add_middleware(
 # Prepare Redis session middleware config (but don't add it yet)
 session_init_success, session_config = prepare_redis_session_middleware()
 
-# Add authentication middleware THIRD (will execute SECOND, after session loads)
-logger.info(
-    f"Adding Authentication Middleware - redis_session_installed: {redis_session_middleware_installed}"
-)
-app.add_middleware(
-    AuthenticationMiddleware,
-    redis_session_middleware_installed=redis_session_middleware_installed,
-)
+# Add authentication middleware THIRD (will execute SECOND, after session loads).
+# It reads live status from app_state at request time, not a boot snapshot.
+logger.info("Adding Authentication Middleware")
+app.add_middleware(AuthenticationMiddleware)
 
 # Add session middleware LAST (will execute FIRST)
 # This is CRITICAL - middleware added last executes first!
+#
+# RedisSessionMiddleware is installed whenever the config is valid, even if
+# Redis is unreachable right now — it already degrades gracefully per-request
+# when Redis is down (services/redis_session_middleware.py), and this lets
+# session persistence resume automatically as soon as Redis reconnects.
+# FallbackSessionMiddleware (sessions never persist) is only used for the
+# rare case of genuinely invalid session config, which can't self-heal.
 if session_init_success and session_config:
     logger.info("Adding Redis Session Middleware (will execute FIRST)")
     app.add_middleware(RedisSessionMiddleware, **session_config)
 else:
-    logger.warning("Adding fallback session middleware due to Redis session failure")
+    logger.warning("Adding fallback session middleware - session config invalid")
     app.add_middleware(FallbackSessionMiddleware)
-    redis_session_middleware_installed = False
 
-# Publish session state to the shared app_state so routers can read it
-# without importing from main.py (which would create a circular import).
-app_state.redis_session_middleware_installed = redis_session_middleware_installed
-app_state.session_middleware_error = session_middleware_error
+# Publish initial live Redis status to app_state; refreshed continuously
+# thereafter by the background loop started in `lifespan`.
+refresh_redis_session_status()
 
 
 # Helper function for non-cacheable redirects
