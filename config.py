@@ -40,10 +40,26 @@ class Settings(BaseSettings):
     search_results_per_page: int = 20
     max_search_results: int = 1000
 
-    # Processing settings
-    max_concurrent_processing: int = 3
-    max_concurrent_document_processing: int = 3
-    processing_timeout: int = 300  # 5 minutes
+    # Processing settings.
+    # There is deliberately no app-level concurrency limit here. How many
+    # documents process at once is set by the Celery worker's --concurrency
+    # flag in render.yaml. The former max_concurrent_document_processing
+    # setting was enforced by exactly one caller that never ran, so it read as
+    # a live limit while the real one was somewhere else entirely.
+    # Soft limit for one document-processing task. Celery raises
+    # SoftTimeLimitExceeded inside the task at this point, so the existing
+    # handler marks the document FAILED instead of leaving it PROCESSING.
+    # Deliberately generous: nothing enforced this limit before, so some
+    # documents currently succeed by running well past the old 300s value.
+    # Tune down once processing_started_at has yielded a real p99.
+    processing_timeout: int = 1800  # 30 minutes
+    # Hard (SIGKILL) backstop for tasks that swallow the soft limit.
+    processing_timeout_grace: int = 60
+    # How far past the hard limit a heartbeat must be before the scheduler
+    # calls a PROCESSING document a zombie.
+    zombie_grace_seconds: int = 180
+    # How far past zombie eligibility the Redis processing lease survives.
+    lock_grace_seconds: int = 120
 
     # Security settings
     api_key: str = ""
@@ -86,6 +102,42 @@ class Settings(BaseSettings):
     dropbox_app_secret: str = ""
     dropbox_refresh_token: str = ""
     dropbox_folder_path: str = "/Press Files 2019-2020/2026"
+
+    # ------------------------------------------------------------------
+    # Derived processing timings. Kept here rather than in worker.py so the
+    # worker and the recovery scheduler cannot drift apart. Required ordering:
+    #
+    #   soft limit < hard limit < zombie threshold < lease TTL < visibility
+    #
+    # Each step must be strictly greater than the one before it: a task is
+    # killed before it can be called a zombie, called a zombie before its
+    # lease expires, and its lease expires before the broker redelivers.
+    # See docs/architecture-fixes/FIX-001.
+    # ------------------------------------------------------------------
+
+    @property
+    def task_time_limit(self) -> int:
+        """Hard task limit — Celery kills the worker process at this point."""
+        return self.processing_timeout + self.processing_timeout_grace
+
+    @property
+    def zombie_threshold_seconds(self) -> int:
+        """Heartbeat age past which a PROCESSING document is recoverable."""
+        return self.task_time_limit + self.zombie_grace_seconds
+
+    @property
+    def lock_ttl_seconds(self) -> int:
+        """TTL of the Redis processing lease."""
+        return self.zombie_threshold_seconds + self.lock_grace_seconds
+
+    @property
+    def broker_visibility_timeout(self) -> int:
+        """
+        How long Redis waits before redelivering an un-acked message. With
+        acks_late this must stay above the hard limit, or a still-running task
+        is handed to a second worker.
+        """
+        return self.lock_ttl_seconds + 600
 
     def get_allowed_origins_list(self) -> list:
         """Parse the comma-separated ALLOWED_ORIGINS string into a list."""

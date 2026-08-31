@@ -117,8 +117,21 @@ class DocumentService:
                 values["processing_progress"] = max(0, min(100, progress))
             if error:
                 values["processing_error"] = error
+            if status == DocumentStatus.QUEUED:
+                # A fresh run is coming. Clear the previous run's timings so the
+                # coalesce below measures *this* run — otherwise a reprocessed
+                # document keeps the start time of its first ever run and reads
+                # as having taken months.
+                values["processing_started_at"] = None
+                values["processing_heartbeat_at"] = None
             if status == DocumentStatus.PROCESSING:
-                values["processing_started_at"] = datetime.utcnow()
+                # Stamp only the first transition into PROCESSING. The PDF path
+                # writes PROCESSING once per page, so overwriting here made the
+                # column mean "when the last page finished" and destroyed the
+                # only record of how long a document actually takes to process.
+                values["processing_started_at"] = func.coalesce(
+                    Document.processing_started_at, datetime.utcnow()
+                )
             if status == DocumentStatus.COMPLETED:
                 values["processing_progress"] = 100
                 values["processed_at"] = datetime.utcnow()
@@ -309,6 +322,7 @@ class DocumentService:
             # Count by status
             status_counts = {}
             for status in [
+                DocumentStatus.QUEUED,
                 DocumentStatus.PENDING,
                 DocumentStatus.PROCESSING,
                 DocumentStatus.COMPLETED,
@@ -424,8 +438,21 @@ class DocumentService:
                 values["processing_progress"] = max(0, min(100, progress))
             if error:
                 values["processing_error"] = error
+            if status == DocumentStatus.QUEUED:
+                # A fresh run is coming. Clear the previous run's timings so the
+                # coalesce below measures *this* run — otherwise a reprocessed
+                # document keeps the start time of its first ever run and reads
+                # as having taken months.
+                values["processing_started_at"] = None
+                values["processing_heartbeat_at"] = None
             if status == DocumentStatus.PROCESSING:
-                values["processing_started_at"] = datetime.utcnow()
+                # Stamp only the first transition into PROCESSING. The PDF path
+                # writes PROCESSING once per page, so overwriting here made the
+                # column mean "when the last page finished" and destroyed the
+                # only record of how long a document actually takes to process.
+                values["processing_started_at"] = func.coalesce(
+                    Document.processing_started_at, datetime.utcnow()
+                )
             if status == DocumentStatus.COMPLETED:
                 values["processing_progress"] = 100
                 values["processed_at"] = datetime.utcnow()
@@ -661,6 +688,10 @@ class DocumentService:
 
             # Reset status to QUEUED for reprocessing
             document.status = DocumentStatus.QUEUED
+            # Clear the previous run's timings so processing_started_at measures
+            # the upcoming run rather than this document's first ever one.
+            document.processing_started_at = None
+            document.processing_heartbeat_at = None
             document.processing_error = None
             document.progress = 0
             document.processed_at = None

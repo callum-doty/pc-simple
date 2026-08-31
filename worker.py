@@ -1,4 +1,5 @@
 import os
+import uuid
 import redis
 from celery import Celery
 from config import get_settings
@@ -17,50 +18,131 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # ---------------------------------------------------------------------------
-# Processing lock constants — must be consistent with task timeout settings.
-# LOCK_TTL_SECONDS must exceed the longest possible task duration so that a
-# crashed worker's lock expires before the recovery scheduler reschedules the
-# document. See docs/architecture-fixes/FIX-001.
+# Processing timings. All derived from settings so the enforced task limit, the
+# zombie threshold and the lease TTL cannot drift apart — see the ordering
+# comment on Settings. Previously TASK_TIMEOUT_SECONDS was a bare literal that
+# nothing enforced, which left the lease TTL and zombie threshold anchored to a
+# timeout that did not exist. See docs/architecture-fixes/FIX-001.
 # ---------------------------------------------------------------------------
-TASK_TIMEOUT_SECONDS = 300         # matches config.settings.processing_timeout
+LOCK_TTL_SECONDS = settings.lock_ttl_seconds
 HEARTBEAT_INTERVAL_PAGES = 1       # emit heartbeat every N PDF pages
-LOCK_TTL_SECONDS = TASK_TIMEOUT_SECONDS + 60  # grace period beyond task timeout
 
 
-def _acquire_processing_lock(document_id: int) -> tuple:
+def _lease_key(document_id: int) -> str:
+    """The Redis key holding a document's processing lease."""
+    return f"doc_processing_lock:{document_id}"
+
+
+def release_processing_lease(document_id: int) -> None:
     """
-    Attempt to acquire an exclusive processing lock for a document via Redis SET NX.
-    Returns (acquired: bool, redis_client | None).
+    Unconditionally clear a document's processing lease.
 
-    If Redis is unavailable, returns (True, None) so processing continues in
-    degraded mode — zombie recovery via processing_heartbeat_at still works.
+    Used by the recovery scheduler when it rescues a zombie, so the document can
+    be redispatched immediately instead of waiting out the remaining TTL — this
+    is FIX-001 Part C, which the original recovery implementation left out.
+
+    Dropping someone else's lease is safe here only because a document does not
+    become zombie-eligible until ZOMBIE_THRESHOLD_SECONDS of heartbeat silence,
+    which now exceeds the *enforced* hard task limit. No live task can still be
+    holding the lease at that point. That was not true before the hard limit was
+    wired up, when a task could run indefinitely.
     """
     try:
         r = redis.from_url(settings.redis_url, decode_responses=True)
-        lock_key = f"doc_processing_lock:{document_id}"
-        acquired = r.set(lock_key, "1", nx=True, ex=LOCK_TTL_SECONDS)
-        return bool(acquired), r
+        r.delete(_lease_key(document_id))
     except Exception as e:
         logger.warning(
-            f"Could not acquire Redis lock for document {document_id} (Redis unavailable?): {e}. "
-            f"Proceeding without lock — zombie recovery via heartbeat still active."
+            f"Could not clear processing lease for document {document_id}: {e}. "
+            f"It will expire on its own within {LOCK_TTL_SECONDS}s."
         )
-        return True, None
 
 
-def _release_processing_lock(document_id: int, redis_client) -> None:
-    """Release the processing lock. Safe to call even if lock was never acquired."""
-    if redis_client is None:
-        return
-    try:
-        redis_client.delete(f"doc_processing_lock:{document_id}")
-    except Exception as e:
-        logger.warning(f"Could not release Redis lock for document {document_id}: {e}")
-
-
-def _emit_heartbeat(document_id: int, db) -> None:
+class ProcessingLease:
     """
-    Update processing_heartbeat_at to signal the worker is still alive.
+    A Redis lease proving this task is the live owner of a document's
+    processing slot.
+
+    The lease value is the Celery task id rather than a constant. That matters
+    now that acks_late is enabled: a task killed mid-flight is redelivered
+    under the *same* task id, so the redelivered attempt recognises its own
+    abandoned lease and reclaims it instead of deadlocking against it until the
+    TTL expires. A genuinely concurrent worker carries a different id and is
+    still turned away.
+
+    A None client means Redis was unreachable and we are running unguarded —
+    every method degrades to a no-op and zombie recovery via
+    processing_heartbeat_at remains the backstop.
+    """
+
+    def __init__(self, document_id: int, token: str, client) -> None:
+        self.document_id = document_id
+        self.key = _lease_key(document_id)
+        self.token = token
+        self.client = client
+
+    def refresh(self) -> None:
+        """Extend the lease. Called on every heartbeat so a live task never
+        loses its slot to the TTL, however long the document takes."""
+        if self.client is None:
+            return
+        try:
+            if self.client.get(self.key) == self.token:
+                self.client.expire(self.key, LOCK_TTL_SECONDS)
+        except Exception as e:
+            logger.warning(
+                f"Could not refresh processing lease for document {self.document_id}: {e}"
+            )
+
+    def release(self) -> None:
+        """Release the lease, but only if we still hold it — never drop a lease
+        that has already been taken over by another worker."""
+        if self.client is None:
+            return
+        try:
+            if self.client.get(self.key) == self.token:
+                self.client.delete(self.key)
+        except Exception as e:
+            logger.warning(
+                f"Could not release processing lease for document {self.document_id}: {e}"
+            )
+
+
+def _acquire_processing_lease(document_id: int, token: str) -> tuple:
+    """
+    Attempt to acquire the exclusive processing lease for a document.
+    Returns (acquired: bool, ProcessingLease).
+
+    If Redis is unavailable, returns (True, <no-op lease>) so processing
+    continues in degraded mode — zombie recovery via processing_heartbeat_at
+    still works.
+    """
+    try:
+        r = redis.from_url(settings.redis_url, decode_responses=True)
+        key = _lease_key(document_id)
+        acquired = r.set(key, token, nx=True, ex=LOCK_TTL_SECONDS)
+        if not acquired and r.get(key) == token:
+            # Our own lease, left behind by an attempt that died before it
+            # could release. This is a redelivery or retry of the same task,
+            # so take it back rather than stranding the document.
+            logger.info(
+                f"Reclaiming abandoned processing lease for document {document_id} "
+                f"(task {token} redelivered)."
+            )
+            r.expire(key, LOCK_TTL_SECONDS)
+            acquired = True
+        return bool(acquired), ProcessingLease(document_id, token, r)
+    except Exception as e:
+        logger.warning(
+            f"Could not acquire Redis lease for document {document_id} (Redis unavailable?): {e}. "
+            f"Proceeding without lease — zombie recovery via heartbeat still active."
+        )
+        return True, ProcessingLease(document_id, token, None)
+
+
+def _emit_heartbeat(document_id: int, db, lease: "ProcessingLease" = None) -> None:
+    """
+    Update processing_heartbeat_at to signal the worker is still alive, and
+    extend the processing lease by the same token.
     Called at task start and periodically during long PDF processing runs.
     The scheduler uses this timestamp to detect zombie PROCESSING documents.
     """
@@ -76,6 +158,9 @@ def _emit_heartbeat(document_id: int, db) -> None:
     except Exception as e:
         logger.warning(f"Heartbeat update failed for document {document_id}: {e}")
 
+    if lease is not None:
+        lease.refresh()
+
 celery_app = Celery(
     "worker",
     broker=settings.redis_url,
@@ -88,9 +173,38 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    # --- Durability ---
+    # acks_late keeps the message on the broker until the task finishes. The
+    # default (ack on delivery) meant a worker killed mid-document lost the
+    # message outright while the row stayed PROCESSING with nothing left to
+    # retry it — the mechanism behind the pre-2026-05 zombie backlog, whose
+    # loss rate tracked how long a bulk load took to drain.
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    # Bound task runtime. Nothing enforced a limit before, so a hung LLM or
+    # storage call could hold PROCESSING indefinitely. The soft limit raises
+    # inside the task, so the existing handler marks the document FAILED.
+    task_soft_time_limit=settings.processing_timeout,
+    task_time_limit=settings.task_time_limit,
+    # Redis redelivers any message left un-acked for this long. With acks_late
+    # it must stay above the hard limit, or a task that is still running is
+    # redelivered to a second worker.
+    broker_transport_options={
+        "visibility_timeout": settings.broker_visibility_timeout,
+    },
+    # Recycle worker processes to bound memory growth over long bulk drains.
+    worker_max_tasks_per_child=50,
     beat_schedule={
-        "enqueue-documents-every-two-minutes": {
-            "task": "worker.enqueue_documents_task",
+        # Recovery only — this does not admit new work. Producers dispatch their
+        # own tasks directly and Celery's --concurrency governs how much runs at
+        # once. Requires a running beat process; see the celery-beat service in
+        # render.yaml.
+        "recover-abandoned-documents-every-two-minutes": {
+            # Must match the explicit name= on the task below. An explicit name
+            # replaces the module-qualified default, so "worker.<name>" here
+            # would publish a task no worker is registered to handle — which is
+            # what the previous entry did, silently.
+            "task": "recover_abandoned_documents_task",
             "schedule": 120.0,  # 2 minutes
         },
     },
@@ -105,6 +219,7 @@ def _process_pdf_document_by_page(
     storage_service: StorageService,
     analysis_type: str,
     db=None,
+    lease=None,
 ):
     """
     Process PDF documents page by page with heartbeat emission (FIX-001) and
@@ -178,7 +293,7 @@ def _process_pdf_document_by_page(
 
         # --- FIX-001: Emit heartbeat every N pages so the scheduler knows we're alive ---
         if db and page_num % HEARTBEAT_INTERVAL_PAGES == 0:
-            _emit_heartbeat(document_id, db)
+            _emit_heartbeat(document_id, db, lease)
 
         # --- FIX-002: Persist checkpoint so a retry can resume from here ---
         # Use read-modify-write (not a raw SQL || operator) so SQLAlchemy correctly
@@ -288,10 +403,13 @@ def _process_document_holistically(
 from database import get_db
 
 
-@celery_app.task(name="enqueue_documents_task")
-def enqueue_documents_task():
+@celery_app.task(name="recover_abandoned_documents_task")
+def recover_abandoned_documents_task():
     """
-    Celery task to find and enqueue documents that are ready for processing.
+    Celery task that sweeps abandoned document-processing work back into flight.
+
+    Recovery only: it does not admit new work. See SchedulerService's module
+    docstring for the three ways a document ends up abandoned.
     """
     from services.scheduler_service import SchedulerService
 
@@ -299,11 +417,11 @@ def enqueue_documents_task():
     try:
         db = next(get_db())
         scheduler_service = SchedulerService(db)
-        logger.info("Running scheduled task to enqueue documents.")
-        scheduler_service.enqueue_pending_documents()
-        logger.info("Finished scheduled task to enqueue documents.")
+        logger.info("Running scheduled recovery cycle.")
+        scheduler_service.run_recovery_cycle()
+        logger.info("Finished scheduled recovery cycle.")
     except Exception as e:
-        logger.error(f"Error in scheduled task enqueue_documents_task: {e}")
+        logger.error(f"Error in scheduled task recover_abandoned_documents_task: {e}")
     finally:
         if db:
             db.close()
@@ -328,10 +446,15 @@ def process_document_task(self, document_id: int, analysis_type: str = "unified"
       exponential backoff.
     """
     db = None
-    redis_client = None
+    lease = None
     try:
         # --- FIX-001: Idempotency guard — prevent two workers processing the same doc ---
-        acquired, redis_client = _acquire_processing_lock(document_id)
+        # The lease is keyed to this task's id, so a redelivery of *this* task
+        # (acks_late reissues the same id when a worker dies) reclaims its own
+        # abandoned lease instead of being turned away by it.
+        acquired, lease = _acquire_processing_lease(
+            document_id, self.request.id or str(uuid.uuid4())
+        )
         if not acquired:
             logger.info(
                 f"Document {document_id} is already being processed by another worker. "
@@ -354,11 +477,24 @@ def process_document_task(self, document_id: int, analysis_type: str = "unified"
             logger.error(f"Document {document_id} not found")
             return False
 
+        # acks_late makes delivery at-least-once: a worker that dies between
+        # finishing a document and acking its message has that message
+        # redelivered. Without this guard the redelivery reprocesses a finished
+        # document at full LLM cost. Every legitimate processing path (upload,
+        # Dropbox ingest, reprocess, scheduler) resets the document to QUEUED
+        # before dispatching, so COMPLETED here always means a duplicate.
+        if document.status == DocumentStatus.COMPLETED:
+            logger.info(
+                f"Document {document_id} is already COMPLETED — skipping duplicate "
+                f"delivery of task {self.request.id}."
+            )
+            return True
+
         document_service.update_document_status_sync(
             document_id, DocumentStatus.PROCESSING, progress=10
         )
         # --- FIX-001: Record initial heartbeat so the scheduler knows processing started ---
-        _emit_heartbeat(document_id, db)
+        _emit_heartbeat(document_id, db, lease)
 
         # Determine file type and processing strategy
         file_type = ai_service._get_file_type(document.filename)
@@ -372,6 +508,7 @@ def process_document_task(self, document_id: int, analysis_type: str = "unified"
                 storage_service,
                 analysis_type,
                 db=db,  # passed for heartbeat + checkpoint writes
+                lease=lease,
             )
         else:
             _process_document_holistically(
@@ -432,14 +569,19 @@ def process_document_task(self, document_id: int, analysis_type: str = "unified"
                 f"Rate limit hit for document {document_id}. "
                 f"Retrying in {countdown}s (attempt {self.request.retries + 1}/{self.max_retries})."
             )
-            # Release lock before retry so the next attempt can acquire it
-            _release_processing_lock(document_id, redis_client)
-            redis_client = None
+            # Release the lease before retrying so the next attempt starts clean
+            if lease:
+                lease.release()
+            lease = None
             raise self.retry(exc=e, countdown=countdown)
 
         # Non-retryable error or max retries exceeded — mark FAILED
         if db:
             try:
+                # Whatever just failed may have left the session in an aborted
+                # transaction. Without this rollback the FAILED write throws
+                # too and the document is silently left in PROCESSING.
+                db.rollback()
                 document_service = DocumentService(db)
                 document_service.update_document_status_sync(
                     document_id, DocumentStatus.FAILED, progress=0, error=str(e)
@@ -450,8 +592,9 @@ def process_document_task(self, document_id: int, analysis_type: str = "unified"
                 )
         return False
     finally:
-        # Always release the lock, even on unexpected exceptions
-        _release_processing_lock(document_id, redis_client)
+        # Always release the lease, even on unexpected exceptions
+        if lease:
+            lease.release()
         if db:
             db.close()
 

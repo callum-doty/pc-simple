@@ -44,7 +44,10 @@ class Document(Base):
     file_size = Column(Integer, nullable=False)
 
     # Status and processing
-    status = Column(String(50), nullable=False, default="PENDING", index=True)
+    # QUEUED, not PENDING: a document created without an explicit status must
+    # land in a state the recovery daemon will dispatch. PENDING has no producer
+    # left and exists only as a state the daemon sweeps back to QUEUED.
+    status = Column(String(50), nullable=False, default="QUEUED", index=True)
     processing_progress = Column(Integer, default=0)  # 0-100
     processing_error = Column(Text, nullable=True)
 
@@ -443,6 +446,8 @@ Index("idx_needs_date_review_status", Document.needs_date_review, Document.statu
 
 # Status constants
 class DocumentStatus:
+    # Vestigial: no producer sets PENDING any more. Retained so the recovery
+    # daemon and the dashboards still recognise historical rows.
     PENDING = "PENDING"
     QUEUED = "QUEUED"
     PROCESSING = "PROCESSING"
