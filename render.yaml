@@ -170,8 +170,14 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.9"
+      # "worker", not "production": ENVIRONMENT=production routes config through
+      # RenderSettings, which requires SECRET_KEY, ANTHROPIC_API_KEY,
+      # OPENAI_API_KEY, APP_PASSWORD and SESSION_SECRET_KEY. Beat only publishes
+      # a task name to the broker every two minutes — it never calls an LLM,
+      # serves a request, or reads storage — so handing it those secrets widens
+      # their blast radius for nothing. Same choice the dropbox-ingest cron makes.
       - key: ENVIRONMENT
-        value: "production"
+        value: "worker"
       - key: DATABASE_URL
         fromDatabase:
           name: document-catalog-db

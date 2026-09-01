@@ -55,6 +55,12 @@ MISSING_FILE_ERROR = "Source file missing from storage"
 # accumulating there; anything PROCESSING and newer died under current code.
 DEFAULT_SINCE = "2026-06-01"
 
+# Cohorts at or below this size get a per-document listing. The small cohorts
+# are the ones the runbook handles individually, so their ids matter: `modern`
+# is defined purely by date now, and any document that fails after deploy joins
+# it — record the ids while the cohort is still just the historical member(s).
+DETAIL_LIMIT = 20
+
 
 # ---------------------------------------------------------------------------
 # Storage
@@ -189,6 +195,22 @@ def audit(db, storage: StorageService, cohort: str, since: dt.date):
 
     if missing:
         print(f"\n  missing file_path examples: {[d.file_path for d in missing[:3]]}")
+
+    if 0 < len(docs) <= DETAIL_LIMIT:
+        print(f"\n  {'id':>7}  {'created':10}  {'MB':>6}  text  vec  file")
+        for doc in docs:
+            size_mb = (doc.file_size or 0) / (1024 * 1024)
+            # has_vector on a document that never completed means it reached
+            # extract_document_features_task, which only runs after COMPLETED —
+            # i.e. it finished once and was flipped back. Different bug from the
+            # rest of the cohort; investigate before replaying over the evidence.
+            print(
+                f"  {doc.id:>7}  {str(doc.created_at.date()):10}  {size_mb:>6.1f}"
+                f"  {'yes' if doc.extracted_text else ' no':>4}"
+                f"  {'yes' if doc.search_vector is not None else ' no':>3}"
+                f"  {'ok' if doc in present else 'MISSING'}"
+            )
+
     return present, missing
 
 
@@ -241,7 +263,9 @@ def await_batch(db, doc_ids: List[int], timeout: int) -> Counter:
         rows = db.query(Document.status).filter(Document.id.in_(doc_ids)).all()
         counts = Counter(r[0] for r in rows)
         done = sum(counts[s] for s in TERMINAL)
-        print(f"  {done}/{len(doc_ids)} terminal  {dict(counts)}", end="\r", flush=True)
+        # Pad to overwrite the previous, possibly longer, line: \r only moves the
+        # cursor, it does not clear what is already there.
+        print(f"  {done}/{len(doc_ids)} terminal  {dict(counts)}".ljust(78), end="\r", flush=True)
         if done == len(doc_ids) or time.time() > deadline:
             print()
             return counts
