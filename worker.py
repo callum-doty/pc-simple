@@ -193,7 +193,7 @@ celery_app.conf.update(
         "visibility_timeout": settings.broker_visibility_timeout,
     },
     # Recycle worker processes to bound memory growth over long bulk drains.
-    worker_max_tasks_per_child=50,
+    worker_max_tasks_per_child=settings.worker_max_tasks_per_child,
     beat_schedule={
         # Recovery only — this does not admit new work. Producers dispatch their
         # own tasks directly and Celery's --concurrency governs how much runs at

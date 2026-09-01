@@ -96,12 +96,21 @@ services:
       pip install -r requirements.txt
       alembic upgrade head
       python backfill_keyword_mappings.py
-    startCommand: "celery -A worker.celery_app worker --loglevel=info --concurrency=4 --prefetch-multiplier=1"
+    # concurrency=2, not 4: four children each rasterising PDF pages for OCR
+    # exceeded the container's memory, and the process was being restarted every
+    # ~5 minutes. Each restart discarded four documents' in-flight work, so the
+    # lost throughput outweighed the parallelism — 53 documents/hour observed
+    # against a theoretical ~250. Raise again only alongside a larger plan.
+    startCommand: "celery -A worker.celery_app worker --loglevel=info --concurrency=2 --prefetch-multiplier=1"
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.9"
       - key: ENVIRONMENT
         value: "production"
+      # Tunable from the dashboard without a redeploy — useful while sizing
+      # memory against the OCR workload.
+      - key: WORKER_MAX_TASKS_PER_CHILD
+        value: "10"
       - key: DATABASE_URL
         fromDatabase:
           name: document-catalog-db

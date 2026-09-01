@@ -60,6 +60,13 @@ class Settings(BaseSettings):
     zombie_grace_seconds: int = 180
     # How far past zombie eligibility the Redis processing lease survives.
     lock_grace_seconds: int = 120
+    # Replace a Celery child process after this many tasks, returning whatever
+    # memory PDF rasterisation accumulated. Deliberately low: OCR holds page
+    # bitmaps, and the container has been restarting roughly every five minutes,
+    # so a child never survived long enough for a higher figure to take effect.
+    # Env-tunable (WORKER_MAX_TASKS_PER_CHILD) so it can be adjusted from the
+    # Render dashboard without a redeploy.
+    worker_max_tasks_per_child: int = 10
 
     # Security settings
     api_key: str = ""

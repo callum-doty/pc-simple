@@ -531,3 +531,63 @@ class TestRequeueClearsRunTimings:
         values = stmt.compile().params
         assert values["processing_started_at"] is None
         assert values["processing_heartbeat_at"] is None
+
+
+class TestDurabilityConfig:
+    """
+    Locks in the settings that make worker death survivable.
+
+    The pre-2026-05 backlog of 293 permanently-stranded documents existed
+    because Celery acked each message on delivery: a worker killed mid-document
+    lost the message outright and the row stayed PROCESSING with nothing left to
+    retry it. The container still restarts under OCR memory pressure — these
+    settings are the only reason that now produces a redelivery instead of a
+    zombie, so a silent revert would reopen the original failure.
+    """
+
+    def test_messages_survive_worker_death(self):
+        import worker
+
+        conf = worker.celery_app.conf
+        assert conf.task_acks_late is True
+        assert conf.task_reject_on_worker_lost is True
+
+    def test_task_runtime_is_bounded(self):
+        import worker
+
+        conf = worker.celery_app.conf
+        assert conf.task_soft_time_limit, "an unbounded task can hold PROCESSING forever"
+        assert conf.task_time_limit > conf.task_soft_time_limit
+
+    def test_recovery_timings_are_strictly_ordered(self):
+        """
+        soft < hard < zombie threshold < lease TTL < visibility timeout.
+
+        Each step must clear the one before it: a task is killed before it can
+        be called a zombie, called a zombie before its lease expires, and its
+        lease expires before the broker redelivers. Equality is a bug — the
+        original code had the lease TTL and the zombie threshold both at 360s
+        while its comment claimed the lease outlived recovery.
+        """
+        import worker
+        from services.scheduler_service import ZOMBIE_THRESHOLD_SECONDS
+
+        conf = worker.celery_app.conf
+        steps = [
+            conf.task_soft_time_limit,
+            conf.task_time_limit,
+            ZOMBIE_THRESHOLD_SECONDS,
+            worker.LOCK_TTL_SECONDS,
+            conf.broker_transport_options["visibility_timeout"],
+        ]
+        assert steps == sorted(steps) and len(set(steps)) == len(steps), steps
+
+    def test_children_are_recycled_from_settings(self):
+        """Env-tunable so memory can be sized without a redeploy."""
+        import worker
+        from config import get_settings
+
+        assert (
+            worker.celery_app.conf.worker_max_tasks_per_child
+            == get_settings().worker_max_tasks_per_child
+        )
