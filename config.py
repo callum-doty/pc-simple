@@ -67,6 +67,13 @@ class Settings(BaseSettings):
     # Env-tunable (WORKER_MAX_TASKS_PER_CHILD) so it can be adjusted from the
     # Render dashboard without a redeploy.
     worker_max_tasks_per_child: int = 10
+    # Longest edge, in pixels, that a PDF page is rasterised to before OCR.
+    # Anthropic's vision API downscales any image whose long edge exceeds the
+    # model's limit, so rendering above it spends memory and bandwidth on
+    # pixels the API discards. The cap is 1568px on Sonnet 4.6 (the model this
+    # app uses for OCR) and 2576px on Opus 4.7+/Sonnet 5 — raise this only
+    # alongside a model that can actually use the extra resolution.
+    ocr_max_image_edge_px: int = 1568
 
     # Security settings
     api_key: str = ""

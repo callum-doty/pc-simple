@@ -497,6 +497,21 @@ class AIService:
             logger.error(f"Error extracting text from {filename}: {str(e)}")
             return ""
 
+    def _ocr_render_matrix(self, page) -> "fitz.Matrix":
+        """
+        Render scale that puts the page's long edge on the OCR pixel budget.
+
+        Page dimensions are in points (72 per inch), so a zoom of 1.0 renders at
+        72 DPI. Never scales up past the 200 DPI this previously used, so small
+        pages are unaffected and only oversized ones are brought down.
+        """
+        max_edge = settings.ocr_max_image_edge_px
+        long_edge_pt = max(page.rect.width, page.rect.height)
+        if long_edge_pt <= 0:
+            return fitz.Matrix(1.0, 1.0)
+        zoom = min(max_edge / long_edge_pt, 200 / 72)
+        return fitz.Matrix(zoom, zoom)
+
     async def _extract_text_from_pdf_generator(
         self, file_content: bytes
     ) -> AsyncGenerator[Tuple[int, str], None]:
@@ -517,7 +532,17 @@ class AIService:
                 try:
                     page = doc.load_page(page_num)
                     logger.info(f"Performing AI-based OCR on page {page_num + 1}.")
-                    pix = page.get_pixmap(dpi=200)  # Lower DPI to save memory
+                    # Scale to a pixel budget rather than a fixed DPI. A fixed
+                    # DPI bounds nothing when page sizes vary: this corpus runs
+                    # from letter-size mailers to large-format posters, and a
+                    # 24x36" page at 200 DPI is 4800x7200 — a ~100MB pixmap,
+                    # plus its PNG and base64 copies, live at once. That was the
+                    # allocation behind the worker's OOM restart loop.
+                    #
+                    # Costs nothing in quality: the vision API downscales any
+                    # image past the model's long-edge limit anyway, so those
+                    # pixels were being discarded server-side regardless.
+                    pix = page.get_pixmap(matrix=self._ocr_render_matrix(page))
                     img_data = pix.tobytes("png")
 
                     # Clean up pixmap immediately after use
@@ -657,7 +682,9 @@ class AIService:
                 doc = fitz.open(stream=file_content, filetype="pdf")
                 if doc.page_count > 0:
                     page = doc[0]
-                    pix = page.get_pixmap()
+                    # Same pixel budget as the page-by-page path — an unbounded
+                    # render here is only safe by accident of page size.
+                    pix = page.get_pixmap(matrix=self._ocr_render_matrix(page))
                     img_data = pix.tobytes("png")
                     doc.close()
                     return base64.b64encode(img_data).decode("utf-8")
