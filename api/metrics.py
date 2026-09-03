@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from config import get_settings
 from database import get_db
-from services.metrics import scope
+from services.metrics import jsonb, scope
 from services.metrics.activity import ActivityMetrics
 from services.metrics.corpus import CorpusMetrics
 from services.metrics.cost import CostMetrics
@@ -112,6 +112,9 @@ async def get_now_metrics(db: Session = Depends(get_db)):
     informative than either figure alone.
     """
     try:
+        # One catalog query per process, cached: decides whether the JSON
+        # predicates below need a ::jsonb cast. See services/metrics/jsonb.
+        jsonb.configure(db)
         return {"success": True, **NowMetrics(db).collect().as_dict()}
     except Exception as e:
         logger.error(f"Error collecting now metrics: {e}", exc_info=True)
@@ -134,6 +137,9 @@ async def get_pipeline_metrics(db: Session = Depends(get_db)):
     was served from cache and carries the ``as_of`` of the underlying read.
     """
     try:
+        # One catalog query per process, cached: decides whether the JSON
+        # predicates below need a ::jsonb cast. See services/metrics/jsonb.
+        jsonb.configure(db)
         def build() -> dict:
             return {
                 "success": True,
@@ -176,6 +182,9 @@ async def get_stage_drilldown(
     triage list is worse than a slightly slower one.
     """
     try:
+        # One catalog query per process, cached: decides whether the JSON
+        # predicates below need a ::jsonb cast. See services/metrics/jsonb.
+        jsonb.configure(db)
         return {"success": True, **StageDrilldown(db).fetch(stage_key, page, per_page)}
     except KeyError:
         from services.metrics import stages
@@ -210,6 +219,9 @@ async def get_corpus_metrics(db: Session = Depends(get_db)):
     the corpus — so it is cached for 60s under ``metrics:corpus``.
     """
     try:
+        # One catalog query per process, cached: decides whether the JSON
+        # predicates below need a ::jsonb cast. See services/metrics/jsonb.
+        jsonb.configure(db)
         def build() -> dict:
             return {
                 "success": True,

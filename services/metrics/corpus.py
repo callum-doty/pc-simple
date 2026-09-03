@@ -27,7 +27,7 @@ from sqlalchemy import Text, cast, func
 from sqlalchemy.orm import Session
 
 from models.document import Document
-from services.metrics.jsonb import array_length
+from services.metrics.jsonb import array_length, needs_cast_sql
 from services.metrics import scope
 from services.metrics.envelope import Metric, MetricGroup
 
@@ -203,8 +203,12 @@ class CorpusMetrics:
         """
         from sqlalchemy import text
 
+        # Raw SQL, so the cast decision cannot come from the expression
+        # helpers — ask for it explicitly. Empty string once the columns are
+        # genuinely jsonb.
+        kw = f"d.keywords{needs_cast_sql()}"
         sql = text(
-            """
+            f"""
             WITH mappings AS (
                 SELECT
                     d.id                                           AS doc_id,
@@ -212,7 +216,7 @@ class CorpusMetrics:
                     INITCAP(TRIM(mapping ->> 'subcategory'))       AS subcategory
                 FROM documents d,
                      LATERAL jsonb_array_elements(
-                         COALESCE(d.keywords -> 'keyword_mappings', '[]'::jsonb)
+                         COALESCE({kw} -> 'keyword_mappings', '[]'::jsonb)
                      ) AS mapping
             )
             SELECT 'primary' AS level, primary_category AS name,

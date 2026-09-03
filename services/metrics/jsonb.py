@@ -26,18 +26,100 @@ these helpers become redundant no-ops rather than wrong. Until then, matching
 what search_service already does keeps one convention across the codebase.
 """
 
-from sqlalchemy import Text, cast, func, literal
+import logging
+from typing import Optional
+
+from sqlalchemy import Text, cast, func, literal, text
 from sqlalchemy.dialects.postgresql import JSONB
+
+logger = logging.getLogger(__name__)
+
+#: Whether the deployed columns still need a ``::jsonb`` cast.
+#:
+#: None means "not yet checked", and the helpers cast in that state — the
+#: cautious default, since casting a jsonb column is a no-op while failing to
+#: cast a json one is a 500.
+#:
+#: Detected once per process rather than assumed, because the conversion is a
+#: table rewrite that needs a maintenance window (see
+#: scripts/convert_json_to_jsonb.py). Tying correctness to whether that has
+#: happened yet is what broke the last deploy: the migration could not take its
+#: lock, the build did not stop, and code that had dropped its casts went live
+#: against unconverted columns.
+_needs_cast: Optional[bool] = None
+
+#: Columns the model declares as JSONB.
+_JSON_COLUMNS = ("ai_analysis", "keywords", "file_metadata", "embedding_provenance")
+
+
+def configure(db) -> bool:
+    """
+    Detect once whether the deployed JSON columns need casting.
+
+    Cheap: one catalog query per process, cached thereafter. Call it before
+    building any JSON predicate — the metrics endpoints do this on entry.
+
+    Returns True when a cast is still required.
+    """
+    global _needs_cast
+    if _needs_cast is not None:
+        return _needs_cast
+    try:
+        rows = db.execute(
+            text(
+                "SELECT column_name, data_type FROM information_schema.columns "
+                "WHERE table_schema = \'public\' AND table_name = \'documents\' "
+                "AND column_name = ANY(:cols)"
+            ),
+            {"cols": list(_JSON_COLUMNS)},
+        ).fetchall()
+    except Exception as e:
+        logger.warning(f"Metrics: could not detect JSON column types, casting: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        _needs_cast = True
+        return _needs_cast
+
+    plain = [name for name, kind in rows if kind == "json"]
+    _needs_cast = bool(plain)
+    if plain:
+        logger.info(
+            "Metrics: %s still json, casting to jsonb per query. Run "
+            "scripts/convert_json_to_jsonb.py during a maintenance window to "
+            "remove this cost.",
+            ", ".join(sorted(plain)),
+        )
+    return _needs_cast
+
+
+def needs_cast_sql() -> str:
+    """
+    ``"::jsonb"`` or ``""``, for raw-SQL callers that cannot use the
+    expression helpers.
+    """
+    return "" if _needs_cast is False else "::jsonb"
+
+
+def reset_detection() -> None:
+    """Forget the cached detection. For tests, and after a conversion."""
+    global _needs_cast
+    _needs_cast = None
 
 
 def as_jsonb(column):
     """
     A JSON column as ``jsonb``, whichever type it actually has.
 
-    Use for any expression reaching a ``jsonb``-only function. Reads that use
-    only ``->`` / ``->>`` do not need it and are left alone, so the cast is
-    not paid where it buys nothing.
+    A no-op once the columns are genuinely jsonb — which matters, because the
+    cast is not free: ``json -> jsonb`` re-parses the whole document for every
+    row, and a cast also makes any index on the column unusable.
+
+    Reads that use only ``->`` / ``->>`` never need this and are left alone.
     """
+    if _needs_cast is False:
+        return column
     return cast(column, JSONB)
 
 
@@ -69,13 +151,13 @@ def has_key(column, key: str):
     paramstyle marker, so mixing it with a bound parameter in one statement is
     a driver-dependent footgun.
 
-    No cast: migration i6j7k8l9m0n1 made these columns genuinely jsonb. Casting
-    per row re-parsed the whole document and made the GIN index unusable, which
-    is most of why the dashboard took minutes to load.
+    Cast only while the columns are still ``json`` — see ``as_jsonb``.
     """
-    return func.jsonb_exists(column, key)
+    return func.jsonb_exists(as_jsonb(column), key)
 
 
 def array_length(column, key: str):
     """Length of the array at ``column -> key``, or 0 when the key is absent."""
-    return func.jsonb_array_length(func.coalesce(get(column, key), empty_array()))
+    return func.jsonb_array_length(
+        func.coalesce(get(as_jsonb(column), key), empty_array())
+    )

@@ -18,10 +18,16 @@ services:
     region: oregon
     plan: standard
     buildCommand: |
+      # set -e: without it a failing step is skipped and the deploy continues.
+      # A failed `alembic upgrade head` once shipped code that assumed a schema
+      # change which had not happened, and the app went live broken.
+      set -e
       pip install --upgrade pip
       pip install -r requirements.txt
       alembic upgrade head
-      python backfill_keyword_mappings.py
+      # Best-effort, unlike a migration: a backfill that cannot finish should
+      # not block a deploy. Logged, not fatal.
+      python backfill_keyword_mappings.py || echo "WARNING: keyword mapping backfill failed; continuing"
     startCommand: |
       echo "Starting Document Catalog application..."
       echo "Environment: $ENVIRONMENT"
@@ -92,10 +98,16 @@ services:
     region: oregon
     plan: standard
     buildCommand: |
+      # set -e: without it a failing step is skipped and the deploy continues.
+      # A failed `alembic upgrade head` once shipped code that assumed a schema
+      # change which had not happened, and the app went live broken.
+      set -e
       pip install --upgrade pip
       pip install -r requirements.txt
       alembic upgrade head
-      python backfill_keyword_mappings.py
+      # Best-effort, unlike a migration: a backfill that cannot finish should
+      # not block a deploy. Logged, not fatal.
+      python backfill_keyword_mappings.py || echo "WARNING: keyword mapping backfill failed; continuing"
     # concurrency=2, not 4: four children each rasterising PDF pages for OCR
     # exceeded the container's memory, and the process was being restarted every
     # ~5 minutes. Each restart discarded four documents' in-flight work, so the
@@ -173,6 +185,7 @@ services:
     region: oregon
     plan: starter
     buildCommand: |
+      set -e
       pip install --upgrade pip
       pip install -r requirements.txt
     startCommand: "celery -A worker.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule"
@@ -205,6 +218,7 @@ services:
     plan: starter
     schedule: "*/10 * * * *"
     buildCommand: |
+      set -e
       pip install --upgrade pip
       pip install -r requirements.txt
       alembic upgrade head

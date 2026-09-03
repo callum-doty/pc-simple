@@ -431,3 +431,107 @@ class TestIngestCursorFailureIsContained:
         db.execute.return_value.fetchone.return_value = (243.5,)
 
         assert NowMetrics(db)._ingest_cursor_age_seconds() == 243.5
+
+
+class TestJsonColumnDetection:
+    """
+    The metrics layer must not depend on whether the json->jsonb conversion
+    has been run.
+
+    It did, briefly, and that broke production: the Alembic migration could not
+    take its ACCESS EXCLUSIVE lock, Render's buildCommand has no `set -e` so
+    the deploy continued anyway, and code that had dropped its casts went live
+    against unconverted columns.
+    """
+
+    def setup_method(self):
+        from services.metrics import jsonb
+
+        jsonb.reset_detection()
+
+    def teardown_method(self):
+        from services.metrics import jsonb
+
+        jsonb.reset_detection()
+
+    def test_undetected_state_casts(self):
+        """
+        The cautious default. Casting a jsonb column is a no-op; failing to
+        cast a json one is a 500.
+        """
+        from services.metrics import jsonb
+
+        assert jsonb.needs_cast_sql() == "::jsonb"
+
+    def test_detects_plain_json_and_casts(self):
+        from unittest.mock import MagicMock
+
+        from services.metrics import jsonb
+
+        db = MagicMock()
+        db.execute.return_value.fetchall.return_value = [
+            ("ai_analysis", "json"),
+            ("keywords", "json"),
+        ]
+        assert jsonb.configure(db) is True
+        assert jsonb.needs_cast_sql() == "::jsonb"
+
+    def test_detects_jsonb_and_stops_casting(self):
+        """
+        Once converted the cast must go: json->jsonb re-parses every document
+        per row, and a cast makes the GIN index unusable.
+        """
+        from unittest.mock import MagicMock
+
+        from services.metrics import jsonb
+
+        db = MagicMock()
+        db.execute.return_value.fetchall.return_value = [
+            ("ai_analysis", "jsonb"),
+            ("keywords", "jsonb"),
+            ("file_metadata", "jsonb"),
+            ("embedding_provenance", "jsonb"),
+        ]
+        assert jsonb.configure(db) is False
+        assert jsonb.needs_cast_sql() == ""
+
+    def test_mixed_types_still_cast(self):
+        """One unconverted column is enough to require the cast everywhere."""
+        from unittest.mock import MagicMock
+
+        from services.metrics import jsonb
+
+        db = MagicMock()
+        db.execute.return_value.fetchall.return_value = [
+            ("ai_analysis", "jsonb"),
+            ("keywords", "json"),
+        ]
+        assert jsonb.configure(db) is True
+
+    def test_detection_failure_falls_back_to_casting(self):
+        """
+        An unreadable catalog must not produce the fast-but-broken variant.
+        The rollback matters: Postgres aborts the transaction on a failed
+        statement, so without it every later query in the request fails.
+        """
+        from unittest.mock import MagicMock
+
+        from services.metrics import jsonb
+
+        db = MagicMock()
+        db.execute.side_effect = Exception("permission denied")
+        assert jsonb.configure(db) is True
+        db.rollback.assert_called_once()
+
+    def test_detection_is_cached(self):
+        """One catalog query per process, not per request."""
+        from unittest.mock import MagicMock
+
+        from services.metrics import jsonb
+
+        db = MagicMock()
+        db.execute.return_value.fetchall.return_value = [("keywords", "jsonb")]
+        jsonb.configure(db)
+        jsonb.configure(db)
+        jsonb.configure(db)
+        assert db.execute.call_count == 1
