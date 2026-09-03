@@ -205,7 +205,7 @@ class ActivityMetrics:
 
     def collect(self) -> MetricGroup:
         as_of = scope.now_utc()
-        total = scope.count(scope.corpus(self.db.query(Document)))
+        total = scope.corpus_total(self.db)
         search = self._search_summary()
         logged = search["total"] or 0
 

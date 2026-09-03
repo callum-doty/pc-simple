@@ -129,24 +129,38 @@ class ReliabilityMetrics:
 
     def collect(self) -> MetricGroup:
         as_of = scope.now_utc()
-        base = self.db.query(Document)
 
-        total = scope.count(scope.corpus(base))
-        terminal_count = scope.count(scope.terminal(base))
-        completed_count = scope.count(scope.completed(base))
-        failed_count = scope.count(scope.failed(base))
+        # One scan for all six populations. "Ever failed" and "currently
+        # failed" are different questions, and the old review panel conflated
+        # them under the label "Processing Errors": processing_error is never
+        # cleared on a subsequent success, so a non-null value means the
+        # document has failed at some point, not that it is broken now.
+        row = self.db.query(
+            func.count().label("total"),
+            func.count().filter(Document.status.in_(scope.TERMINAL)).label("terminal"),
+            func.count()
+            .filter(Document.status == DocumentStatus.COMPLETED)
+            .label("completed"),
+            func.count()
+            .filter(Document.status == DocumentStatus.FAILED)
+            .label("failed"),
+            func.count()
+            .filter(Document.processing_error.isnot(None))
+            .label("ever_failed"),
+            func.count()
+            .filter(
+                Document.status == DocumentStatus.COMPLETED,
+                Document.processing_error.isnot(None),
+            )
+            .label("recovered"),
+        ).select_from(Document).one()
 
-        # "Ever failed" and "currently failed" are different questions, and the
-        # old review panel conflated them under the label "Processing Errors".
-        # processing_error is never cleared on a subsequent success, so a
-        # non-null value means the document has failed at some point in its
-        # life — not that it is broken now.
-        ever_failed = scope.count(
-            base.filter(Document.processing_error.isnot(None))
-        )
-        recovered = scope.count(
-            scope.completed(base).filter(Document.processing_error.isnot(None))
-        )
+        total = row.total or 0
+        terminal_count = row.terminal or 0
+        completed_count = row.completed or 0
+        failed_count = row.failed or 0
+        ever_failed = row.ever_failed or 0
+        recovered = row.recovered or 0
 
         g = MetricGroup(name="reliability")
 

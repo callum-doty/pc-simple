@@ -48,9 +48,21 @@ PLACEHOLDER_SUMMARY = "%no summary available%"
 
 
 def _has_text():
+    """
+    Has non-empty extracted text.
+
+    ``substr(col, 1, 1) <> ''`` rather than ``col <> ''``. The two are
+    identical for a non-null value — a string is empty exactly when its first
+    character is — but comparing the column directly detoasts the whole value,
+    and this column holds the full OCR output of a multi-page document. Asking
+    for one character lets Postgres stop after decompressing a prefix.
+
+    This predicate gates every later funnel stage, so it is evaluated for every
+    row on every dashboard load.
+    """
     return and_(
         Document.extracted_text.isnot(None),
-        Document.extracted_text != "",
+        func.substr(Document.extracted_text, 1, 1) != "",
     )
 
 

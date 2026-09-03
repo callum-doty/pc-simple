@@ -25,29 +25,31 @@ from services.metrics.reliability import ReliabilityMetrics
 
 def build(total, terminal, completed, failed, ever_failed, recovered):
     """
-    Run collect() with population counts stubbed.
+    Run collect() with the population query stubbed.
 
-    The side_effect order mirrors the sequence of scope.count() calls in
-    ReliabilityMetrics.collect: total, terminal, completed, failed,
-    ever_failed, recovered. Asserted below via call_count so a reordering in
-    collect() fails loudly here rather than silently scrambling the values.
+    ReliabilityMetrics gathers all six populations in one scan — six separate
+    COUNT(*) queries for one panel was a measurable share of a dashboard load
+    that took minutes. The stub therefore returns a single row rather than a
+    sequence of counts.
     """
     svc = ReliabilityMetrics(MagicMock())
-    counts = [total, terminal, completed, failed, ever_failed, recovered]
 
-    with patch(
-        "services.metrics.reliability.scope.count", side_effect=counts
-    ) as counter, patch.object(
+    row = MagicMock()
+    row.total = total
+    row.terminal = terminal
+    row.completed = completed
+    row.failed = failed
+    row.ever_failed = ever_failed
+    row.recovered = recovered
+
+    db = MagicMock()
+    db.query.return_value.select_from.return_value.one.return_value = row
+    svc.db = db
+
+    with patch.object(
         ReliabilityMetrics, "_outcome_trend", return_value=[]
-    ), patch.object(
-        ReliabilityMetrics, "_recent_failures", return_value=[]
-    ):
-        group = svc.collect()
-        assert counter.call_count == len(counts), (
-            "collect() changed how many populations it counts; update the "
-            "side_effect order in this helper to match."
-        )
-    return group
+    ), patch.object(ReliabilityMetrics, "_recent_failures", return_value=[]):
+        return svc.collect()
 
 
 class TestSuccessRateRegression:

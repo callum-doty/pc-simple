@@ -43,49 +43,63 @@ class PipelineMetrics:
 
     def _gather_counts(self) -> Dict[str, int]:
         """
-        Every funnel and coverage count in one table scan.
+        Every funnel and coverage count in one table scan, evaluating each
+        stage predicate exactly once per row.
+
+        The obvious shape — ``count(*) FILTER (WHERE <cumulative criteria>)``
+        per stage — re-evaluates the early predicates inside every later
+        FILTER. With six cumulative stages, ``extracted_text IS NOT NULL AND
+        extracted_text <> ''`` would be evaluated five times per row, and each
+        evaluation detoasts a column that holds full OCR output. Same for the
+        JSON predicates.
+
+        So the predicates are computed once per row in a subquery, and the
+        aggregates filter on the resulting booleans. Postgres then reads each
+        heavyweight column once instead of once per stage.
 
         For each stage two numbers are collected:
 
         ``reached_*``
-            The cumulative count — passed this stage and every prior one.
+            Cumulative — passed this stage and every prior one.
         ``has_*``
-            The independent count — holds this stage's artifact regardless of
-            whether earlier ones are present.
+            Independent — holds this stage's artifact regardless of order.
 
-        Both are kept because their divergence is itself a finding. An
-        independent count above the cumulative one means documents carry a
-        later artifact while missing an earlier one — an embedding with no
-        extracted text, say — which is a data-integrity signal that is
-        completely invisible if you only compute one of the two.
+        Both are kept because their divergence is a finding: an independent
+        count above the cumulative one means documents carry a later artifact
+        while missing an earlier one, which is invisible if you compute only
+        one of the two.
         """
-        columns = [func.count(Document.id).label("total")]
+        flags = [Document.id.label("id")]
+        for st in (*stages.FUNNEL_STAGES, *stages.COVERAGE_STAGES):
+            if st.is_root:
+                continue
+            flags.append(st.predicate().label(f"f_{st.key}"))
 
+        inner = self.db.query(*flags).subquery("stage_flags")
+
+        columns = [func.count().label("total")]
+        cumulative = []
         for st in stages.FUNNEL_STAGES:
             if st.is_root:
                 continue
-            reached = stages.reached_criteria(st)
+            flag = inner.c[f"f_{st.key}"]
+            cumulative.append(flag.is_(True))
             columns.append(
-                func.count(Document.id)
-                .filter(and_(*reached))
-                .label(f"reached_{st.key}")
+                func.count().filter(and_(*cumulative)).label(f"reached_{st.key}")
             )
             columns.append(
-                func.count(Document.id)
-                .filter(st.predicate())
-                .label(f"has_{st.key}")
+                func.count().filter(flag.is_(True)).label(f"has_{st.key}")
             )
 
         for st in stages.COVERAGE_STAGES:
             columns.append(
-                func.count(Document.id)
-                .filter(st.predicate())
+                func.count()
+                .filter(inner.c[f"f_{st.key}"].is_(True))
                 .label(f"has_{st.key}")
             )
 
-        row = self.db.query(*columns).one()
+        row = self.db.query(*columns).select_from(inner).one()
         return {k: (v or 0) for k, v in row._mapping.items()}
-
 
     def _funnel(self, counts: Dict[str, int], total: int, as_of) -> List[dict]:
         """

@@ -163,6 +163,48 @@ class NowMetrics:
     # average reads far healthier than the experience. The old dashboard
     # reported the mean.
 
+    def _status_counts(self) -> dict:
+        """
+        Corpus size, in-progress, backlog, zombies and the legacy-timing
+        exclusion — in a single pass.
+
+        The zombie predicate is the scheduler's, reused verbatim from
+        ``scope.zombies`` so the dashboard reports exactly the set the recovery
+        daemon will act on.
+        """
+        from sqlalchemy import and_, or_
+
+        cutoff = scope.zombie_cutoff()
+        zombie = and_(
+            Document.status == "PROCESSING",
+            or_(
+                and_(
+                    Document.processing_heartbeat_at.isnot(None),
+                    Document.processing_heartbeat_at < cutoff,
+                ),
+                and_(
+                    Document.processing_heartbeat_at.is_(None),
+                    or_(
+                        Document.processing_started_at < cutoff,
+                        Document.processing_started_at.is_(None),
+                    ),
+                ),
+            ),
+        )
+        row = self.db.query(
+            func.count().label("total"),
+            func.count().filter(Document.status == "PROCESSING").label("processing"),
+            func.count().filter(Document.status.in_(scope.BACKLOG)).label("backlog"),
+            func.count().filter(zombie).label("zombies"),
+            func.count()
+            .filter(
+                Document.status == "COMPLETED",
+                Document.processing_started_at.is_(None),
+            )
+            .label("legacy_timing"),
+        ).select_from(Document).one()
+        return {k: (v or 0) for k, v in row._mapping.items()}
+
     def _duration_stats(self) -> dict:
         """True worker duration: first PROCESSING transition to completion."""
         seconds = func.extract(
@@ -217,10 +259,14 @@ class NowMetrics:
         as_of = scope.now_utc()
         base = self.db.query(Document)
 
-        total = scope.count(scope.corpus(base))
-        processing_count = scope.count(scope.processing(base))
-        backlog_count = scope.count(scope.backlog(base))
-        zombie_count = scope.count(scope.zombies(base))
+        # One scan for every status figure. This endpoint is polled, so five
+        # separate COUNT(*) scans every 15 seconds was the single most
+        # repeated cost on the deployment.
+        counts = self._status_counts()
+        total = counts["total"]
+        processing_count = counts["processing"]
+        backlog_count = counts["backlog"]
+        zombie_count = counts["zombies"]
         lease_count = self._lease_count()
         broker_depth = self._broker_depth()
         cursor_age = self._ingest_cursor_age_seconds()
@@ -402,9 +448,7 @@ class NowMetrics:
             {"key": "ingest_interval_seconds", "value": INGEST_INTERVAL_SECONDS},
         ]
 
-        completed_without_timings = scope.count(
-            scope.completed(base).filter(Document.processing_started_at.is_(None))
-        )
+        completed_without_timings = counts["legacy_timing"]
         if completed_without_timings:
             g.note = (
                 f"{completed_without_timings:,} completed documents predate "

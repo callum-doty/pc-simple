@@ -68,12 +68,14 @@ def has_key(column, key: str):
     ``jsonb_exists`` rather than the ``?`` operator: ``?`` is also the qmark
     paramstyle marker, so mixing it with a bound parameter in one statement is
     a driver-dependent footgun.
+
+    No cast: migration i6j7k8l9m0n1 made these columns genuinely jsonb. Casting
+    per row re-parsed the whole document and made the GIN index unusable, which
+    is most of why the dashboard took minutes to load.
     """
-    return func.jsonb_exists(as_jsonb(column), key)
+    return func.jsonb_exists(column, key)
 
 
 def array_length(column, key: str):
     """Length of the array at ``column -> key``, or 0 when the key is absent."""
-    return func.jsonb_array_length(
-        func.coalesce(get(as_jsonb(column), key), empty_array())
-    )
+    return func.jsonb_array_length(func.coalesce(get(column, key), empty_array()))

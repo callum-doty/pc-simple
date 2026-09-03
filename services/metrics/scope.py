@@ -274,6 +274,22 @@ def resolution_time():
     return func.coalesce(Document.processed_at, Document.updated_at)
 
 
+def corpus_total(db) -> int:
+    """
+    ``COUNT(*)`` of documents, memoised for the life of one Session.
+
+    Seven collectors each need the corpus size as a denominator, and each was
+    issuing its own full count — seven scans of the same table for one number
+    that cannot change within a request. The memo lives on ``Session.info``,
+    so it is scoped to the request and disappears with it.
+    """
+    cached = db.info.get("_metrics_corpus_total")
+    if cached is None:
+        cached = count(corpus(db.query(Document)))
+        db.info["_metrics_corpus_total"] = cached
+    return cached
+
+
 def count(q: Query) -> int:
     """
     Row count for a scoped query.

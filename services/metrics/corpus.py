@@ -184,47 +184,68 @@ class CorpusMetrics:
 
     # -- topics ---------------------------------------------------------------
 
-    def _topics(self, column: str, limit: int) -> List[dict]:
+    def _topic_levels(self) -> dict:
         """
-        Document counts per taxonomy category, from the JSONB mappings.
+        Primary categories and subcategories from one pass over the mappings.
 
-        Unnests ``keywords.keyword_mappings`` and counts DISTINCT documents —
-        a document mentioning three economic terms is one document about the
-        economy, not three.
+        Unnests ``keywords.keyword_mappings`` once and aggregates both levels
+        from the same CTE. Two separate LATERAL unnests — the obvious way to
+        write this — walk every mapping of every document twice, which on a
+        corpus of any size is the most expensive thing on the page.
+
+        Counts DISTINCT documents: a document mentioning three economic terms
+        is one document about the economy, not three.
 
         ``INITCAP(TRIM(...))`` collapses the casing duplicate in taxonomy.csv,
         where "Geographic & Demographic Targeting" and "...& demographic
-        Targeting" are separate categories. That is a read-side patch: the CSV
-        should be fixed at source, or the duplicate returns on the next reseed.
+        Targeting" are separate categories. A read-side patch — the CSV should
+        be fixed at source, or the duplicate returns on the next reseed.
         """
         from sqlalchemy import text
 
         sql = text(
-            f"""
-            SELECT
-                INITCAP(TRIM(mapping ->> '{column}')) AS name,
-                COUNT(DISTINCT d.id)                  AS docs
-            FROM documents d,
-                 LATERAL jsonb_array_elements(
-                     COALESCE(d.keywords::jsonb -> 'keyword_mappings', '[]'::jsonb)
-                 ) AS mapping
-            WHERE mapping ->> '{column}' IS NOT NULL
-              AND TRIM(mapping ->> '{column}') <> ''
-            GROUP BY 1
+            """
+            WITH mappings AS (
+                SELECT
+                    d.id                                           AS doc_id,
+                    INITCAP(TRIM(mapping ->> 'primary_category'))  AS primary_category,
+                    INITCAP(TRIM(mapping ->> 'subcategory'))       AS subcategory
+                FROM documents d,
+                     LATERAL jsonb_array_elements(
+                         COALESCE(d.keywords -> 'keyword_mappings', '[]'::jsonb)
+                     ) AS mapping
+            )
+            SELECT 'primary' AS level, primary_category AS name,
+                   COUNT(DISTINCT doc_id) AS docs
+            FROM mappings
+            WHERE primary_category IS NOT NULL AND primary_category <> ''
+            GROUP BY 1, 2
+            UNION ALL
+            SELECT 'sub' AS level, subcategory AS name,
+                   COUNT(DISTINCT doc_id) AS docs
+            FROM mappings
+            WHERE subcategory IS NOT NULL AND subcategory <> ''
+            GROUP BY 1, 2
             ORDER BY docs DESC
-            LIMIT :limit
             """
         )
         try:
-            rows = self.db.execute(sql, {"limit": limit}).fetchall()
+            rows = self.db.execute(sql).fetchall()
         except Exception as e:
-            logger.warning(f"Metrics: topic aggregation failed for {column}: {e}")
+            logger.warning(f"Metrics: topic aggregation failed: {e}")
             try:
                 self.db.rollback()
             except Exception:
                 logger.warning("Metrics: rollback after topic aggregation failed")
-            return []
-        return [{"name": r[0], "docs": r[1]} for r in rows]
+            return {"topics": [], "subtopics": []}
+
+        topics, subtopics = [], []
+        for level, name, docs in rows:
+            bucket = topics if level == "primary" else subtopics
+            cap = TOP_TOPICS if level == "primary" else TOP_SUBTOPICS
+            if len(bucket) < cap:
+                bucket.append({"name": name, "docs": docs})
+        return {"topics": topics, "subtopics": subtopics}
 
     def _documents_with_topics(self) -> int:
         return (
@@ -236,7 +257,7 @@ class CorpusMetrics:
 
     # -- franking -------------------------------------------------------------
 
-    def _franking(self, total: int) -> dict:
+    def _franking(self, total: int, extracted: int) -> dict:
         """
         Three-way split, not a percentage.
 
@@ -247,7 +268,6 @@ class CorpusMetrics:
         third bucket is the only honest presentation available without making
         the column nullable-by-default.
         """
-        extracted = scope.count(scope.extracted(self.db.query(Document)))
         row = self.db.query(
             func.count(Document.id).filter(Document.is_frank.is_(True)).label("franked"),
             func.count(Document.id).filter(Document.is_frank.is_(False)).label("not_franked"),
@@ -350,10 +370,11 @@ class CorpusMetrics:
 
     def collect(self) -> MetricGroup:
         as_of = scope.now_utc()
-        total = scope.count(scope.corpus(self.db.query(Document)))
+        total = scope.corpus_total(self.db)
         with_client = scope.count(scope.extracted(self.db.query(Document)))
         with_topics = self._documents_with_topics()
-        franking = self._franking(total)
+        # Reuses the count above rather than issuing a second identical scan.
+        franking = self._franking(total, with_client)
 
         g = MetricGroup(name="corpus")
 
@@ -434,8 +455,9 @@ class CorpusMetrics:
         g.series["normalisation_gaps"] = self._normalisation_gaps()
         g.series["geography"] = self._geography(total)
         g.series["timeline"] = self._timeline()
-        g.series["topics"] = self._topics("primary_category", TOP_TOPICS)
-        g.series["subtopics"] = self._topics("subcategory", TOP_SUBTOPICS)
+        topic_levels = self._topic_levels()
+        g.series["topics"] = topic_levels["topics"]
+        g.series["subtopics"] = topic_levels["subtopics"]
         g.series["franking"] = [franking]
         g.series["frank_by_state"] = self._frank_by_state()
         g.series["ingest_source"] = self._ingest_source(total)

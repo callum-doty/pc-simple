@@ -253,7 +253,7 @@ class QualityMetrics:
 
     def collect(self) -> MetricGroup:
         as_of = scope.now_utc()
-        total = scope.count(scope.corpus(self.db.query(Document)))
+        total = scope.corpus_total(self.db)
 
         review = self._review_queue()
         embeddings = self._embedding_staleness()

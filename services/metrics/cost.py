@@ -25,7 +25,7 @@ otherwise abort the whole query rather than skip one row.
 import logging
 from typing import List
 
-from sqlalchemy import BigInteger, Float, cast, func
+from sqlalchemy import BigInteger, Float, cast, desc, func
 from sqlalchemy.orm import Session
 
 from models.document import Document
@@ -137,6 +137,9 @@ class CostMetrics:
         }
 
     def _by_provider(self) -> List[dict]:
+        # ORDER BY the label rather than repeating the aggregate: SQLAlchemy
+        # emits the whole expression again otherwise, and _total_tokens()
+        # carries a regexp_replace plus two casts for every row.
         rows = (
             self.db.query(
                 _cost("provider").label("provider"),
@@ -145,7 +148,7 @@ class CostMetrics:
             )
             .filter(_guard())
             .group_by(_cost("provider"))
-            .order_by(func.sum(_total_tokens()).desc())
+            .order_by(desc("tokens"))
             .all()
         )
         return [
@@ -173,7 +176,7 @@ class CostMetrics:
             )
             .filter(_guard(), Document.client_canonical.isnot(None))
             .group_by(Document.client_canonical)
-            .order_by(func.sum(_total_tokens()).desc())
+            .order_by(desc("tokens"))
             .limit(TOP_CLIENTS)
             .all()
         )
@@ -218,7 +221,7 @@ class CostMetrics:
 
     def collect(self) -> MetricGroup:
         as_of = scope.now_utc()
-        total_docs = scope.count(scope.corpus(self.db.query(Document)))
+        total_docs = scope.corpus_total(self.db)
         totals = self._totals()
         pct = self._percentiles()
 

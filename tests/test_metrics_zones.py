@@ -43,7 +43,7 @@ def cost_group(docs_with_cost=620, total=1000, **series):
     ), patch.object(
         CostMetrics, "_by_month", return_value=series.get("by_month", [])
     ), patch(
-        "services.metrics.cost.scope.count", return_value=total
+        "services.metrics.cost.scope.corpus_total", return_value=total
     ):
         return svc.collect()
 
@@ -110,7 +110,7 @@ def quality_group(total=1000, review=None, embeddings=None, curation=None,
          patch.object(QualityMetrics, "_curation_effort", return_value=curation), \
          patch.object(QualityMetrics, "_duplicates", return_value=duplicates), \
          patch.object(QualityMetrics, "_confidence_distributions", return_value=confidence), \
-         patch("services.metrics.quality.scope.count", return_value=total):
+         patch("services.metrics.quality.scope.corpus_total", return_value=total):
         return svc.collect()
 
 
@@ -194,8 +194,9 @@ class TestFranking:
         row.franked, row.not_franked, row.null_frank = franked, not_franked, nulls
         db.query.return_value.one.return_value = row
         svc.db = db
-        with patch("services.metrics.corpus.scope.count", return_value=extracted):
-            return svc._franking(total)
+        # The extracted count is now passed in rather than re-queried: collect()
+        # already has it, and issuing the identical scan twice was pure waste.
+        return svc._franking(total, extracted)
 
     def test_reports_three_buckets(self):
         f = self._frank()
@@ -272,7 +273,7 @@ def activity_group(total=1000, status_rows=None, search=None):
          patch.object(ActivityMetrics, "_recent_uploads", return_value=[]), \
          patch.object(ActivityMetrics, "_top_terms", return_value=[]), \
          patch.object(ActivityMetrics, "_search_summary", return_value=search), \
-         patch("services.metrics.activity.scope.count", return_value=total):
+         patch("services.metrics.activity.scope.corpus_total", return_value=total):
         svc.db = MagicMock()
         svc.db.query.return_value.filter.return_value.scalar.return_value = 120
         return svc.collect()

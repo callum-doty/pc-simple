@@ -14,6 +14,9 @@ faults this was written to chase are both schema-shaped:
   * PostgreSQL older than 14, where the ``col['key']`` subscript syntax
     SQLAlchemy 2.0 emits for JSON columns is a syntax error.
 
+It times each collector too, so a slow dashboard can be attributed to a
+specific zone rather than guessed at.
+
 Read-only: every collector issues SELECTs only.
 
 Usage, from a Render shell on the web service:
@@ -23,6 +26,7 @@ Usage, from a Render shell on the web service:
 
 import os
 import sys
+import time
 import traceback
 
 from sqlalchemy import create_engine, text
@@ -92,23 +96,47 @@ def main():
     ]
 
     failures = 0
+    timings = []
     for label, cls in collectors:
         # A fresh session per collector: one failed statement aborts a
         # Postgres transaction, so a shared session would report every
-        # subsequent collector as broken too.
+        # subsequent collector as broken too. It also means each collector
+        # pays its own corpus-total query rather than sharing the per-session
+        # memo, so these timings are a slight over-estimate of live cost.
         session = Session(engine)
+        started = time.perf_counter()
         try:
             group = cls(session).collect()
+            elapsed = time.perf_counter() - started
+            timings.append((elapsed, label))
             n = len(group.metrics)
-            series = ", ".join(group.series) if group.series else "—"
-            print(f"  OK   {label}  {n} metrics | series: {series}")
+            print(f"  OK   {label}  {elapsed * 1000:8.0f} ms  {n} metrics")
         except Exception:
+            elapsed = time.perf_counter() - started
             failures += 1
-            print(f"  FAIL {label}")
+            print(f"  FAIL {label}  {elapsed * 1000:8.0f} ms")
             for line in traceback.format_exc().splitlines():
                 print(f"       {line}")
         finally:
             session.close()
+
+    if timings:
+        print()
+        print("=" * 74)
+        print("SLOWEST FIRST")
+        print("=" * 74)
+        total = sum(t for t, _ in timings)
+        for elapsed, label in sorted(timings, reverse=True):
+            share = elapsed / total * 100 if total else 0
+            bar = "#" * int(round(share / 2))
+            print(f"  {label}  {elapsed * 1000:8.0f} ms  {share:5.1f}%  {bar}")
+        print(f"\n  total across collectors: {total:.1f}s")
+        print()
+        print("  The dashboard issues three requests: /metrics/now runs the")
+        print("  'now' collector only; /metrics/pipeline runs pipeline +")
+        print("  reliability + cost + activity; /metrics/corpus runs corpus +")
+        print("  quality. The latter two are cached for 60s, so only the first")
+        print("  load after a cache miss pays these costs.")
 
     print()
     print("=" * 74)
