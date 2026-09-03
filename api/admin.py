@@ -56,7 +56,11 @@ async def clear_redis_cache(password: str = Form(...)):
 
         search_keys = list(r.scan_iter("search:*"))
         facet_keys = list(r.scan_iter("facets:*"))
-        all_keys = search_keys + facet_keys
+        # Dashboard metric payloads (api/metrics.py CACHE_PREFIX). Included so
+        # "clear cache" means what it says — a stale metrics payload otherwise
+        # survives up to its own TTL after an admin has explicitly flushed.
+        metric_keys = list(r.scan_iter("metrics:*"))
+        all_keys = search_keys + facet_keys + metric_keys
 
         if not all_keys:
             return {
@@ -65,6 +69,7 @@ async def clear_redis_cache(password: str = Form(...)):
                 "deleted_count": 0,
                 "search_keys": 0,
                 "facet_keys": 0,
+                "metric_keys": 0,
             }
 
         deleted = r.delete(*all_keys)
@@ -76,6 +81,7 @@ async def clear_redis_cache(password: str = Form(...)):
             "deleted_count": deleted,
             "search_keys": len(search_keys),
             "facet_keys": len(facet_keys),
+            "metric_keys": len(metric_keys),
             "use_direct_urls": settings.use_direct_urls,
             "storage_type": settings.storage_type,
         }

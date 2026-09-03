@@ -41,7 +41,7 @@ from services.storage_service import StorageService
 from services.taxonomy_service import TaxonomyService
 from services.preview_service import PreviewService
 from services.security_service import security_service
-from api.dashboard import router as dashboard_router
+from api.metrics import router as metrics_router
 from api.documents import router as documents_router
 from api.search import router as search_router
 from api.taxonomy import router as taxonomy_router
@@ -401,7 +401,7 @@ async def performance_monitoring_middleware(request: Request, call_next):
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-app.include_router(dashboard_router, prefix="/api", tags=["Dashboard"])
+app.include_router(metrics_router, prefix="/api", tags=["Metrics"])
 app.include_router(documents_router, prefix="/api", tags=["Documents"])
 app.include_router(search_router, prefix="/api", tags=["Search"])
 app.include_router(taxonomy_router, prefix="/api", tags=["Taxonomy"])

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Admin Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/static/js/metrics.js"></script>
     <style>
       body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -218,34 +219,392 @@
         background-color: #6c757d;
         cursor: not-allowed;
       }
+
+      /* --- Zone 1: pipeline funnel ------------------------------------- */
+      .frow {
+        display: grid;
+        grid-template-columns: 165px minmax(0, 1fr) 58px 72px 74px;
+        gap: 10px;
+        align-items: center;
+        padding: 4px 6px;
+        border-radius: 4px;
+      }
+      .frow-drillable { cursor: pointer; }
+      .frow-drillable:hover { background-color: #f1f4f8; }
+      .frow-drillable:focus-visible {
+        outline: 2px solid #6f42c1;
+        outline-offset: -2px;
+      }
+      .frow-label {
+        font-size: 0.85em;
+        color: #495057;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .ooo { color: #dc3545; font-size: 0.85em; margin-left: 6px; }
+      .ftrack {
+        height: 18px;
+        background-color: #eef1f5;
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      .ffill { height: 100%; background-color: #6f42c1; opacity: 0.82; }
+      .fpct {
+        font-size: 0.85em;
+        font-weight: 700;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .fcount {
+        font-size: 0.82em;
+        color: #6c757d;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .fdrop {
+        font-size: 0.82em;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .drop-nil { color: #adb5bd; }
+      .drop-mild { color: #8a6212; }
+      .drop-hot { color: #dc3545; font-weight: 600; }
+
+      /* --- Extraction coverage ----------------------------------------- */
+      .cov-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+        gap: 12px;
+      }
+      .covcell {
+        border: 1px solid #e1e8ed;
+        border-radius: 6px;
+        padding: 12px 14px;
+        cursor: pointer;
+      }
+      .covcell:hover { background-color: #f1f4f8; }
+      .covcell:focus-visible {
+        outline: 2px solid #6f42c1;
+        outline-offset: -2px;
+      }
+      .covpct {
+        font-size: 1.5em;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+      .covlabel { font-size: 0.82em; color: #6c757d; margin-top: 2px; }
+      .covtrack {
+        height: 5px;
+        background-color: #eef1f5;
+        border-radius: 3px;
+        margin-top: 8px;
+        overflow: hidden;
+      }
+      .covtrack i { display: block; height: 100%; background-color: #6f42c1; }
+      .covmissing { font-size: 0.76em; color: #adb5bd; margin-top: 6px; }
+
+      /* --- Stage drill-down -------------------------------------------- */
+      .drill-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-top: 20px;
+      }
+      .drill-sub { color: #6c757d; font-size: 0.85em; margin-left: 8px; }
+      .drill-count {
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+      .drill-reading {
+        color: #6c757d;
+        font-size: 0.85em;
+        margin: 4px 0 12px;
+      }
+      .drill-pager {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 12px;
+        font-size: 0.85em;
+      }
+      .drill-pager button {
+        padding: 5px 12px;
+        border: 1px solid #ced4da;
+        border-radius: 4px;
+        background-color: #fff;
+        cursor: pointer;
+      }
+      .drill-pager button:disabled {
+        color: #adb5bd;
+        cursor: not-allowed;
+      }
+
+      /* --- Zone 0: live strip ------------------------------------------- */
+      .now-strip {
+        background-color: #fff;
+        border-radius: 8px;
+        padding: 16px 18px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+        margin-bottom: 20px;
+      }
+      .now-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: 12px;
+      }
+      .now-head span:first-child {
+        font-size: 0.72em;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #6f42c1;
+      }
+      .now-asof { font-size: 0.75em; color: #adb5bd; }
+      .pairs {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 10px;
+      }
+      .pair {
+        border: 1px solid #e1e8ed;
+        border-radius: 6px;
+        padding: 10px 12px;
+      }
+      .pair-label {
+        font-size: 0.68em;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: #6c757d;
+        margin-bottom: 7px;
+      }
+      .pair-rows { display: flex; flex-direction: column; gap: 3px; }
+      .pair-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 8px;
+        font-size: 0.82em;
+        color: #495057;
+      }
+      .pair-row b {
+        font-size: 1.25em;
+        font-variant-numeric: tabular-nums;
+        color: #2c3e50;
+      }
+      .verdict {
+        margin-top: 7px;
+        padding-top: 6px;
+        border-top: 1px dashed #e1e8ed;
+        font-size: 0.72em;
+        font-weight: 600;
+      }
+      .verdict-ok { color: #28a745; }
+      .verdict-warn { color: #8a6212; }
+      .verdict-bad { color: #dc3545; }
+      .verdict-unknown { color: #6c757d; font-style: italic; }
+      .pair-bad { border-color: #f1b0aa; }
+      .pair-warn { border-color: #e6cf9a; }
+
+      /* --- Metric envelope ---------------------------------------------- */
+      /* The denominator line has no modifier that hides it: a value is not
+         renderable here without the population it came from. */
+      .metric-label {
+        font-size: 0.72em;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #6c757d;
+        margin-bottom: 4px;
+      }
+      .metric-value {
+        font-size: 1.9em;
+        font-weight: 700;
+        color: #2c3e50;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.1;
+      }
+      .metric-pct {
+        font-size: 0.9em;
+        font-weight: 600;
+        color: #6f42c1;
+        margin-top: 2px;
+      }
+      .metric-denominator {
+        font-size: 0.72em;
+        color: #6c757d;
+        margin-top: 6px;
+        line-height: 1.35;
+      }
+      .metric-caveat {
+        font-size: 0.7em;
+        color: #8a6212;
+        margin-top: 6px;
+        line-height: 1.35;
+        border-left: 2px solid #e6cf9a;
+        padding-left: 7px;
+      }
+
+      /* --- Layout helpers ------------------------------------------------ */
+      .zone-heading {
+        color: #2c3e50;
+        margin: 40px 0 18px;
+        font-size: 1.5em;
+        border-top: 2px solid #e1e8ed;
+        padding-top: 26px;
+      }
+      .mini-head {
+        font-size: 0.95em;
+        color: #495057;
+        margin: 0 0 8px;
+      }
+      .mini-note {
+        color: #6c757d;
+        font-size: 0.82em;
+        margin: 0 0 12px;
+        line-height: 1.45;
+      }
+      .duo {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 18px;
+      }
+      .covcell-static {
+        border: 1px solid #e1e8ed;
+        border-radius: 6px;
+        padding: 12px 14px;
+      }
+
+      /* --- Horizontal bar lists ------------------------------------------ */
+      .minibars { display: flex; flex-direction: column; gap: 5px; }
+      .mb {
+        display: grid;
+        grid-template-columns: 120px minmax(0, 1fr) 62px;
+        gap: 8px;
+        align-items: center;
+      }
+      .mb-l {
+        font-size: 0.8em;
+        color: #495057;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .mb-missing { color: #adb5bd; font-style: italic; }
+      .mb-t {
+        height: 13px;
+        background-color: #eef1f5;
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      .mb-t i {
+        display: block;
+        height: 100%;
+        background-color: #6f42c1;
+        opacity: 0.78;
+      }
+      .mb-t i.bar-missing { background-color: #ced4da; opacity: 1; }
+      .mb-n {
+        font-size: 0.78em;
+        text-align: right;
+        color: #6c757d;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* --- Stacked proportion bars --------------------------------------- */
+      .stack {
+        display: flex;
+        height: 22px;
+        border-radius: 3px;
+        overflow: hidden;
+        border: 1px solid #e1e8ed;
+      }
+      .stack i { display: block; height: 100%; }
+      .stack-key {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 7px;
+        font-size: 0.76em;
+        color: #6c757d;
+      }
+      .stack-key span { display: flex; align-items: center; gap: 5px; }
+      .stack-key b {
+        width: 9px;
+        height: 9px;
+        border-radius: 2px;
+        display: block;
+      }
+      .conf-row { margin-bottom: 18px; }
+      .conf-label {
+        font-size: 0.82em;
+        font-weight: 600;
+        color: #495057;
+        margin-bottom: 5px;
+      }
+
+      /* --- Simple tables -------------------------------------------------- */
+      .tlist { display: flex; flex-direction: column; gap: 1px; }
+      .tlist > div {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 6px 0;
+        border-bottom: 1px solid #f1f3f5;
+        font-size: 0.82em;
+      }
+      .tlist > div span:first-child {
+        color: #495057;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .tlist > div span:last-child {
+        color: #6c757d;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .recent-doc {
+        padding: 8px 0;
+        border-bottom: 1px solid #f1f3f5;
+        font-size: 0.85em;
+      }
+      .term-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 5px 0;
+        border-bottom: 1px solid #f1f3f5;
+        font-size: 0.85em;
+      }
+      .term-row b { font-variant-numeric: tabular-nums; }
     </style>
   </head>
   <body>
     <div class="dashboard-container">
       <h1>📊 Admin Dashboard</h1>
 
-      <!-- Key Metrics Cards -->
-      <div class="key-metrics">
-        <div class="key-metric-card" id="total-docs-card">
-          <div class="key-metric-label">Processed Documents</div>
-          <div class="key-metric-value" id="total-docs">...</div>
-          <div class="key-metric-subtitle">Completed all time</div>
+      <!-- Zone 0: live operational state. Paired numbers whose agreement
+           is the signal — a lease count against status, a broker queue
+           against the database backlog. -->
+      <div class="now-strip">
+        <div class="now-head">
+          <span>Now</span>
+          <span id="now-asof" class="now-asof">—</span>
         </div>
-        <div class="key-metric-card" id="success-rate-card">
-          <div class="key-metric-label">Success Rate</div>
-          <div class="key-metric-value" id="success-rate">...</div>
-          <div class="key-metric-subtitle">Last 7 days</div>
+        <div id="now-pairs" class="pairs">
+          <p style="color: #6c757d">Loading…</p>
         </div>
-        <div class="key-metric-card">
-          <div class="key-metric-label">Avg Processing Time</div>
-          <div class="key-metric-value" id="avg-time">...</div>
-          <div class="key-metric-subtitle">Worker time per document</div>
-        </div>
-        <div class="key-metric-card" id="queue-depth-card">
-          <div class="key-metric-label">Queue Depth</div>
-          <div class="key-metric-value" id="queue-depth">...</div>
-          <div class="key-metric-subtitle">Pending documents</div>
-        </div>
+      </div>
+
+      <!-- Headline metrics. Every card renders its denominator; see
+           static/js/metrics.js, which refuses to draw a value without one. -->
+      <div class="key-metrics" id="key-metrics">
+        <p style="color: #6c757d">Loading…</p>
+      </div>
       </div>
 
       <div class="dashboard-grid">
@@ -315,77 +674,30 @@
         ></div>
       </div>
 
+      <!-- Pipeline (Zone 1) — replaces the old Incomplete Documents panel,
+           whose four tiles ran LIMIT 100 and reported the cap as a count. -->
       <div class="panel" style="grid-column: 1 / -1">
         <h2>
-          Incomplete Documents
-          <span id="total-incomplete-badge" class="badge">0</span>
+          Pipeline
+          <span id="funnel-corpus" class="badge">—</span>
         </h2>
-        <p style="color: #666; margin-bottom: 20px">
-          Documents missing critical data due to AI processing failures (e.g.,
-          API quota exceeded)
+        <p style="color: #666; margin-bottom: 14px">
+          Sequential stages, each cumulative — a bar counts documents that
+          cleared it <em>and</em> every stage above. The drop is where
+          documents are being lost; click a row to list exactly those.
         </p>
+        <div id="funnel-rows"><p style="color: #6c757d">Loading…</p></div>
 
-        <div
-          style="
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
-          "
-        >
-          <div class="metric-card">
-            <div class="metric-label">Missing Summary</div>
-            <div class="metric-value" id="missing-summary-count">-</div>
-            <button class="expand-btn" onclick="toggleSection('summary')">
-              View Details
-            </button>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Missing Extracted Text</div>
-            <div class="metric-value" id="missing-text-count">-</div>
-            <button class="expand-btn" onclick="toggleSection('text')">
-              View Details
-            </button>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Missing Keywords</div>
-            <div class="metric-value" id="missing-keywords-count">-</div>
-            <button class="expand-btn" onclick="toggleSection('keywords')">
-              View Details
-            </button>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Missing Embeddings</div>
-            <div class="metric-value" id="missing-embeddings-count">-</div>
-            <button class="expand-btn" onclick="toggleSection('embeddings')">
-              View Details
-            </button>
-          </div>
-        </div>
+        <h3 style="font-size: 1em; color: #495057; margin: 26px 0 4px">
+          Extraction coverage
+        </h3>
+        <p style="color: #666; margin-bottom: 12px; font-size: 0.9em">
+          Independent outputs of the feature-extraction task — siblings, not
+          steps. A document can have a state and no date.
+        </p>
+        <div id="coverage-cells"></div>
 
-        <div id="summary-section" class="detail-section" style="display: none">
-          <h3>Documents Missing Summary</h3>
-          <div id="summary-list" class="document-list"></div>
-        </div>
-
-        <div id="text-section" class="detail-section" style="display: none">
-          <h3>Documents Missing Extracted Text</h3>
-          <div id="text-list" class="document-list"></div>
-        </div>
-
-        <div id="keywords-section" class="detail-section" style="display: none">
-          <h3>Documents Missing Keywords</h3>
-          <div id="keywords-list" class="document-list"></div>
-        </div>
-
-        <div
-          id="embeddings-section"
-          class="detail-section"
-          style="display: none"
-        >
-          <h3>Documents Missing Embeddings</h3>
-          <div id="embeddings-list" class="document-list"></div>
-        </div>
+        <div id="stage-drill" class="detail-section" style="display: none"></div>
       </div>
 
       <!-- Document Deletion Section -->
@@ -439,419 +751,649 @@
     </div>
 
     <!-- ================================================================
-         INTELLIGENCE ANALYTICS SECTION
+         ZONES 3-5 — cost, corpus, quality
     ================================================================ -->
-    <h2 style="color: #2c3e50; margin: 40px 0 20px; font-size: 1.6em; border-top: 2px solid #e1e8ed; padding-top: 30px;">
-      Intelligence Analytics
-    </h2>
-
+    <h2 class="zone-heading">Cost</h2>
     <div class="dashboard-grid">
-
-      <!-- Review Queue Control Center (full width) -->
-      <div class="panel" style="grid-column: 1 / -1;">
-        <h2>Control Center — Review Queue</h2>
-        <p style="color: #6c757d; margin-bottom: 20px;">Documents needing attention, broken down by reason.</p>
-        <div id="review-queue-cards" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px;">
-          <p style="color: #6c757d;">Loading...</p>
-        </div>
-      </div>
-
-      <!-- Data Quality -->
-      <div class="panel">
-        <h2>Data Quality</h2>
-        <p style="color: #6c757d; margin-bottom: 16px;">Confidence distributions across extraction fields.</p>
-        <div id="confidence-bars"></div>
-        <h3 style="font-size: 1em; color: #495057; margin: 20px 0 10px;">Bottom-quality clients (min 3 docs)</h3>
-        <div id="bad-data-leaderboard" style="font-size: 0.88em;"></div>
-      </div>
-
-      <!-- Client Intelligence -->
-      <div class="panel">
-        <h2>Client Intelligence</h2>
-        <canvas id="top-clients-chart" style="max-height: 260px;"></canvas>
-        <h3 style="font-size: 1em; color: #495057; margin: 20px 0 8px;">Normalization gaps (most raw variants)</h3>
-        <div id="dirty-clients-table" style="font-size: 0.88em;"></div>
-      </div>
-
-      <!-- Geographic Distribution -->
-      <div class="panel">
-        <h2>Geographic Distribution</h2>
-        <canvas id="geography-chart" style="max-height: 340px;"></canvas>
-      </div>
-
-      <!-- Franked Mail Analysis -->
-      <div class="panel">
-        <h2>Franked Mail Analysis</h2>
-        <div id="frank-summary" style="margin-bottom: 16px;"></div>
-        <canvas id="frank-over-time-chart" style="max-height: 200px;"></canvas>
-        <h3 style="font-size: 1em; color: #495057; margin: 20px 0 8px;">Top frank clients</h3>
-        <div id="frank-clients-table" style="font-size: 0.88em;"></div>
-      </div>
-
-      <!-- Document Timeline (full width) -->
-      <div class="panel" style="grid-column: 1 / -1;">
-        <h2>Document Timeline — by date_created</h2>
-        <p style="color: #6c757d; margin-bottom: 4px;">
-          Actual document dates (not upload dates). Reveals political cycles and historical ingestion patterns.
-          <span id="temporal-lag" style="margin-left: 16px; font-weight: 600;"></span>
+      <div class="panel" style="grid-column: 1 / -1">
+        <h2>Token spend <span id="cost-coverage" class="badge">—</span></h2>
+        <p style="color: #666; margin-bottom: 14px">
+          Read from <code>file_metadata.processing_cost</code>. Reported in
+          tokens, not currency — no price table exists in the configuration
+          and a hardcoded rate would go stale silently.
         </p>
-        <canvas id="temporal-chart"></canvas>
-        <div style="margin-top: 20px;">
-          <h3 style="font-size: 1em; color: #495057; margin-bottom: 8px;">Top 10 spike days</h3>
-          <div id="spike-days-list" style="font-size: 0.88em; display: flex; flex-wrap: wrap; gap: 8px;"></div>
+        <div id="cost-cards"></div>
+        <div class="duo" style="margin-top: 18px">
+          <div>
+            <h3 class="mini-head">Top clients by spend</h3>
+            <div id="cost-clients"></div>
+          </div>
+          <div>
+            <h3 class="mini-head">By provider</h3>
+            <div id="cost-providers"></div>
+          </div>
         </div>
+        <h3 class="mini-head" style="margin-top: 18px">Monthly spend</h3>
+        <canvas id="cost-month-chart" style="max-height: 200px"></canvas>
+      </div>
+    </div>
+
+    <h2 class="zone-heading">Corpus</h2>
+    <div class="dashboard-grid">
+      <div class="panel" style="grid-column: 1 / -1">
+        <div id="corpus-cards"></div>
       </div>
 
+      <div class="panel">
+        <h2>Clients</h2>
+        <div id="corpus-clients"></div>
+        <h3 class="mini-head" style="margin-top: 18px">Normalisation gaps</h3>
+        <p class="mini-note">Canonical names backed by more than one raw variant.</p>
+        <div id="corpus-normalisation"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Geography</h2>
+        <p class="mini-note">
+          Percentages are of the whole corpus, so the unplaced share is visible
+          rather than implied.
+        </p>
+        <div id="corpus-geography"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Topics</h2>
+        <p class="mini-note">
+          From <code>keywords.keyword_mappings</code>. Counts distinct
+          documents — a document mentioning three economic terms is one
+          document about the economy.
+        </p>
+        <div id="corpus-topics"></div>
+        <h3 class="mini-head" style="margin-top: 18px">Subcategories</h3>
+        <div id="corpus-subtopics"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Franking</h2>
+        <p class="mini-note">
+          Three-way: <code>is_frank</code> defaults to FALSE and only the
+          feature task writes it, so an unexamined document cannot be counted
+          either way.
+        </p>
+        <div id="corpus-franking"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Timeline</h2>
+        <p class="mini-note">
+          Document dates, not upload dates. Clamped to 2019–2026 at write
+          time, so the series has hard edges by construction.
+        </p>
+        <canvas id="corpus-timeline-chart" style="max-height: 220px"></canvas>
+      </div>
+
+      <div class="panel">
+        <h2>Source, size and type</h2>
+        <p class="mini-note">
+          Present on every row — the only corpus dimensions with no coverage
+          caveat.
+        </p>
+        <h3 class="mini-head">Ingest source</h3>
+        <div id="corpus-ingest"></div>
+        <h3 class="mini-head" style="margin-top: 14px">File size</h3>
+        <div id="corpus-sizes"></div>
+        <h3 class="mini-head" style="margin-top: 14px">File type</h3>
+        <div id="corpus-types"></div>
+      </div>
+    </div>
+
+    <h2 class="zone-heading">Quality &amp; review</h2>
+    <div class="dashboard-grid">
+      <div class="panel">
+        <h2>Confidence</h2>
+        <p class="mini-note" id="quality-caveat"></p>
+        <div id="quality-confidence"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Review queue</h2>
+        <p class="mini-note">
+          One definition, matching the nav badge exactly.
+        </p>
+        <div id="quality-review"></div>
+      </div>
+
+      <div class="panel" style="grid-column: 1 / -1">
+        <div id="quality-cards"></div>
+      </div>
     </div>
 
     <script>
-      let incompleteData = null;
+
+      // --- Loaders ---------------------------------------------------------
+      // Three endpoints, each owning its own zones. /now is polled; the other
+      // two are cached server-side for 60s and report their own age.
+
+      const POLL_MS = 15000;
 
       document.addEventListener("DOMContentLoaded", async () => {
-        try {
-          const response = await fetch("/api/dashboard");
-          const data = await response.json();
-          console.log("Dashboard data:", data);
-
-          // Update Key Metrics
-          updateKeyMetrics(data);
-
-          // Render Charts
-          renderProcessingActivityChart(data.trends);
-          renderStatusBreakdownChart(data.status_breakdown);
-          renderSearchAnalyticsChart(data.trends);
-
-          // Render Recent Documents
-          renderRecentDocuments(data.recent_documents);
-
-          // Render Top Searches
-          renderTopSearches(data.user_engagement.top_search_terms);
-
-          // Load incomplete documents data
-          await loadIncompleteDocuments();
-        } catch (error) {
-          console.error("Error fetching dashboard data:", error);
-          document.body.innerHTML = "<h1>Error loading dashboard data</h1>";
-        }
+        loadNow();
+        setInterval(loadNow, POLL_MS);
+        await Promise.all([loadPipeline(), loadCorpus()]);
       });
 
-      function updateKeyMetrics(data) {
-        const metrics = data.key_metrics;
-
-        // Processed (completed) documents
-        document.getElementById("total-docs").textContent = metrics.completed_documents || 0;
-
-        // Success Rate with color coding
-        const successRate = metrics.success_rate_7d || 0;
-        document.getElementById("success-rate").textContent = successRate.toFixed(1) + "%";
-        const successCard = document.getElementById("success-rate-card");
-        if (successRate >= 95) {
-          successCard.classList.add("success");
-        } else if (successRate >= 85) {
-          successCard.classList.add("warning");
-        } else {
-          successCard.classList.add("danger");
-        }
-
-        // Avg Processing Time
-        const avgTime = metrics.avg_processing_time_seconds || 0;
-        document.getElementById("avg-time").textContent = avgTime.toFixed(1) + "s";
-
-        // Queue Depth with color coding
-        const queueDepth = metrics.queue_depth || 0;
-        document.getElementById("queue-depth").textContent = queueDepth;
-        const queueCard = document.getElementById("queue-depth-card");
-        if (queueDepth === 0) {
-          queueCard.classList.add("success");
-        } else if (queueDepth < 10) {
-          queueCard.classList.add("warning");
-        } else {
-          queueCard.classList.add("danger");
+      async function loadNow() {
+        try {
+          const r = await fetch("/api/metrics/now");
+          const d = await r.json();
+          renderNowPairs(d);
+          document.getElementById("now-asof").textContent = Metrics.renderAsOf(
+            d.as_of,
+            false
+          );
+        } catch (e) {
+          console.error("Error fetching live metrics:", e);
+          document.getElementById("now-pairs").innerHTML =
+            '<p style="color:#dc3545">Live metrics unavailable.</p>';
         }
       }
 
-      function renderProcessingActivityChart(trends) {
-        const uploads = trends.daily_uploads || [];
-        const completions = trends.daily_completions || [];
+      async function loadPipeline() {
+        try {
+          const r = await fetch("/api/metrics/pipeline");
+          const d = await r.json();
+          renderKeyMetrics(d);
+          renderFunnel(d.pipeline);
+          renderCoverage(d.pipeline);
+          renderCost(d.cost);
+          renderStatusBreakdown(d.activity);
+          renderTrends(d.activity);
+          renderRecentUploads(d.activity);
+          renderTopSearches(d.activity);
+        } catch (e) {
+          console.error("Error fetching pipeline metrics:", e);
+          document.getElementById("funnel-rows").innerHTML =
+            '<p style="color:#dc3545">Could not load pipeline metrics.</p>';
+        }
+      }
 
-        // Get all unique dates
-        const allDates = [...new Set([
-          ...uploads.map(d => d.date),
-          ...completions.map(d => d.date)
-        ])].sort();
+      async function loadCorpus() {
+        try {
+          const r = await fetch("/api/metrics/corpus");
+          const d = await r.json();
+          renderCorpus(d.corpus);
+          renderQuality(d.quality);
+        } catch (e) {
+          console.error("Error fetching corpus metrics:", e);
+        }
+      }
 
-        // Create data arrays aligned by date
-        const uploadCounts = allDates.map(date => {
-          const found = uploads.find(d => d.date === date);
-          return found ? found.count : 0;
-        });
+      // --- Zone 0 ----------------------------------------------------------
 
-        const completionCounts = allDates.map(date => {
-          const found = completions.find(d => d.date === date);
-          return found ? found.count : 0;
-        });
+      function renderNowPairs(data) {
+        const pairs = (data.series && data.series.verdicts) || [];
+        document.getElementById("now-pairs").innerHTML = pairs
+          .map(Metrics.renderPair)
+          .join("");
+      }
 
-        new Chart(document.getElementById("processing-activity-chart"), {
-          type: "line",
-          data: {
-            labels: allDates,
-            datasets: [
-              {
-                label: "Uploads",
-                data: uploadCounts,
-                borderColor: "#6f42c1",
-                backgroundColor: "rgba(111, 66, 193, 0.1)",
-                tension: 0.4,
-                fill: true
-              },
-              {
-                label: "Completed",
-                data: completionCounts,
-                borderColor: "#28a745",
-                backgroundColor: "rgba(40, 167, 69, 0.1)",
-                tension: 0.4,
-                fill: true
-              }
-            ]
+      // --- Headline cards --------------------------------------------------
+      // Rendered through Metrics.renderMetric, which throws rather than draw a
+      // value with no denominator label. That is the guarantee made server-side
+      // in services/metrics/envelope.py, enforced again at the point of paint.
+
+      function renderKeyMetrics(payload) {
+        const cards = [
+          {
+            metric: payload.pipeline.metrics.fully_processed,
+            label: "Fully processed",
+            format: "count",
+            showPct: true,
           },
-          options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            plugins: {
-              legend: {
-                position: "top"
-              }
-            },
-            scales: {
-              y: {
-                beginAtZero: true,
-                ticks: {
-                  precision: 0
-                }
-              }
-            }
-          }
-        });
+          {
+            metric: payload.reliability.metrics.success_rate,
+            label: "Success rate",
+            format: "pct",
+          },
+          {
+            metric: payload.reliability.metrics.currently_failed,
+            label: "Currently failed",
+            format: "count",
+            showPct: true,
+          },
+          {
+            metric: payload.cost.metrics.input_tokens,
+            label: "Input tokens",
+            format: "tokens",
+          },
+        ];
+        document.getElementById("key-metrics").innerHTML = cards
+          .map(function (c) {
+            return (
+              '<div class="key-metric-card">' +
+              Metrics.renderMetric(c.metric, {
+                label: c.label,
+                format: c.format,
+                showPct: c.showPct,
+              }) +
+              "</div>"
+            );
+          })
+          .join("");
       }
 
-      function renderStatusBreakdownChart(statusData) {
+      // --- Status, trends, recent, searches --------------------------------
+
+      const STATUS_COLOURS = {
+        QUEUED: "#6f42c1",
+        PENDING: "#adb5bd",
+        PROCESSING: "#007bff",
+        COMPLETED: "#28a745",
+        FAILED: "#dc3545",
+        OTHER: "#fd7e14",
+      };
+
+      function renderStatusBreakdown(activity) {
+        // Every status, including QUEUED — the old doughnut omitted the one
+        // status documents actually arrive in, so its slices did not sum to
+        // the corpus.
+        const rows = (activity.series && activity.series.status_breakdown) || [];
         new Chart(document.getElementById("processing-status-chart"), {
           type: "doughnut",
           data: {
-            labels: ["Pending", "Processing", "Completed", "Failed"],
+            labels: rows.map(function (r) {
+              return r.status;
+            }),
             datasets: [
               {
-                label: "Documents",
-                data: [
-                  statusData.pending || 0,
-                  statusData.processing || 0,
-                  statusData.completed || 0,
-                  statusData.failed || 0
-                ],
-                backgroundColor: ["#ffc107", "#007bff", "#28a745", "#dc3545"],
+                data: rows.map(function (r) {
+                  return r.docs;
+                }),
+                backgroundColor: rows.map(function (r) {
+                  return STATUS_COLOURS[r.status] || "#6c757d";
+                }),
               },
             ],
           },
           options: {
             responsive: true,
             maintainAspectRatio: true,
-            plugins: {
-              legend: {
-                position: "bottom"
-              }
-            }
-          }
+            plugins: { legend: { position: "bottom" } },
+          },
         });
       }
 
-      function renderSearchAnalyticsChart(trends) {
-        const searches = trends.daily_searches || [];
+      function renderTrends(activity) {
+        // One explicit date spine built server-side, so a day with no rows in
+        // one series is a zero rather than a missing point.
+        const t = (activity.series && activity.series.trends) || [];
+        const labels = t.map(function (r) {
+          return r.date;
+        });
 
-        const dates = searches.map(d => d.date);
-        const counts = searches.map(d => d.count);
-
-        new Chart(document.getElementById("search-analytics-chart"), {
+        new Chart(document.getElementById("processing-activity-chart"), {
           type: "line",
           data: {
-            labels: dates,
+            labels: labels,
             datasets: [
               {
-                label: "Daily Searches",
-                data: counts,
-                borderColor: "#17a2b8",
-                backgroundColor: "rgba(23, 162, 184, 0.1)",
+                label: "Uploads",
+                data: t.map(function (r) {
+                  return r.uploads;
+                }),
+                borderColor: "#6f42c1",
+                backgroundColor: "rgba(111,66,193,0.1)",
                 tension: 0.4,
-                fill: true
-              }
-            ]
+                fill: true,
+              },
+              {
+                label: "Completed",
+                data: t.map(function (r) {
+                  return r.completions;
+                }),
+                borderColor: "#28a745",
+                backgroundColor: "rgba(40,167,69,0.1)",
+                tension: 0.4,
+                fill: true,
+              },
+            ],
           },
           options: {
             responsive: true,
             maintainAspectRatio: true,
-            plugins: {
-              legend: {
-                display: false
-              }
-            },
-            scales: {
-              y: {
-                beginAtZero: true,
-                ticks: {
-                  precision: 0
-                }
-              }
-            }
-          }
+            plugins: { legend: { position: "top" } },
+            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+          },
+        });
+
+        new Chart(document.getElementById("search-analytics-chart"), {
+          type: "line",
+          data: {
+            labels: labels,
+            datasets: [
+              {
+                label: "Logged searches",
+                data: t.map(function (r) {
+                  return r.searches;
+                }),
+                borderColor: "#17a2b8",
+                backgroundColor: "rgba(23,162,184,0.1)",
+                tension: 0.4,
+                fill: true,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: { legend: { position: "top" } },
+            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+          },
         });
       }
 
-      function renderRecentDocuments(documents) {
-        const listElement = document.getElementById("recent-documents-list");
-        
-        if (!documents || documents.length === 0) {
-          listElement.innerHTML = '<p style="color: #6c757d; padding: 10px;">No recent documents</p>';
+      function renderRecentUploads(activity) {
+        const docs = (activity.series && activity.series.recent_uploads) || [];
+        const el = document.getElementById("recent-documents-list");
+        if (!docs.length) {
+          el.innerHTML = '<p style="color:#6c757d">No uploads yet.</p>';
           return;
         }
-
-        listElement.innerHTML = documents.map(doc => `
-          <div style="padding: 10px; border-bottom: 1px solid #e1e8ed;">
-            <div style="font-weight: 500; color: #2c3e50; margin-bottom: 4px;">${escapeHtml(doc.filename)}</div>
-            <div style="font-size: 0.85em; color: #6c757d;">
-              <span class="status-badge status-${doc.status.toLowerCase()}">${doc.status}</span>
-              <span style="margin-left: 8px;">${formatDate(doc.created_at)}</span>
-            </div>
-          </div>
-        `).join('');
-      }
-
-      function renderTopSearches(topSearches) {
-        const listElement = document.getElementById("top-searches-list");
-        
-        if (!topSearches || topSearches.length === 0) {
-          listElement.innerHTML = '<p style="color: #6c757d; padding: 10px;">No search data available</p>';
-          return;
-        }
-
-        listElement.innerHTML = topSearches.map((item, index) => `
-          <div style="padding: 12px; border-bottom: 1px solid #e1e8ed; display: flex; justify-content: space-between; align-items: center;">
-            <div style="display: flex; align-items: center;">
-              <span style="font-weight: bold; color: #007bff; margin-right: 12px; font-size: 1.2em;">${index + 1}</span>
-              <span style="color: #2c3e50;">${escapeHtml(item.query || item)}</span>
-            </div>
-            <span style="background: #e1e8ed; padding: 4px 12px; border-radius: 12px; font-size: 0.85em; font-weight: 600;">
-              ${item.count || 0}
-            </span>
-          </div>
-        `).join('');
-      }
-
-      async function loadIncompleteDocuments() {
-        try {
-          const response = await fetch("/api/incomplete-documents");
-          incompleteData = await response.json();
-
-          // Update counts
-          document.getElementById("total-incomplete-badge").textContent =
-            incompleteData.total_unique_incomplete;
-          document.getElementById("missing-summary-count").textContent =
-            incompleteData.summary.count;
-          document.getElementById("missing-text-count").textContent =
-            incompleteData.extracted_text.count;
-          document.getElementById("missing-keywords-count").textContent =
-            incompleteData.keywords.count;
-          document.getElementById("missing-embeddings-count").textContent =
-            incompleteData.embeddings.count;
-
-          // Update badge color based on count
-          const badge = document.getElementById("total-incomplete-badge");
-          if (incompleteData.total_unique_incomplete === 0) {
-            badge.style.backgroundColor = "#28a745";
-          }
-        } catch (error) {
-          console.error("Error fetching incomplete documents:", error);
-        }
-      }
-
-      function toggleSection(section) {
-        const sections = ["summary", "text", "keywords", "embeddings"];
-        const sectionId = `${section}-section`;
-        const sectionElement = document.getElementById(sectionId);
-
-        // Close all other sections
-        sections.forEach((s) => {
-          if (s !== section) {
-            document.getElementById(`${s}-section`).style.display = "none";
-          }
-        });
-
-        // Toggle current section
-        if (sectionElement.style.display === "none") {
-          sectionElement.style.display = "block";
-          renderDocumentList(section);
-        } else {
-          sectionElement.style.display = "none";
-        }
-      }
-
-      function renderDocumentList(section) {
-        if (!incompleteData) return;
-
-        const mapping = {
-          summary: "summary",
-          text: "extracted_text",
-          keywords: "keywords",
-          embeddings: "embeddings",
-        };
-
-        const dataKey = mapping[section];
-        const documents = incompleteData[dataKey].documents;
-        const listElement = document.getElementById(`${section}-list`);
-
-        if (documents.length === 0) {
-          listElement.innerHTML =
-            '<p style="text-align: center; color: #6c757d; padding: 20px;">No documents found with missing data.</p>';
-          return;
-        }
-
-        listElement.innerHTML = documents
-          .map(
-            (doc) => `
-          <div class="document-item" id="doc-item-${doc.id}">
-            <div class="document-id">ID: ${doc.id}</div>
-            <div class="document-info">
-              <div class="document-filename">${escapeHtml(doc.filename)}</div>
-              <div class="document-meta">
-                Created: ${formatDate(doc.created_at)}
-                ${
-                  doc.processed_at
-                    ? `• Processed: ${formatDate(doc.processed_at)}`
-                    : ""
-                }
-              </div>
-              ${
-                doc.processing_error
-                  ? `<div class="error-message">Error: ${escapeHtml(
-                      doc.processing_error
-                    )}</div>`
-                  : ""
-              }
-            </div>
-            <div>
-              <span class="status-badge status-${doc.status.toLowerCase()}">${
-              doc.status
-            }</span>
-              <button 
-                class="reprocess-btn" 
-                id="reprocess-btn-${doc.id}"
-                onclick="reprocessDocument(${doc.id})"
-              >
-                Reprocess
-              </button>
-            </div>
-          </div>
-        `
-          )
+        el.innerHTML = docs
+          .map(function (d) {
+            return (
+              '<div class="recent-doc">' +
+              '<span class="status-badge status-' +
+              Metrics.escapeHtml((d.status || "").toLowerCase()) +
+              '">' +
+              Metrics.escapeHtml(d.status) +
+              "</span> " +
+              Metrics.escapeHtml(d.filename) +
+              '<div class="mini-note">' +
+              formatDate(d.created_at) +
+              "</div></div>"
+            );
+          })
           .join("");
+      }
+
+      function renderTopSearches(activity) {
+        const terms = (activity.series && activity.series.top_terms) || [];
+        const el = document.getElementById("top-searches-list");
+        // The caveat travels with the panel: logging sits after the Redis
+        // cache early-return, so repeat searches inside the 5-minute TTL are
+        // never recorded, and each pagination click logs its own row.
+        const note =
+          '<p class="mini-note">Last 30 days, excluding filter-only searches. ' +
+          "Cache hits are not logged and pagination double-counts.</p>";
+        if (!terms.length) {
+          el.innerHTML = note + '<p style="color:#6c757d">No searches logged.</p>';
+          return;
+        }
+        el.innerHTML =
+          note +
+          terms
+            .map(function (t) {
+              return (
+                '<div class="term-row"><span>' +
+                Metrics.escapeHtml(t.term) +
+                "</span><b>" +
+                Metrics.fmtCount(t.uses) +
+                "</b></div>"
+              );
+            })
+            .join("");
+      }
+
+      // --- Zone 1: pipeline funnel + coverage ------------------------------
+      // Both read /api/metrics/pipeline, whose counts come from the same stage
+      // predicates the drill-down uses, so a bar and its list cannot disagree.
+
+      let pipelineData = null;
+      let openStageKey = null;
+
+      async function loadPipeline() {
+        try {
+          const response = await fetch("/api/metrics/pipeline");
+          const payload = await response.json();
+          pipelineData = payload.pipeline;
+          renderFunnel(pipelineData);
+          renderCoverage(pipelineData);
+        } catch (error) {
+          console.error("Error fetching pipeline metrics:", error);
+          document.getElementById("funnel-rows").innerHTML =
+            '<p style="color:#dc3545">Could not load pipeline metrics.</p>';
+        }
+      }
+
+      function renderFunnel(data) {
+        const rows = (data.series && data.series.funnel) || [];
+        const corpus = data.metrics.corpus;
+
+        document.getElementById("funnel-corpus").textContent =
+          Metrics.fmtCount(corpus.value) + " documents";
+
+        document.getElementById("funnel-rows").innerHTML = rows
+          .map(function (r) {
+            const pct = r.pct_of_corpus === null ? 0 : r.pct_of_corpus;
+            // Colour the drop, not the bar: bar length already encodes the
+            // level, so hue is free to carry the thing needing attention.
+            const dropClass =
+              r.lost_here === 0
+                ? "drop-nil"
+                : r.lost_here / (corpus.value || 1) > 0.1
+                ? "drop-hot"
+                : "drop-mild";
+            const ooo = r.out_of_order
+              ? '<span class="ooo" title="' +
+                Metrics.escapeHtml(r.out_of_order_note) +
+                '">&#9888; ' +
+                Metrics.fmtCount(r.out_of_order) +
+                " out of order</span>"
+              : "";
+            const interactive = r.drillable
+              ? " onclick=\"openStage('" +
+                r.key +
+                "')\" tabindex=\"0\" role=\"button\"" +
+                " onkeydown=\"if(event.key==='Enter')openStage('" +
+                r.key +
+                "')\" aria-label=\"List documents lost at " +
+                Metrics.escapeHtml(r.label) +
+                '"'
+              : "";
+            return (
+              '<div class="frow' +
+              (r.drillable ? " frow-drillable" : "") +
+              '"' +
+              interactive +
+              ' title="' +
+              Metrics.escapeHtml(r.reading) +
+              '">' +
+              '<div class="frow-label">' +
+              Metrics.escapeHtml(r.label) +
+              ooo +
+              "</div>" +
+              '<div class="ftrack"><div class="ffill" style="width:' +
+              pct +
+              '%"></div></div>' +
+              '<div class="fpct">' +
+              Metrics.fmtPct(pct) +
+              "</div>" +
+              '<div class="fcount">' +
+              Metrics.fmtCount(r.reached) +
+              "</div>" +
+              '<div class="fdrop ' +
+              dropClass +
+              '">' +
+              (r.lost_here ? "&minus;" + Metrics.fmtCount(r.lost_here) : "&mdash;") +
+              "</div>" +
+              "</div>"
+            );
+          })
+          .join("");
+      }
+
+      function renderCoverage(data) {
+        const cells = (data.series && data.series.coverage) || [];
+        document.getElementById("coverage-cells").innerHTML =
+          '<div class="cov-grid">' +
+          cells
+            .map(function (c) {
+              const pct = c.pct_of_corpus === null ? 0 : c.pct_of_corpus;
+              return (
+                '<div class="covcell" onclick="openStage(\'' +
+                c.key +
+                '\')" tabindex="0" role="button"' +
+                " onkeydown=\"if(event.key==='Enter')openStage('" +
+                c.key +
+                "')\" aria-label=\"List documents with " +
+                Metrics.escapeHtml(c.missing_label) +
+                '" title="' +
+                Metrics.escapeHtml(c.reading) +
+                '">' +
+                '<div class="covpct">' +
+                Metrics.fmtPct(pct) +
+                "</div>" +
+                '<div class="covlabel">' +
+                Metrics.escapeHtml(c.label) +
+                "</div>" +
+                '<div class="covtrack"><i style="width:' +
+                pct +
+                '%"></i></div>' +
+                '<div class="covmissing">' +
+                Metrics.fmtCount(c.missing) +
+                " missing</div>" +
+                "</div>"
+              );
+            })
+            .join("") +
+          "</div>";
+      }
+
+      // --- Drill-down ------------------------------------------------------
+
+      async function openStage(stageKey, page) {
+        const panel = document.getElementById("stage-drill");
+
+        // Clicking the open stage again closes it.
+        if (openStageKey === stageKey && !page) {
+          panel.style.display = "none";
+          openStageKey = null;
+          return;
+        }
+
+        openStageKey = stageKey;
+        panel.style.display = "block";
+        panel.innerHTML = '<p style="color:#6c757d">Loading&hellip;</p>';
+
+        try {
+          const response = await fetch(
+            "/api/metrics/stage/" +
+              encodeURIComponent(stageKey) +
+              "?page=" +
+              (page || 1) +
+              "&per_page=50"
+          );
+          if (!response.ok) {
+            const err = await response.json().catch(function () {
+              return {};
+            });
+            panel.innerHTML =
+              '<p style="color:#dc3545">' +
+              Metrics.escapeHtml(
+                err.detail || "Could not load documents for this stage."
+              ) +
+              "</p>";
+            return;
+          }
+          renderStageDrill(await response.json());
+        } catch (error) {
+          console.error("Error fetching stage drilldown:", error);
+          panel.innerHTML =
+            '<p style="color:#dc3545">Could not load documents for this stage.</p>';
+        }
+      }
+
+      function renderStageDrill(data) {
+        const s = data.stage;
+        // data.total is a real COUNT(*), not the length of this page. The
+        // endpoint this replaced reported its LIMIT as the count.
+        const header =
+          '<div class="drill-head"><div><strong>' +
+          Metrics.escapeHtml(s.label) +
+          '</strong><span class="drill-sub">' +
+          Metrics.escapeHtml(s.missing_label) +
+          '</span></div><div class="drill-count">' +
+          Metrics.fmtCount(data.total) +
+          " documents</div></div>" +
+          '<p class="drill-reading">' +
+          Metrics.escapeHtml(s.reading) +
+          "</p>";
+
+        const panel = document.getElementById("stage-drill");
+
+        if (!data.documents.length) {
+          panel.innerHTML =
+            header + '<p style="color:#6c757d; padding:12px 0">Nothing here.</p>';
+          return;
+        }
+
+        const rows = data.documents
+          .map(function (d) {
+            return (
+              '<div class="document-item">' +
+              "<div>" +
+              d.id +
+              "</div>" +
+              '<div><span class="status-badge status-' +
+              Metrics.escapeHtml((d.status || "").toLowerCase()) +
+              '">' +
+              Metrics.escapeHtml(d.status) +
+              "</span></div>" +
+              "<div>" +
+              Metrics.escapeHtml(d.filename) +
+              (d.processing_error
+                ? '<div class="error-text">' +
+                  Metrics.escapeHtml(d.processing_error) +
+                  "</div>"
+                : "") +
+              "</div>" +
+              "<div>" +
+              formatDate(d.created_at) +
+              "</div>" +
+              '<div><button class="reprocess-btn" id="reprocess-btn-' +
+              d.id +
+              '" onclick="reprocessDocument(' +
+              d.id +
+              ')">Reprocess</button></div>' +
+              "</div>"
+            );
+          })
+          .join("");
+
+        const pager =
+          data.pages > 1
+            ? '<div class="drill-pager"><button ' +
+              (data.page <= 1 ? "disabled" : "") +
+              " onclick=\"openStage('" +
+              s.key +
+              "', " +
+              (data.page - 1) +
+              ')">Previous</button><span>Page ' +
+              data.page +
+              " of " +
+              data.pages +
+              "</span><button " +
+              (data.page >= data.pages ? "disabled" : "") +
+              " onclick=\"openStage('" +
+              s.key +
+              "', " +
+              (data.page + 1) +
+              ')">Next</button></div>'
+            : "";
+
+        panel.innerHTML =
+          header + '<div class="document-list">' + rows + "</div>" + pager;
       }
 
       function formatDate(dateString) {
@@ -945,8 +1487,11 @@
 
             setTimeout(() => {
               docItem.remove();
-              // Reload incomplete documents data to update counts
-              loadIncompleteDocuments();
+              // Refresh the funnel so the bars and the open drill-down agree
+              // again after a reprocess. Both read the same stage predicates,
+              // so refreshing one without the other would show a stale count.
+              loadPipeline();
+              if (openStageKey) openStage(openStageKey, 1);
             }, 500);
           } else {
             // Error - show error message
@@ -1215,291 +1760,390 @@
         resultsDiv.textContent = message;
       }
 
-      // ================================================================
-      // INTELLIGENCE ANALYTICS
-      // ================================================================
+      // --- Zone 3: cost ----------------------------------------------------
 
-      document.addEventListener("DOMContentLoaded", () => {
-        loadIntelligenceAnalytics();
-      });
+      function renderCost(cost) {
+        const m = cost.metrics;
+        document.getElementById("cost-coverage").textContent =
+          Metrics.fmtPct(m.coverage.pct) + " coverage";
 
-      async function loadIntelligenceAnalytics() {
-        const [reviewData, qualityData, clientData, geoData, frankData, temporalData] =
-          await Promise.allSettled([
-            fetch("/api/review-queue").then(r => r.json()),
-            fetch("/api/data-quality").then(r => r.json()),
-            fetch("/api/client-intelligence").then(r => r.json()),
-            fetch("/api/geography").then(r => r.json()),
-            fetch("/api/frank-analysis").then(r => r.json()),
-            fetch("/api/temporal").then(r => r.json()),
-          ]);
+        document.getElementById("cost-cards").innerHTML =
+          '<div class="cov-grid">' +
+          [
+            { metric: m.input_tokens, label: "Input tokens", format: "tokens" },
+            { metric: m.output_tokens, label: "Output tokens", format: "tokens" },
+            { metric: m.tokens_p50, label: "Median per doc", format: "tokens" },
+            { metric: m.tokens_p95, label: "p95 per doc", format: "tokens" },
+          ]
+            .map(function (c) {
+              return (
+                '<div class="covcell-static">' +
+                Metrics.renderMetric(c.metric, {
+                  label: c.label,
+                  format: c.format,
+                }) +
+                "</div>"
+              );
+            })
+            .join("") +
+          "</div>";
 
-        if (reviewData.status === "fulfilled") renderReviewQueue(reviewData.value);
-        if (qualityData.status === "fulfilled") renderDataQuality(qualityData.value);
-        if (clientData.status === "fulfilled") renderClientIntelligence(clientData.value);
-        if (geoData.status === "fulfilled") renderGeography(geoData.value);
-        if (frankData.status === "fulfilled") renderFrankAnalysis(frankData.value);
-        if (temporalData.status === "fulfilled") renderTemporalAnalysis(temporalData.value);
-      }
+        barList("cost-clients", cost.series.by_client, "client", "tokens", "tokens");
+        barList(
+          "cost-providers",
+          cost.series.by_provider,
+          "provider",
+          "tokens",
+          "tokens"
+        );
 
-      function renderReviewQueue(data) {
-        const REASONS = [
-          { key: "needs_review_flagged",   label: "Flagged for Review",    color: "#dc3545" },
-          { key: "missing_embeddings",      label: "Missing Embeddings",    color: "#6f42c1" },
-          { key: "missing_text",            label: "Missing Extracted Text",color: "#fd7e14" },
-          { key: "missing_keywords",        label: "Missing Keywords",      color: "#ffc107" },
-          { key: "has_errors",              label: "Processing Errors",     color: "#dc3545" },
-          { key: "low_date_confidence",     label: "Low Date Confidence",   color: "#17a2b8" },
-          { key: "low_client_confidence",   label: "Low Client Confidence", color: "#17a2b8" },
-          { key: "low_state_confidence",    label: "Low State Confidence",  color: "#17a2b8" },
-        ];
-        const container = document.getElementById("review-queue-cards");
-        container.innerHTML = REASONS.map(r => {
-          const count = data[r.key] || 0;
-          const urgency = count === 0 ? "#28a745" : count < 50 ? "#ffc107" : r.color;
-          return `
-            <div style="background:#f8f9fa; border-radius:8px; padding:16px; border-left:4px solid ${urgency}; text-align:center;">
-              <div style="font-size:2em; font-weight:bold; color:${urgency};">${count.toLocaleString()}</div>
-              <div style="font-size:0.82em; color:#6c757d; margin-top:4px;">${r.label}</div>
-            </div>`;
-        }).join("");
-      }
-
-      function renderConfidenceBar(label, dist) {
-        const high   = dist["HIGH"]   || 0;
-        const medium = dist["MEDIUM"] || 0;
-        const low    = dist["LOW"]    || 0;
-        const total  = high + medium + low || 1;
-        const pHigh   = (high   / total * 100).toFixed(1);
-        const pMedium = (medium / total * 100).toFixed(1);
-        const pLow    = (low    / total * 100).toFixed(1);
-        return `
-          <div style="margin-bottom:14px;">
-            <div style="display:flex; justify-content:space-between; font-size:0.85em; margin-bottom:4px;">
-              <span style="font-weight:600;">${label}</span>
-              <span style="color:#6c757d;">${high.toLocaleString()} / ${medium.toLocaleString()} / ${low.toLocaleString()}</span>
-            </div>
-            <div style="display:flex; height:16px; border-radius:8px; overflow:hidden;">
-              <div style="width:${pHigh}%; background:#28a745;" title="High: ${pHigh}%"></div>
-              <div style="width:${pMedium}%; background:#ffc107;" title="Medium: ${pMedium}%"></div>
-              <div style="width:${pLow}%; background:#dc3545;" title="Low: ${pLow}%"></div>
-            </div>
-            <div style="display:flex; gap:12px; font-size:0.78em; color:#6c757d; margin-top:3px;">
-              <span style="color:#28a745;">High ${pHigh}%</span>
-              <span style="color:#856404;">Med ${pMedium}%</span>
-              <span style="color:#dc3545;">Low ${pLow}%</span>
-            </div>
-          </div>`;
-      }
-
-      function renderDataQuality(data) {
-        const barsEl = document.getElementById("confidence-bars");
-        barsEl.innerHTML =
-          renderConfidenceBar("Date Confidence",   data.date_confidence   || {}) +
-          renderConfidenceBar("Client Confidence", data.client_confidence || {}) +
-          renderConfidenceBar("State Confidence",  data.state_confidence  || {});
-
-        const leaderboard = data.bad_data_leaderboard || [];
-        const el = document.getElementById("bad-data-leaderboard");
-        if (!leaderboard.length) {
-          el.innerHTML = '<span style="color:#6c757d;">No data</span>';
-          return;
-        }
-        el.innerHTML = leaderboard.map(row => {
-          const pct = Math.round(row.avg_quality * 100);
-          const color = pct >= 67 ? "#28a745" : pct >= 34 ? "#ffc107" : "#dc3545";
-          return `
-            <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid #f0f0f0;">
-              <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:60%;" title="${escapeHtml(row.client)}">${escapeHtml(row.client)}</span>
-              <span style="display:flex; align-items:center; gap:8px;">
-                <span style="font-size:0.85em; color:#6c757d;">${row.doc_count} docs</span>
-                <span style="font-weight:bold; color:${color};">${pct}%</span>
-              </span>
-            </div>`;
-        }).join("");
-      }
-
-      function renderClientIntelligence(data) {
-        const topClients = (data.top_clients || []).slice(0, 15);
-        new Chart(document.getElementById("top-clients-chart"), {
-          type: "bar",
-          data: {
-            labels: topClients.map(c => c.client.length > 22 ? c.client.slice(0, 22) + "…" : c.client),
-            datasets: [{
-              label: "Documents",
-              data: topClients.map(c => c.doc_count),
-              backgroundColor: "rgba(0, 123, 255, 0.7)",
-              borderColor: "#007bff",
-              borderWidth: 1,
-            }]
-          },
-          options: {
-            indexAxis: "y",
-            responsive: true,
-            maintainAspectRatio: true,
-            plugins: { legend: { display: false } },
-            scales: { x: { beginAtZero: true, ticks: { precision: 0 } } }
-          }
-        });
-
-        const dirty = data.dirty_clients || [];
-        const el = document.getElementById("dirty-clients-table");
-        if (!dirty.length) {
-          el.innerHTML = '<span style="color:#28a745;">All clients normalised cleanly.</span>';
-          return;
-        }
-        el.innerHTML = dirty.slice(0, 10).map(row => `
-          <div style="display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid #f0f0f0;">
-            <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:65%;" title="${escapeHtml(row.client)}">${escapeHtml(row.client)}</span>
-            <span style="color:#dc3545; font-weight:600;">${row.variants} variants</span>
-          </div>`).join("");
-      }
-
-      function renderGeography(data) {
-        const rows = (data.by_state || []).slice(0, 20);
-        new Chart(document.getElementById("geography-chart"), {
-          type: "bar",
-          data: {
-            labels: rows.map(r => r.state),
-            datasets: [{
-              label: "Documents",
-              data: rows.map(r => r.doc_count),
-              backgroundColor: rows.map(r => "rgba(111, 66, 193, 0.7)"),
-              borderColor: "#6f42c1",
-              borderWidth: 1,
-            }]
-          },
-          options: {
-            indexAxis: "y",
-            responsive: true,
-            maintainAspectRatio: true,
-            plugins: {
-              legend: { display: false },
-              tooltip: {
-                callbacks: {
-                  label: ctx => {
-                    const row = rows[ctx.dataIndex];
-                    return ` ${ctx.parsed.x.toLocaleString()} docs (${row.pct}%)`;
-                  }
-                }
-              }
-            },
-            scales: { x: { beginAtZero: true, ticks: { precision: 0 } } }
-          }
-        });
-      }
-
-      function renderFrankAnalysis(data) {
-        const summaryEl = document.getElementById("frank-summary");
-        const frankPct = data.frank_pct || 0;
-        const color = frankPct > 50 ? "#dc3545" : frankPct > 20 ? "#ffc107" : "#28a745";
-        summaryEl.innerHTML = `
-          <div style="display:flex; gap:20px; flex-wrap:wrap;">
-            <div style="background:#f8f9fa; border-radius:8px; padding:12px 20px; border-left:4px solid ${color}; flex:1; min-width:100px; text-align:center;">
-              <div style="font-size:2em; font-weight:bold; color:${color};">${frankPct}%</div>
-              <div style="font-size:0.82em; color:#6c757d;">Franked</div>
-            </div>
-            <div style="background:#f8f9fa; border-radius:8px; padding:12px 20px; border-left:4px solid #007bff; flex:1; min-width:100px; text-align:center;">
-              <div style="font-size:2em; font-weight:bold; color:#007bff;">${(data.frank_count || 0).toLocaleString()}</div>
-              <div style="font-size:0.82em; color:#6c757d;">Frank docs</div>
-            </div>
-            <div style="background:#f8f9fa; border-radius:8px; padding:12px 20px; border-left:4px solid #6c757d; flex:1; min-width:100px; text-align:center;">
-              <div style="font-size:2em; font-weight:bold; color:#6c757d;">${(data.total || 0).toLocaleString()}</div>
-              <div style="font-size:0.82em; color:#6c757d;">Total docs</div>
-            </div>
-          </div>`;
-
-        const overTime = data.over_time || [];
-        if (overTime.length) {
-          new Chart(document.getElementById("frank-over-time-chart"), {
-            type: "line",
+        const months = cost.series.by_month || [];
+        if (months.length) {
+          new Chart(document.getElementById("cost-month-chart"), {
+            type: "bar",
             data: {
-              labels: overTime.map(r => r.month),
+              labels: months.map(function (r) {
+                return r.month;
+              }),
               datasets: [
                 {
-                  label: "Franked",
-                  data: overTime.map(r => r.frank_count),
-                  borderColor: "#dc3545",
-                  backgroundColor: "rgba(220,53,69,0.1)",
-                  tension: 0.3,
-                  fill: true,
+                  label: "Tokens",
+                  data: months.map(function (r) {
+                    return r.tokens;
+                  }),
+                  backgroundColor: "rgba(111,66,193,0.7)",
                 },
-                {
-                  label: "Non-franked",
-                  data: overTime.map(r => r.total - r.frank_count),
-                  borderColor: "#007bff",
-                  backgroundColor: "rgba(0,123,255,0.07)",
-                  tension: 0.3,
-                  fill: true,
-                }
-              ]
-            },
-            options: {
-              responsive: true,
-              maintainAspectRatio: true,
-              plugins: { legend: { position: "top" } },
-              scales: { y: { beginAtZero: true, stacked: false, ticks: { precision: 0 } } }
-            }
-          });
-        }
-
-        const byClient = data.by_client || [];
-        const fcEl = document.getElementById("frank-clients-table");
-        fcEl.innerHTML = byClient.slice(0, 8).map(row => {
-          const pct = row.total ? Math.round(row.frank_count / row.total * 100) : 0;
-          return `
-            <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid #f0f0f0;">
-              <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:60%;" title="${escapeHtml(row.client)}">${escapeHtml(row.client)}</span>
-              <span style="display:flex; align-items:center; gap:8px;">
-                <span style="font-size:0.85em; color:#6c757d;">${row.frank_count.toLocaleString()} frank</span>
-                <span style="font-weight:bold; color:#dc3545;">${pct}%</span>
-              </span>
-            </div>`;
-        }).join("");
-      }
-
-      function renderTemporalAnalysis(data) {
-        const monthly = data.monthly || [];
-        if (monthly.length) {
-          new Chart(document.getElementById("temporal-chart"), {
-            type: "line",
-            data: {
-              labels: monthly.map(r => r.month),
-              datasets: [{
-                label: "Documents by date_created",
-                data: monthly.map(r => r.doc_count),
-                borderColor: "#17a2b8",
-                backgroundColor: "rgba(23,162,184,0.1)",
-                tension: 0.3,
-                fill: true,
-                pointRadius: 3,
-              }]
+              ],
             },
             options: {
               responsive: true,
               maintainAspectRatio: true,
               plugins: { legend: { display: false } },
-              scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
-            }
+            },
+          });
+        }
+      }
+
+      // --- Shared: horizontal bar list -------------------------------------
+
+      function barList(elId, rows, labelKey, valueKey, format) {
+        const el = document.getElementById(elId);
+        if (!el) return;
+        rows = rows || [];
+        if (!rows.length) {
+          el.innerHTML = '<p style="color:#6c757d">No data.</p>';
+          return;
+        }
+        const max = Math.max.apply(
+          null,
+          rows.map(function (r) {
+            return r[valueKey] || 0;
+          })
+        );
+        const fmt = format === "tokens" ? Metrics.fmtTokens : Metrics.fmtCount;
+        el.innerHTML =
+          '<div class="minibars">' +
+          rows
+            .map(function (r) {
+              const pct = max ? ((r[valueKey] || 0) / max) * 100 : 0;
+              return (
+                '<div class="mb"><div class="mb-l" title="' +
+                Metrics.escapeHtml(r[labelKey]) +
+                '">' +
+                Metrics.escapeHtml(r[labelKey]) +
+                '</div><div class="mb-t"><i style="width:' +
+                pct +
+                '%"></i></div><div class="mb-n">' +
+                fmt(r[valueKey]) +
+                "</div></div>"
+              );
+            })
+            .join("") +
+          "</div>";
+      }
+
+      // --- Zone 4: corpus --------------------------------------------------
+
+      function renderCorpus(corpus) {
+        const m = corpus.metrics;
+
+        document.getElementById("corpus-cards").innerHTML =
+          '<div class="cov-grid">' +
+          [
+            { metric: m.total_documents, label: "Documents", format: "count" },
+            { metric: m.distinct_clients, label: "Clients", format: "count" },
+            { metric: m.distinct_states, label: "States", format: "count" },
+            {
+              metric: m.documents_with_topics,
+              label: "With topics",
+              format: "count",
+              showPct: true,
+            },
+            { metric: m.franked, label: "Franked", format: "count", showPct: true },
+            {
+              metric: m.upload_lag_days,
+              label: "Upload lag (days)",
+              format: "count",
+            },
+          ]
+            .map(function (c) {
+              return (
+                '<div class="covcell-static">' +
+                Metrics.renderMetric(c.metric, {
+                  label: c.label,
+                  format: c.format,
+                  showPct: c.showPct,
+                }) +
+                "</div>"
+              );
+            })
+            .join("") +
+          "</div>";
+
+        barList("corpus-clients", corpus.series.top_clients, "client", "docs");
+        barList("corpus-topics", corpus.series.topics, "name", "docs");
+        barList("corpus-subtopics", corpus.series.subtopics, "name", "docs");
+        barList("corpus-sizes", corpus.series.size_bands, "band", "docs");
+        barList("corpus-types", corpus.series.file_types, "type", "docs");
+        barList("corpus-ingest", corpus.series.ingest_source, "source", "docs");
+
+        // Geography keeps its "no state" row visually distinct so the missing
+        // mass reads as missing rather than as another state.
+        const geo = corpus.series.geography || [];
+        const gmax = Math.max.apply(
+          null,
+          geo.map(function (r) {
+            return r.docs;
+          })
+        );
+        document.getElementById("corpus-geography").innerHTML =
+          '<div class="minibars">' +
+          geo
+            .map(function (r) {
+              const pct = gmax ? (r.docs / gmax) * 100 : 0;
+              return (
+                '<div class="mb"><div class="mb-l' +
+                (r.missing ? " mb-missing" : "") +
+                '">' +
+                Metrics.escapeHtml(r.state) +
+                '</div><div class="mb-t"><i class="' +
+                (r.missing ? "bar-missing" : "") +
+                '" style="width:' +
+                pct +
+                '%"></i></div><div class="mb-n">' +
+                Metrics.fmtPct(r.pct_of_corpus) +
+                "</div></div>"
+              );
+            })
+            .join("") +
+          "</div>";
+
+        const f = (corpus.series.franking || [{}])[0];
+        const parts = [
+          { label: "franked", value: f.franked || 0, colour: "#ffc107" },
+          { label: "not franked", value: f.not_franked || 0, colour: "#28a745" },
+          { label: "not extracted", value: f.null || 0, colour: "#ced4da" },
+        ];
+        const ftotal = f.total || 1;
+        document.getElementById("corpus-franking").innerHTML =
+          '<div class="stack">' +
+          parts
+            .map(function (p) {
+              return (
+                '<i style="width:' +
+                (p.value / ftotal) * 100 +
+                "%;background:" +
+                p.colour +
+                '"></i>'
+              );
+            })
+            .join("") +
+          '</div><div class="stack-key">' +
+          parts
+            .map(function (p) {
+              return (
+                '<span><b style="background:' +
+                p.colour +
+                '"></b>' +
+                p.label +
+                " " +
+                Metrics.fmtCount(p.value) +
+                "</span>"
+              );
+            })
+            .join("") +
+          "</div>" +
+          '<div class="mini-note" style="margin-top:10px">' +
+          Metrics.fmtPct(f.pct_of_corpus) +
+          " of the corpus; " +
+          Metrics.fmtPct(f.pct_of_extracted) +
+          " of documents the feature task examined. The first is a floor, the " +
+          "second the better estimate.</div>";
+
+        const tl = corpus.series.timeline || [];
+        if (tl.length) {
+          new Chart(document.getElementById("corpus-timeline-chart"), {
+            type: "line",
+            data: {
+              labels: tl.map(function (r) {
+                return r.month;
+              }),
+              datasets: [
+                {
+                  label: "Documents",
+                  data: tl.map(function (r) {
+                    return r.docs;
+                  }),
+                  borderColor: "#6f42c1",
+                  backgroundColor: "rgba(111,66,193,0.1)",
+                  tension: 0.3,
+                  fill: true,
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: true,
+              plugins: { legend: { display: false } },
+            },
           });
         }
 
-        if (data.avg_lag_days !== null && data.avg_lag_days !== undefined) {
-          const lag = data.avg_lag_days;
-          const lagEl = document.getElementById("temporal-lag");
-          const lagColor = Math.abs(lag) > 365 ? "#dc3545" : Math.abs(lag) > 90 ? "#ffc107" : "#28a745";
-          lagEl.innerHTML = `Avg upload lag: <span style="color:${lagColor};">${lag > 0 ? "+" : ""}${lag} days</span> vs document date`;
-        }
-
-        const spikeDays = data.top_spike_days || [];
-        const spikeEl = document.getElementById("spike-days-list");
-        spikeEl.innerHTML = spikeDays.map((r, i) => `
-          <div style="background:#f8f9fa; border-radius:6px; padding:8px 14px; border-left:3px solid #17a2b8;">
-            <span style="font-weight:600; color:#17a2b8;">#${i+1}</span>
-            <span style="margin-left:8px; color:#2c3e50;">${r.date}</span>
-            <span style="margin-left:8px; font-weight:bold;">${r.doc_count.toLocaleString()} docs</span>
-          </div>`).join("");
+        tableList(
+          "corpus-normalisation",
+          corpus.series.normalisation_gaps,
+          function (r) {
+            return [r.client, r.variants + " variants", Metrics.fmtCount(r.docs)];
+          }
+        );
       }
+
+      function tableList(elId, rows, mapper) {
+        const el = document.getElementById(elId);
+        if (!el) return;
+        rows = rows || [];
+        if (!rows.length) {
+          el.innerHTML = '<p style="color:#6c757d">Nothing flagged.</p>';
+          return;
+        }
+        el.innerHTML =
+          '<div class="tlist">' +
+          rows
+            .map(function (r) {
+              return (
+                "<div>" +
+                mapper(r)
+                  .map(function (cell) {
+                    return "<span>" + Metrics.escapeHtml(cell) + "</span>";
+                  })
+                  .join("") +
+                "</div>"
+              );
+            })
+            .join("") +
+          "</div>";
+      }
+
+      // --- Zone 5: quality -------------------------------------------------
+
+      function renderQuality(quality) {
+        document.getElementById("quality-caveat").textContent = quality.note || "";
+
+        // Four segments, NULL included. The old bars filtered NULL out, so a
+        // corpus that was mostly unextracted could show 90% HIGH.
+        const segments = [
+          { key: "high", label: "High", colour: "#28a745" },
+          { key: "medium", label: "Medium", colour: "#ffc107" },
+          { key: "low", label: "Low", colour: "#dc3545" },
+          { key: "not_extracted", label: "Not extracted", colour: "#ced4da" },
+        ];
+        document.getElementById("quality-confidence").innerHTML = (
+          quality.series.confidence || []
+        )
+          .map(function (row) {
+            const total = row.total || 1;
+            return (
+              '<div class="conf-row"><div class="conf-label">' +
+              Metrics.escapeHtml(row.label) +
+              '</div><div class="stack">' +
+              segments
+                .map(function (s) {
+                  return (
+                    '<i style="width:' +
+                    ((row[s.key] || 0) / total) * 100 +
+                    "%;background:" +
+                    s.colour +
+                    '"></i>'
+                  );
+                })
+                .join("") +
+              '</div><div class="stack-key">' +
+              segments
+                .map(function (s) {
+                  return (
+                    '<span><b style="background:' +
+                    s.colour +
+                    '"></b>' +
+                    s.label +
+                    " " +
+                    Metrics.fmtCount(row[s.key] || 0) +
+                    "</span>"
+                  );
+                })
+                .join("") +
+              "</div></div>"
+            );
+          })
+          .join("");
+
+        tableList("quality-review", quality.series.review_queue, function (r) {
+          return [r.label, Metrics.fmtCount(r.count)];
+        });
+
+        const m = quality.metrics;
+        const cards = [
+          { metric: m.review_backlog, label: "Review backlog", format: "count", showPct: true },
+          { metric: m.date_range_violations, label: "Date out of range", format: "count" },
+          { metric: m.never_embedded, label: "Never embedded", format: "count", showPct: true },
+        ];
+        if (m.embeddings_behind) {
+          cards.push({
+            metric: m.embeddings_behind,
+            label: "Stale embeddings",
+            format: "count",
+          });
+        }
+        if (m.canonical_overrides) {
+          cards.push({
+            metric: m.canonical_overrides,
+            label: "Manual corrections",
+            format: "count",
+          });
+        }
+        cards.push({
+          metric: m.duplicate_groups,
+          label: "Duplicate groups",
+          format: "count",
+        });
+
+        document.getElementById("quality-cards").innerHTML =
+          '<div class="cov-grid">' +
+          cards
+            .map(function (c) {
+              return (
+                '<div class="covcell-static">' +
+                Metrics.renderMetric(c.metric, {
+                  label: c.label,
+                  format: c.format,
+                  showPct: c.showPct,
+                }) +
+                "</div>"
+              );
+            })
+            .join("") +
+          "</div>";
+      }
+
     </script>
   </body>
 </html>
