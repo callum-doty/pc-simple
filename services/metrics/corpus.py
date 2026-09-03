@@ -23,10 +23,11 @@ schema with no coverage caveat at all.
 import logging
 from typing import List
 
-from sqlalchemy import Integer, Text, case, cast, func, literal_column
+from sqlalchemy import Text, cast, func
 from sqlalchemy.orm import Session
 
 from models.document import Document
+from services.metrics.jsonb import array_length
 from services.metrics import scope
 from services.metrics.envelope import Metric, MetricGroup
 
@@ -205,7 +206,7 @@ class CorpusMetrics:
                 COUNT(DISTINCT d.id)                  AS docs
             FROM documents d,
                  LATERAL jsonb_array_elements(
-                     COALESCE(d.keywords -> 'keyword_mappings', '[]'::jsonb)
+                     COALESCE(d.keywords::jsonb -> 'keyword_mappings', '[]'::jsonb)
                  ) AS mapping
             WHERE mapping ->> '{column}' IS NOT NULL
               AND TRIM(mapping ->> '{column}') <> ''
@@ -228,15 +229,7 @@ class CorpusMetrics:
     def _documents_with_topics(self) -> int:
         return (
             self.db.query(func.count(Document.id))
-            .filter(
-                func.jsonb_array_length(
-                    func.coalesce(
-                        Document.keywords["keyword_mappings"],
-                        cast(literal_column("'[]'"), Document.keywords.type),
-                    )
-                )
-                > 0
-            )
+            .filter(array_length(Document.keywords, "keyword_mappings") > 0)
             .scalar()
             or 0
         )

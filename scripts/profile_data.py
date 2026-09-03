@@ -237,6 +237,11 @@ def profile_jsonb_keys(conn, total):
     The catalog documents 26 nested keys; several are declared in the Pydantic
     schemas but never written, and others are written but undeclared. This pass
     settles which is which from the data itself.
+
+    Every column is cast ``::jsonb`` before a jsonb-only function touches it.
+    The model declares these columns JSONB but the deployed database has them
+    as plain ``json``, for which ``jsonb_exists`` and ``jsonb_array_length``
+    do not exist. The cast is a no-op where the column really is jsonb.
     """
     checks = {
         "ai_analysis": [
@@ -285,7 +290,7 @@ def profile_jsonb_keys(conn, total):
         for key in keys:
             n = _one(
                 conn,
-                f'SELECT COUNT(*) FROM documents WHERE jsonb_exists("{column}", :k)',
+                f'SELECT COUNT(*) FROM documents WHERE jsonb_exists("{column}"::jsonb, :k)',
                 k=key,
             )
             col_out[key] = {
@@ -299,7 +304,7 @@ def profile_jsonb_keys(conn, total):
         k: _one(
             conn,
             "SELECT COUNT(*) FROM documents WHERE jsonb_exists("
-            "  file_metadata -> 'processing_cost', :k)",
+            "  file_metadata::jsonb -> 'processing_cost', :k)",
             k=k,
         )
         for k in ("input_tokens", "output_tokens", "provider", "processed_at")
@@ -308,7 +313,7 @@ def profile_jsonb_keys(conn, total):
         k: _one(
             conn,
             "SELECT COUNT(*) FROM documents WHERE jsonb_exists("
-            "  file_metadata -> 'feature_extraction', :k)",
+            "  file_metadata::jsonb -> 'feature_extraction', :k)",
             k=k,
         )
         for k in (
@@ -375,7 +380,7 @@ def profile_hazards(conn, present):
         "note": "Documents whose AI analysis recorded an error key",
         "value": _one(
             conn,
-            "SELECT COUNT(*) FROM documents WHERE jsonb_exists(ai_analysis, 'error')",
+            "SELECT COUNT(*) FROM documents WHERE jsonb_exists(ai_analysis::jsonb, 'error')",
         ),
     }
     h["processing_error_but_completed"] = {
@@ -533,7 +538,7 @@ def profile_hazards(conn, present):
                     conn,
                     "SELECT COUNT(*) FROM documents "
                     "WHERE jsonb_array_length("
-                    "  COALESCE(keywords -> 'keyword_mappings', '[]'::jsonb)) > 0",
+                    "  COALESCE(keywords::jsonb -> 'keyword_mappings', '[]'::jsonb)) > 0",
                 ),
             },
         }
@@ -673,7 +678,7 @@ def profile_pipeline_funnel(conn, total):
          "AND ai_analysis ->> 'summary' <> '' "
          "AND ai_analysis ->> 'summary' NOT ILIKE '%no summary available%'"),
         ("has keyword mappings",
-         "jsonb_array_length(COALESCE(keywords -> 'keyword_mappings', '[]'::jsonb)) > 0"),
+         "jsonb_array_length(COALESCE(keywords::jsonb -> 'keyword_mappings', '[]'::jsonb)) > 0"),
         ("has embedding", "search_vector IS NOT NULL"),
         ("has client_canonical", "client_canonical IS NOT NULL AND client_canonical <> ''"),
         ("has state", "state IS NOT NULL AND TRIM(state) <> ''"),

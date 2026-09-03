@@ -28,20 +28,15 @@ Two kinds of stage, deliberately not drawn the same way:
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 
-from sqlalchemy import Text, and_, cast, func, literal, not_, or_
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Text, and_, cast, func, not_
 
 from models.document import Document
+from services.metrics.jsonb import array_length, has_key
 
 #: The literal an AI analysis carries when it completed but produced nothing
 #: usable. Present in ai_analysis with a non-null summary, so a NULL check
 #: alone reports these documents as successful.
 PLACEHOLDER_SUMMARY = "%no summary available%"
-
-
-def _empty_jsonb_array():
-    """``'[]'::jsonb`` as a bound literal, for COALESCE over a missing key."""
-    return cast(literal("[]"), JSONB)
 
 
 # ---------------------------------------------------------------------------
@@ -81,12 +76,9 @@ def _has_real_summary():
 
 
 def _has_mappings():
-    return (
-        func.jsonb_array_length(
-            func.coalesce(Document.keywords["keyword_mappings"], _empty_jsonb_array())
-        )
-        > 0
-    )
+    # Via services.metrics.jsonb: the deployed keywords column is json, not
+    # jsonb, and jsonb_array_length has no json overload.
+    return array_length(Document.keywords, "keyword_mappings") > 0
 
 
 def _has_embedding():
@@ -104,7 +96,7 @@ def _feature_task_ran():
     nothing" is what makes extraction coverage unreadable. The gap between
     this bar and the client bar is exactly the documents in the second case.
     """
-    return func.jsonb_exists(Document.file_metadata, "feature_extraction")
+    return has_key(Document.file_metadata, "feature_extraction")
 
 
 def _has_client():

@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 
 from models.document import Document
 from services.metrics import scope
+from services.metrics.jsonb import get, get_text
 from services.metrics.envelope import Metric, MetricGroup
 
 logger = logging.getLogger(__name__)
@@ -42,8 +43,14 @@ TOP_CLIENTS = 15
 
 
 def _cost(key: str):
-    """Text accessor for one key inside processing_cost."""
-    return Document.file_metadata["processing_cost"][key].astext
+    """
+    Text accessor for one key inside processing_cost.
+
+    Built from explicit ``->`` / ``->>`` operators rather than ORM subscripts:
+    SQLAlchemy 2.0 renders ``col["k"]`` as PostgreSQL subscript syntax, which
+    requires server version 14+. See services/metrics/jsonb.
+    """
+    return get_text(get(Document.file_metadata, "processing_cost"), key)
 
 
 def _numeric(key: str):
