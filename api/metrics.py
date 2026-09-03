@@ -15,6 +15,16 @@ concept read 100 in one panel and thousands in another.
 Every response body is composed of ``Metric`` envelopes, so each number
 carries the population it was computed over. Handlers here do no arithmetic —
 if a number needs deriving, it belongs in services/metrics/.
+
+The handlers are deliberately ``def``, not ``async def``. Every collector does
+blocking SQLAlchemy I/O and awaits nothing, so declaring them ``async`` ran
+that blocking work directly on the event loop — one slow query froze the whole
+process, including ``/health``, which touches no database at all. Render's
+health check then timed out and restarted the service, which is exactly what
+happened while the json-to-jsonb conversion held its table lock.
+
+FastAPI runs a plain ``def`` path operation in a threadpool, so a slow or
+blocked query costs one worker thread instead of the entire application.
 """
 
 import json
@@ -101,7 +111,7 @@ def _cached(key: str, builder, ttl: int = PIPELINE_CACHE_SECONDS) -> dict:
     summary="Zone 0 — live operational state",
     tags=["Metrics"],
 )
-async def get_now_metrics(db: Session = Depends(get_db)):
+def get_now_metrics(db: Session = Depends(get_db)):
     """
     Live pipeline state: leases against status, broker against backlog,
     zombies, ingest freshness, and duration percentiles.
@@ -128,7 +138,7 @@ async def get_now_metrics(db: Session = Depends(get_db)):
     summary="Zones 1-3 — funnel, reliability, cost",
     tags=["Metrics"],
 )
-async def get_pipeline_metrics(db: Session = Depends(get_db)):
+def get_pipeline_metrics(db: Session = Depends(get_db)):
     """
     Processing outcomes, and (once stages 3-4 land) the pipeline funnel and
     token cost.
@@ -163,7 +173,7 @@ async def get_pipeline_metrics(db: Session = Depends(get_db)):
     summary="Documents lost at one pipeline stage",
     tags=["Metrics"],
 )
-async def get_stage_drilldown(
+def get_stage_drilldown(
     stage_key: str,
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=StageDrilldown.MAX_PER_PAGE),
@@ -210,7 +220,7 @@ async def get_stage_drilldown(
     summary="Zones 4-5 — what is in the archive, and how good it is",
     tags=["Metrics"],
 )
-async def get_corpus_metrics(db: Session = Depends(get_db)):
+def get_corpus_metrics(db: Session = Depends(get_db)):
     """
     Clients, geography, timeline, topics, franking and the free dimensions,
     plus confidence, review backlog, embedding staleness and curation effort.

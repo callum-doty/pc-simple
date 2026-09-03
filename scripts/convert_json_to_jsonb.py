@@ -25,23 +25,45 @@ WHY IT IS WORTH RUNNING
   * ``models/document.py`` declares these columns JSONB. Right now that
     declaration is false.
 
-BEFORE RUNNING
+THIS CAUSES AN OUTAGE. PLAN FOR ONE.
 
-  Reduce the number of lock holders. In the Render dashboard, scale the
-  ``celery-worker`` service to 0 and pause the ``dropbox-ingest`` cron. The
-  web service can keep serving — its queries are short, and this script waits
-  for a gap rather than blocking them. Restore both afterwards.
+  An earlier version of this file claimed the web service could keep serving
+  during the conversion. That was wrong, and running it took the app down.
 
-  Expect minutes per column on a large corpus: the rewrite copies every row,
-  including the TOASTed columns.
+  Two things make it unavoidable:
+
+  * ``ALTER TABLE ... ALTER COLUMN TYPE`` holds ACCESS EXCLUSIVE for the whole
+    rewrite, not just to start it. Every query against ``documents`` blocks
+    for the duration — minutes on a large table.
+  * A *pending* ACCESS EXCLUSIVE request also blocks every new reader that
+    queues behind it. So even the retry attempts stall traffic, whether or not
+    they succeed.
+
+  BEFORE RUNNING:
+
+    1. Scale the web service to 0, or accept that it will be unavailable.
+    2. Scale ``celery-worker`` to 0.
+    3. Suspend the ``dropbox-ingest`` cron.
+
+  AFTER:
+
+    4. Restore all three.
+    5. Restart the web service so it re-detects the column types — the
+       detection in services/metrics/jsonb.py is cached per process, so a
+       running instance keeps casting until it restarts.
+
+  The application is correct either way: with the columns still ``json`` it
+  casts per query, which is slower but not broken. Converting is an
+  optimisation, not a repair. If a maintenance window is hard to find, it is
+  entirely reasonable to leave this until one appears.
 
 USAGE
 
     DATABASE_URL=postgresql://... python -m scripts.convert_json_to_jsonb --dry-run
-    DATABASE_URL=postgresql://... python -m scripts.convert_json_to_jsonb
+    DATABASE_URL=postgresql://... python -m scripts.convert_json_to_jsonb --confirm-outage
 
   --dry-run reports the current types, row count and table size, and exits
-  without touching anything.
+  without touching anything. Converting requires --confirm-outage.
 """
 
 import argparse
@@ -57,14 +79,15 @@ from sqlalchemy import create_engine, text
 JSON_COLUMNS = ("ai_analysis", "keywords", "file_metadata", "embedding_provenance")
 
 #: How long to wait for the exclusive lock before giving up on one attempt.
-#: Short on purpose: a long wait queues behind us and blocks every other
-#: session, which is worse than failing and retrying.
-LOCK_TIMEOUT = "5s"
+#: Deliberately brief: while this request is pending it also blocks every new
+#: reader queuing behind it, so a long wait is itself an outage.
+LOCK_TIMEOUT = "3s"
 
-#: Attempts per column, with a pause between. A busy table usually yields a
-#: gap within a few tries.
-ATTEMPTS = 12
-PAUSE_SECONDS = 10
+#: Attempts per column, with a pause between. With the services scaled down
+#: the lock should be free on the first try; the retries exist for a stray
+#: connection, not for running against live traffic.
+ATTEMPTS = 5
+PAUSE_SECONDS = 5
 
 
 def column_types(conn):
@@ -179,6 +202,14 @@ def main():
         action="store_true",
         help="report current types and exit without changing anything",
     )
+    ap.add_argument(
+        "--confirm-outage",
+        action="store_true",
+        help=(
+            "required to convert: acknowledges that documents is locked for "
+            "the whole rewrite and the application will be unavailable"
+        ),
+    )
     ap.add_argument("--database-url", default=os.getenv("DATABASE_URL"))
     args = ap.parse_args()
 
@@ -201,12 +232,27 @@ def main():
         print(f"Dry run: {len(pending)} column(s) would be converted.")
         return 0
 
+    if not args.confirm_outage:
+        print()
+        print("=" * 70)
+        print("REFUSING TO RUN WITHOUT --confirm-outage")
+        print("=" * 70)
+        print("  ALTER TABLE holds ACCESS EXCLUSIVE on documents for the whole")
+        print("  rewrite. Every query blocks for the duration, and the app")
+        print("  becomes unavailable — this is not a background operation.")
+        print()
+        print("  Scale the web service and celery-worker to 0 and suspend the")
+        print("  dropbox-ingest cron, then re-run with --confirm-outage.")
+        print()
+        print("  The app works correctly without this conversion; it just")
+        print("  casts per query. Postponing is a valid choice.")
+        return 2
+
     print()
     print("=" * 70)
     print("CONVERTING")
     print("=" * 70)
-    print("Scale celery-worker to 0 and pause dropbox-ingest first if you")
-    print("have not — fewer lock holders means fewer retries.")
+    print("Locking documents now. Anything still querying it will block.")
     print()
 
     converted = [c for c in pending if convert(engine, c)]
