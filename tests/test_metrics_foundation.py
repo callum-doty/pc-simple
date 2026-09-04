@@ -250,15 +250,32 @@ class TestDurationVerdict:
     def test_approaching_the_limit_warns(self):
         assert verdict_duration(1200, 1800).state == WARN
 
-    def test_at_the_limit_means_tasks_are_being_killed(self):
+    def test_at_the_limit_means_documents_are_close_to_being_killed(self):
         """
         The soft limit truncates the distribution: a task past it is killed and
         the document marked FAILED. A p95 at the limit means documents are
-        being lost to the timeout, not merely running slowly.
+        close to being lost to the timeout, not merely running slowly.
         """
         v = verdict_duration(1750, 1800)
         assert v.state == BAD
-        assert "being killed" in v.detail
+        assert "close to being killed" in v.detail
+
+    def test_past_the_limit_is_not_reported_as_a_kill(self):
+        """
+        The population is COMPLETED documents, so a killed task cannot be in
+        it — a kill leaves the document FAILED. A span longer than one task is
+        allowed to run is a document measured across several invocations (the
+        PDF path preserves processing_started_at through checkpoint resumes),
+        and must not be described as the pipeline killing tasks.
+
+        Production showed a p95 of 5.7h against a 1800s limit and the tile
+        announced "tasks are being killed" about 20,000 documents that had all
+        completed successfully.
+        """
+        v = verdict_duration(5.7 * 3600, 1800)
+        assert v.state == BAD
+        assert "being killed" not in v.detail
+        assert "wall-clock" in v.detail
 
     def test_no_timing_data_is_unknown(self):
         assert verdict_duration(None, 1800).state == UNKNOWN
@@ -590,3 +607,57 @@ class TestJsonColumnDetection:
         jsonb._needs_cast = None
         assert jsonb.array_elements_fn() == "jsonb_array_elements"
         assert "::jsonb" in jsonb.array_elements_arg("d.keywords -> 'k'")
+
+
+# ---------------------------------------------------------------------------
+# Queue wait population
+# ---------------------------------------------------------------------------
+
+
+class TestQueueWaitWindow:
+    """
+    Queue wait is windowed on ``created_at``, and must stay that way.
+
+    Every requeue path — the zombie sweep, the reprocess endpoint and
+    ``scripts/replay_backlog.py`` — nulls ``processing_started_at`` so the next
+    run is measured on its own. None of them touch ``created_at``. For a
+    document replayed long after upload the difference between the two is
+    therefore the document's age, not the time it waited to be picked up.
+
+    Unwindowed, the historical backlog replay owned the statistic: production
+    reported a p50 queue wait of 3044.8h — 127 days, landing inside the fossil
+    cohort's creation window — and the tile concluded "worker capacity is the
+    limit" about a pipeline that was keeping up. The window is what keeps the
+    figure describing current queue latency.
+    """
+
+    def test_window_is_short_enough_to_exclude_a_replayed_backlog(self):
+        from services.metrics.now import QUEUE_WAIT_WINDOW_DAYS
+
+        # The fossil cohort spans months; anything on that scale re-admits it.
+        assert 0 < QUEUE_WAIT_WINDOW_DAYS <= 30
+
+    def test_query_filters_on_created_at(self):
+        """
+        Pins the filter itself. Dropping it is a one-line change that produces
+        no error, no failing assertion elsewhere, and a wrong tile.
+        """
+        import inspect
+
+        from services.metrics.now import NowMetrics
+
+        source = inspect.getsource(NowMetrics._queue_wait_stats)
+        assert "Document.created_at >= scope.ago(days=QUEUE_WAIT_WINDOW_DAYS)" in source
+
+    def test_label_names_the_window(self):
+        """
+        The envelope's rule: a value may not be rendered without naming the
+        population it came from. Narrowing the population and leaving the old
+        label would have been worse than not narrowing it.
+        """
+        import inspect
+
+        from services.metrics.now import NowMetrics
+
+        source = inspect.getsource(NowMetrics.collect)
+        assert "QUEUE_WAIT_WINDOW_DAYS" in source

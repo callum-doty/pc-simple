@@ -283,9 +283,21 @@ def verdict_duration(p95_seconds: Optional[float], soft_limit_seconds: int) -> V
     """
     p95 worker duration against the Celery soft time limit.
 
-    The limit truncates the distribution — a task past it is killed and marked
-    FAILED — so a p95 approaching it means documents are being lost to the
+    A p95 approaching the limit means documents are close to being lost to the
     timeout rather than merely running slowly.
+
+    It cannot mean they *have* been. This population is ``scope.with_timings``
+    — COMPLETED documents only — and a task killed at the soft limit leaves its
+    document FAILED, so a killed task is definitionally absent here. The
+    earlier wording ("tasks are being killed") therefore stated the one
+    conclusion the population rules out, and stated it most loudly exactly when
+    the span was largest.
+
+    A span past the limit is a document measured across more than one worker
+    invocation: the PDF path stamps ``processing_started_at`` on the first page
+    and ``COALESCE`` preserves it across checkpoint resumes, so a large PDF
+    resumed several times reports the wall-clock from first page to last rather
+    than the runtime of any single task. Real, worth seeing, and not a kill.
     """
     if p95_seconds is None:
         return Verdict(UNKNOWN, "no completed documents with timing data")
@@ -294,6 +306,15 @@ def verdict_duration(p95_seconds: Optional[float], soft_limit_seconds: int) -> V
         return Verdict(OK, f"p95 is {share:.0f}% of the {soft_limit_seconds}s limit")
     if share < 85:
         return Verdict(WARN, f"p95 is {share:.0f}% of the {soft_limit_seconds}s limit")
+    if share < 100:
+        return Verdict(
+            BAD,
+            f"p95 is {share:.0f}% of the {soft_limit_seconds}s limit — documents "
+            f"are close to being killed by the timeout",
+        )
     return Verdict(
-        BAD, f"p95 is {share:.0f}% of the {soft_limit_seconds}s limit — tasks are being killed"
+        BAD,
+        f"p95 is {share:.0f}% of the {soft_limit_seconds}s limit, which one task "
+        f"cannot exceed — these completed across multiple invocations "
+        f"(resumed PDFs), so the span is wall-clock, not worker time",
     )

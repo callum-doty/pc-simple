@@ -49,6 +49,12 @@ LEASE_KEY_PATTERN = "doc_processing_lock:*"
 #: The Dropbox ingest cron interval from render.yaml ("*/10 * * * *").
 INGEST_INTERVAL_SECONDS = 600
 
+#: Upload window for the queue-wait percentiles. See ``_queue_wait_stats`` for
+#: why this cannot be all-time: requeues reset ``processing_started_at`` but
+#: not ``created_at``, so a replayed document otherwise reports its whole age
+#: as a queue wait.
+QUEUE_WAIT_WINDOW_DAYS = 7
+
 
 class NowMetrics:
     """Zone 0. Constructed per request; holds no state between calls."""
@@ -226,11 +232,33 @@ class NowMetrics:
 
     def _queue_wait_stats(self) -> dict:
         """
-        Time from upload to the worker picking the document up.
+        Time from upload to the worker picking the document up, over documents
+        uploaded in the last :data:`QUEUE_WAIT_WINDOW_DAYS` days.
 
         Separately meaningful from processing duration: a rising queue wait
         with flat worker duration means the answer is more concurrency, not
         optimisation. Nothing on the old dashboard distinguished the two.
+
+        WHY THIS IS WINDOWED
+
+        ``processing_started_at`` is cleared on every requeue — the zombie
+        sweep, the reprocess endpoint and ``scripts/replay_backlog.py`` all
+        null it so the next run is measured on its own — while ``created_at``
+        never moves. For a document replayed long after upload the difference
+        is therefore the document's *age*, not the time it waited to be picked
+        up.
+
+        Unwindowed, that made the historical backlog replay the dominant
+        population: the fossil cohort (created 2025-08-05 to 2026-05-20, see
+        scripts/replay_backlog.py) reported a p50 queue wait of ~127 days and
+        the tile concluded "worker capacity is the limit" about a pipeline
+        that was keeping up fine. A document uploaded inside the window has no
+        room to report a months-long wait, so the figure describes current
+        queue latency, which is the only thing the tile is read for.
+
+        This measures documents that *have* started. A document still waiting
+        is not in the population at all — the backlog pair above is what shows
+        those, and it is the honest place to look for work that never started.
         """
         seconds = func.extract(
             "epoch", Document.processing_started_at - Document.created_at
@@ -244,6 +272,7 @@ class NowMetrics:
             .filter(
                 Document.processing_started_at.isnot(None),
                 Document.created_at.isnot(None),
+                Document.created_at >= scope.ago(days=QUEUE_WAIT_WINDOW_DAYS),
             )
             .one()
         )
@@ -363,7 +392,10 @@ class NowMetrics:
             Metric(
                 value=queue_wait["p50"],
                 denominator=queue_wait["n"],
-                denominator_label="documents that have started processing",
+                denominator_label=(
+                    f"documents uploaded in the last {QUEUE_WAIT_WINDOW_DAYS} "
+                    f"days that have started processing"
+                ),
                 as_of=as_of,
                 scope="corpus",
             ),
@@ -373,7 +405,10 @@ class NowMetrics:
             Metric(
                 value=queue_wait["p95"],
                 denominator=queue_wait["n"],
-                denominator_label="documents that have started processing",
+                denominator_label=(
+                    f"documents uploaded in the last {QUEUE_WAIT_WINDOW_DAYS} "
+                    f"days that have started processing"
+                ),
                 as_of=as_of,
                 scope="corpus",
             ),
