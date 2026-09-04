@@ -287,3 +287,75 @@ class TestDrilldownGuards:
     def test_per_page_is_capped(self):
         """A drill-down is for triage, not bulk export."""
         assert StageDrilldown.MAX_PER_PAGE == 200
+
+
+class TestPredicateCostShape:
+    """
+    Structural guards on the predicates that dominated a 65-second dashboard
+    load. All three columns they touch were still `json` in production, where
+    every operator re-parses the whole document per row — so how many times a
+    predicate reaches into JSON is a performance property worth pinning.
+    """
+
+    def _sql(self, key, needs_cast):
+        from sqlalchemy import select
+        from sqlalchemy.dialects import postgresql
+
+        from services.metrics import jsonb, stages
+
+        previous = jsonb._needs_cast
+        jsonb._needs_cast = needs_cast
+        try:
+            expr = stages.get(key).predicate()
+            return " ".join(
+                str(
+                    select(expr).compile(
+                        dialect=postgresql.dialect(),
+                        compile_kwargs={"literal_binds": True},
+                    )
+                ).split()
+            )
+        finally:
+            jsonb._needs_cast = previous
+
+    def test_no_cast_on_json_columns_in_either_state(self):
+        """
+        ``json -> jsonb`` parses the document *and* rebuilds it in binary, per
+        row. The predicates use native functions chosen by type instead, so
+        neither state pays for a cast.
+        """
+        for key in ("keyword_mappings", "feature_task_ran", "real_summary"):
+            for needs_cast in (True, False):
+                assert "AS JSONB" not in self._sql(key, needs_cast), (key, needs_cast)
+
+    def test_array_length_matches_the_column_type(self):
+        assert "json_array_length" in self._sql("keyword_mappings", True)
+        assert "jsonb_array_length" in self._sql("keyword_mappings", False)
+
+    def test_key_presence_needs_no_type_specific_function(self):
+        """``-> key IS NOT NULL`` works on both types, so it never branches."""
+        for needs_cast in (True, False):
+            sql = self._sql("feature_task_ran", needs_cast)
+            assert "IS NOT NULL" in sql
+            assert "jsonb_exists" not in sql
+
+    def test_summary_extracted_at_most_twice(self):
+        """
+        Was three times — an explicit IS NOT NULL that SQL's three-valued
+        logic already covers. Each extraction is a full parse on a json column.
+        """
+        assert self._sql("real_summary", True).count("->> 'summary'") <= 2
+
+    def test_summary_still_excludes_null_empty_and_placeholder(self):
+        """The simplification must not have widened what counts as a summary."""
+        sql = self._sql("real_summary", True)
+        assert "!= ''" in sql
+        assert "NOT ILIKE" in sql and "no summary available" in sql
+
+    def test_text_presence_avoids_full_detoast(self):
+        """
+        extracted_text holds full OCR output. Comparing the column to '' 
+        detoasts the whole value; asking for one character does not.
+        """
+        sql = self._sql("extracted_text", True)
+        assert "substr(documents.extracted_text, 1, 1)" in sql

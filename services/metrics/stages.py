@@ -80,8 +80,11 @@ def _has_real_summary():
     one — the document reads as COMPLETED with an ai_analysis present.
     """
     summary = Document.ai_analysis["summary"].astext
+    # No explicit IS NOT NULL: SQL three-valued logic already excludes NULL
+    # from both remaining tests (NULL != '' is NULL, not true). Dropping it
+    # removes one extraction of the key — which on a ``json`` column means one
+    # fewer full parse of the document, per row, on every dashboard load.
     return and_(
-        summary.isnot(None),
         summary != "",
         not_(summary.ilike(PLACEHOLDER_SUMMARY)),
     )

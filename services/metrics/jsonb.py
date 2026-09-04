@@ -123,9 +123,12 @@ def as_jsonb(column):
     return cast(column, JSONB)
 
 
-def empty_array():
-    """``'[]'::jsonb`` as a bound literal, for COALESCE over a missing key."""
-    return cast(literal("[]"), JSONB)
+def array_elements_fn() -> str:
+    """
+    Name of the set-returning unnest function for the deployed column type,
+    for raw-SQL callers.
+    """
+    return "json_array_elements" if _needs_cast else "jsonb_array_elements"
 
 
 def get(column, key: str):
@@ -147,17 +150,35 @@ def has_key(column, key: str):
     """
     ``key`` is present at the top level of ``column``.
 
-    ``jsonb_exists`` rather than the ``?`` operator: ``?`` is also the qmark
-    paramstyle marker, so mixing it with a bound parameter in one statement is
-    a driver-dependent footgun.
+    ``(column -> key) IS NOT NULL`` rather than ``jsonb_exists``. It needs no
+    cast, so it works identically on ``json`` and ``jsonb`` — and on a ``json``
+    column the cast was the expensive part, since ``json -> jsonb`` parses the
+    document *and* rebuilds it in binary for every row.
 
-    Cast only while the columns are still ``json`` — see ``as_jsonb``.
+    Semantics match ``jsonb_exists``: a key present with a JSON ``null`` value
+    yields JSON ``null``, not SQL NULL, so it counts as present either way.
     """
-    return func.jsonb_exists(as_jsonb(column), key)
+    return get(column, key).isnot(None)
+
+
+def _array_length_fn():
+    """
+    ``json_array_length`` or ``jsonb_array_length``, matching the column type.
+
+    Picking the native function avoids casting. The two behave identically;
+    only the accepted input type differs.
+    """
+    return func.json_array_length if _needs_cast else func.jsonb_array_length
 
 
 def array_length(column, key: str):
-    """Length of the array at ``column -> key``, or 0 when the key is absent."""
-    return func.jsonb_array_length(
-        func.coalesce(get(as_jsonb(column), key), empty_array())
-    )
+    """
+    Length of the array at ``column -> key``.
+
+    No COALESCE and no cast. An absent key makes ``-> key`` SQL NULL, the
+    length function returns NULL, and ``NULL > 0`` is NULL — which SQL's
+    three-valued logic already treats as "not matching". Adding a COALESCE to
+    an empty array would force a literal of the right type and reintroduce the
+    type coupling for no behavioural gain.
+    """
+    return _array_length_fn()(get(column, key))

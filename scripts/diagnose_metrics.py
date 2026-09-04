@@ -22,6 +22,11 @@ Read-only: every collector issues SELECTs only.
 Usage, from a Render shell on the web service:
 
     python -m scripts.diagnose_metrics
+    python -m scripts.diagnose_metrics --predicates
+
+``--predicates`` additionally times each funnel predicate on its own, which
+attributes a slow funnel to a specific column rather than to the funnel as a
+whole.
 """
 
 import os
@@ -33,6 +38,53 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 JSON_COLUMNS = ("ai_analysis", "keywords", "file_metadata", "embedding_provenance")
+
+
+def time_predicates(engine):
+    """
+    Time each stage predicate on its own.
+
+    The funnel evaluates all of them in one scan, so a slow funnel says
+    nothing about *which* predicate is slow. Running each as a bare COUNT
+    attributes the cost — and on a ``json`` column the JSON-touching ones
+    dominate, because every operator re-parses the whole document per row.
+    """
+    from sqlalchemy import func, select
+
+    from models.document import Document
+    from services.metrics import jsonb, stages
+
+    print()
+    print("=" * 74)
+    print("PER-PREDICATE COST")
+    print("=" * 74)
+
+    with Session(engine) as session:
+        jsonb.configure(session)
+
+    rows = []
+    for st in (*stages.FUNNEL_STAGES, *stages.COVERAGE_STAGES):
+        if st.is_root:
+            continue
+        with Session(engine) as session:
+            stmt = select(func.count()).select_from(Document).where(st.predicate())
+            started = time.perf_counter()
+            try:
+                n = session.execute(stmt).scalar()
+                elapsed = time.perf_counter() - started
+                rows.append((elapsed, st.key, n))
+            except Exception as e:
+                print(f"  FAIL {st.key}: {e}")
+
+    if not rows:
+        return
+    total = sum(t for t, _, _ in rows)
+    for elapsed, key, n in sorted(rows, reverse=True):
+        share = elapsed / total * 100 if total else 0
+        bar = "#" * int(round(share / 2))
+        print(f"  {key:20} {elapsed * 1000:8.0f} ms  {share:5.1f}%  {n:>8,} rows  {bar}")
+    print(f"\n  summed individually: {total:.1f}s")
+    print("  (the funnel runs these in one scan, so its total is less than this)")
 
 
 def main():
@@ -137,6 +189,9 @@ def main():
         print("  reliability + cost + activity; /metrics/corpus runs corpus +")
         print("  quality. The latter two are cached for 60s, so only the first")
         print("  load after a cache miss pays these costs.")
+
+    if "--predicates" in sys.argv:
+        time_predicates(engine)
 
     print()
     print("=" * 74)

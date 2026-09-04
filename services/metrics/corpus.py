@@ -27,7 +27,7 @@ from sqlalchemy import Text, cast, func
 from sqlalchemy.orm import Session
 
 from models.document import Document
-from services.metrics.jsonb import array_length, needs_cast_sql
+from services.metrics.jsonb import array_elements_fn, array_length
 from services.metrics import scope
 from services.metrics.envelope import Metric, MetricGroup
 
@@ -203,10 +203,11 @@ class CorpusMetrics:
         """
         from sqlalchemy import text
 
-        # Raw SQL, so the cast decision cannot come from the expression
-        # helpers — ask for it explicitly. Empty string once the columns are
-        # genuinely jsonb.
-        kw = f"d.keywords{needs_cast_sql()}"
+        # Raw SQL, so the type decision cannot come from the expression
+        # helpers. Using the native unnest avoids a ::jsonb cast, which on a
+        # json column parses every document and rebuilds it in binary for
+        # every row before any aggregation starts.
+        unnest = array_elements_fn()
         sql = text(
             f"""
             WITH mappings AS (
@@ -215,9 +216,7 @@ class CorpusMetrics:
                     INITCAP(TRIM(mapping ->> 'primary_category'))  AS primary_category,
                     INITCAP(TRIM(mapping ->> 'subcategory'))       AS subcategory
                 FROM documents d,
-                     LATERAL jsonb_array_elements(
-                         COALESCE({kw} -> 'keyword_mappings', '[]'::jsonb)
-                     ) AS mapping
+                     LATERAL {unnest}(d.keywords -> 'keyword_mappings') AS mapping
             )
             SELECT 'primary' AS level, primary_category AS name,
                    COUNT(DISTINCT doc_id) AS docs

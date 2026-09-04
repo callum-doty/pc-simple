@@ -53,7 +53,12 @@ router = APIRouter()
 
 #: Cache TTL for the heavy zones. Zone 0 is deliberately uncached — it is the
 #: only zone whose whole purpose is to be current.
-PIPELINE_CACHE_SECONDS = 60
+#:
+#: Five minutes, not one. These aggregate the whole corpus, which changes on
+#: the timescale of documents being processed, not seconds; and while the JSON
+#: columns remain `json` they are genuinely expensive. Every response carries
+#: its own `as_of`, so a reader can always see how old the figures are.
+PIPELINE_CACHE_SECONDS = 300
 
 #: Namespace for cached metric payloads. Add this to the /api/admin/clear-cache
 #: sweep alongside search:* and facets:*.
