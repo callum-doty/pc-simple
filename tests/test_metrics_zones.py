@@ -435,3 +435,63 @@ class TestPayloadCache:
         from services.metrics import payloads
 
         assert payloads.REFRESH_SECONDS * 2 < payloads.CACHE_SECONDS
+
+
+# ---------------------------------------------------------------------------
+# Topic aggregation keys
+# ---------------------------------------------------------------------------
+
+
+class TestTopicMappingKeys:
+    """
+    The topic query must read the keys the pipeline actually writes.
+
+    Inside a ``keyword_mappings`` entry the fields are ``mapped_primary_category``
+    and ``mapped_subcategory`` — the shape ``prompt_manager`` asks the model for
+    and ``ai_service`` reads back. The bare ``primary_category``/``subcategory``
+    are taxonomy.csv's headers and the TaxonomyTerm columns, which is why they
+    were easy to reach for by mistake.
+
+    Reaching for them cost the panel silently: ``->>`` on an absent key is SQL
+    NULL rather than an error, the IS NOT NULL guards discarded every row, and
+    the query returned zero rows successfully. The panel showed "No data."
+    against a corpus full of mappings, with a 200 and an empty log — there was
+    no failure anywhere to notice.
+    """
+
+    def _topic_sql(self):
+        import inspect
+
+        from services.metrics.corpus import CorpusMetrics
+
+        return inspect.getsource(CorpusMetrics._topic_levels)
+
+    def test_reads_the_mapped_prefixed_keys(self):
+        sql = self._topic_sql()
+        assert "mapping ->> 'mapped_primary_category'" in sql
+        assert "mapping ->> 'mapped_subcategory'" in sql
+
+    def test_does_not_read_the_taxonomy_table_column_names(self):
+        """
+        The bare names are a different thing — taxonomy.csv's header. Reading
+        them from a mapping yields NULL for every row, not an error.
+        """
+        sql = self._topic_sql()
+        assert "mapping ->> 'primary_category'" not in sql
+        assert "mapping ->> 'subcategory'" not in sql
+
+    def test_keys_match_what_the_extraction_pipeline_writes(self):
+        """
+        Pins the metrics reader to the writer. A rename on either side that
+        does not touch the other fails here rather than emptying the panel.
+        """
+        import inspect
+
+        from services import ai_service
+
+        writer = inspect.getsource(ai_service)
+        for key in ("mapped_primary_category", "mapped_subcategory"):
+            assert key in writer, (
+                f"{key} is no longer written by ai_service; the topic "
+                "aggregation reads it and will silently return nothing."
+            )

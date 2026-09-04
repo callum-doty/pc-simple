@@ -196,6 +196,18 @@ class CorpusMetrics:
         Counts DISTINCT documents: a document mentioning three economic terms
         is one document about the economy, not three.
 
+        THE KEYS ARE ``mapped_``-PREFIXED
+
+        Inside a mapping the fields are ``mapped_primary_category`` and
+        ``mapped_subcategory`` — the shape ``prompt_manager`` asks the model
+        for and ``ai_service`` reads back. The bare names ``primary_category``
+        and ``subcategory`` are the *taxonomy table's* columns, from
+        taxonomy.csv's header, and reaching for those here is what broke this
+        panel: ``->>`` on an absent key is SQL NULL rather than an error, the
+        ``IS NOT NULL`` guards below then discarded every row, and the query
+        returned zero rows perfectly successfully. The panel read "No data."
+        against a corpus full of mappings, with a 200 and nothing in the log.
+
         ``INITCAP(TRIM(...))`` collapses the casing duplicate in taxonomy.csv,
         where "Geographic & Demographic Targeting" and "...& demographic
         Targeting" are separate categories. A read-side patch — the CSV should
@@ -213,9 +225,9 @@ class CorpusMetrics:
             f"""
             WITH mappings AS (
                 SELECT
-                    d.id                                           AS doc_id,
-                    INITCAP(TRIM(mapping ->> 'primary_category'))  AS primary_category,
-                    INITCAP(TRIM(mapping ->> 'subcategory'))       AS subcategory
+                    d.id                                                  AS doc_id,
+                    INITCAP(TRIM(mapping ->> 'mapped_primary_category'))  AS primary_category,
+                    INITCAP(TRIM(mapping ->> 'mapped_subcategory'))       AS subcategory
                 FROM documents d,
                      LATERAL {unnest}({mappings_expr}) AS mapping
             )
