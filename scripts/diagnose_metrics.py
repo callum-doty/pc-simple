@@ -147,6 +147,15 @@ def main():
         ("activity           ", ActivityMetrics),
     ]
 
+    # Detect the column types before running anything, exactly as the API
+    # handlers do. Without this the collectors run in the undetected state,
+    # which is a valid-but-slower code path and not what production executes —
+    # so the timings would not describe the real thing.
+    from services.metrics import jsonb
+
+    with Session(engine) as session:
+        jsonb.configure(session)
+
     failures = 0
     timings = []
     for label, cls in collectors:

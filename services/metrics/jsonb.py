@@ -127,8 +127,23 @@ def array_elements_fn() -> str:
     """
     Name of the set-returning unnest function for the deployed column type,
     for raw-SQL callers.
+
+    Three states, not two — see ``_array_length_fn``. Callers must pair this
+    with :func:`array_elements_arg` so the undetected case gets its cast.
     """
-    return "json_array_elements" if _needs_cast else "jsonb_array_elements"
+    if _needs_cast is True:
+        return "json_array_elements"
+    return "jsonb_array_elements"
+
+
+def array_elements_arg(expr: str) -> str:
+    """
+    The argument to :func:`array_elements_fn`, cast if the type is unknown.
+
+    ``json_array_elements`` and ``jsonb_array_elements`` each reject the
+    other's type, so an undetected column must be cast rather than guessed at.
+    """
+    return expr if _needs_cast is not None else f"({expr})::jsonb"
 
 
 def get(column, key: str):
@@ -165,10 +180,22 @@ def _array_length_fn():
     """
     ``json_array_length`` or ``jsonb_array_length``, matching the column type.
 
-    Picking the native function avoids casting. The two behave identically;
-    only the accepted input type differs.
+    Picking the native function avoids a cast. The two behave identically;
+    only the accepted input type differs — and *neither* accepts the other's
+    type, so unlike ``as_jsonb`` there is no name that is safe when the type
+    is unknown. The undetected case therefore casts and uses the jsonb form,
+    which works on both.
+
+    Getting this wrong once already broke production: an earlier version
+    branched on the truthiness of ``_needs_cast``, so the undetected state
+    (None, falsy) selected ``jsonb_array_length`` and every json column raised
+    UndefinedFunction. Three states, three branches — no truthiness.
     """
-    return func.json_array_length if _needs_cast else func.jsonb_array_length
+    if _needs_cast is True:
+        return lambda expr: func.json_array_length(expr)
+    if _needs_cast is False:
+        return lambda expr: func.jsonb_array_length(expr)
+    return lambda expr: func.jsonb_array_length(cast(expr, JSONB))
 
 
 def array_length(column, key: str):

@@ -535,3 +535,58 @@ class TestJsonColumnDetection:
         jsonb.configure(db)
         jsonb.configure(db)
         assert db.execute.call_count == 1
+
+    def test_array_length_never_guesses_when_type_is_unknown(self):
+        """
+        json_array_length and jsonb_array_length each reject the other's type,
+        so unlike the cast there is no safe default name. The undetected state
+        must cast rather than pick one.
+
+        A previous version branched on truthiness, so None selected the jsonb
+        form and every json column raised UndefinedFunction in production.
+        """
+        from sqlalchemy import select
+        from sqlalchemy.dialects import postgresql
+
+        from models.document import Document
+        from services.metrics import jsonb
+
+        def sql(state):
+            jsonb._needs_cast = state
+            expr = jsonb.array_length(Document.keywords, "keyword_mappings")
+            return " ".join(
+                str(
+                    select(expr).compile(
+                        dialect=postgresql.dialect(),
+                        compile_kwargs={"literal_binds": True},
+                    )
+                ).split()
+            )
+
+        json_sql = sql(True)
+        assert "json_array_length" in json_sql and "jsonb_array_length" not in json_sql
+        assert "AS JSONB" not in json_sql
+
+        jsonb_sql = sql(False)
+        assert "jsonb_array_length" in jsonb_sql
+        assert "AS JSONB" not in jsonb_sql
+
+        unknown_sql = sql(None)
+        assert "jsonb_array_length" in unknown_sql
+        assert "AS JSONB" in unknown_sql, "undetected state must cast, not guess"
+
+    def test_array_elements_helpers_agree_on_the_unknown_state(self):
+        """The raw-SQL pair must cast together or not at all."""
+        from services.metrics import jsonb
+
+        jsonb._needs_cast = True
+        assert jsonb.array_elements_fn() == "json_array_elements"
+        assert "::jsonb" not in jsonb.array_elements_arg("d.keywords -> 'k'")
+
+        jsonb._needs_cast = False
+        assert jsonb.array_elements_fn() == "jsonb_array_elements"
+        assert "::jsonb" not in jsonb.array_elements_arg("d.keywords -> 'k'")
+
+        jsonb._needs_cast = None
+        assert jsonb.array_elements_fn() == "jsonb_array_elements"
+        assert "::jsonb" in jsonb.array_elements_arg("d.keywords -> 'k'")

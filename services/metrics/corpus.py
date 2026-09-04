@@ -27,7 +27,7 @@ from sqlalchemy import Text, cast, func
 from sqlalchemy.orm import Session
 
 from models.document import Document
-from services.metrics.jsonb import array_elements_fn, array_length
+from services.metrics.jsonb import array_elements_arg, array_elements_fn, array_length
 from services.metrics import scope
 from services.metrics.envelope import Metric, MetricGroup
 
@@ -208,6 +208,7 @@ class CorpusMetrics:
         # json column parses every document and rebuilds it in binary for
         # every row before any aggregation starts.
         unnest = array_elements_fn()
+        mappings_expr = array_elements_arg("d.keywords -> 'keyword_mappings'")
         sql = text(
             f"""
             WITH mappings AS (
@@ -216,7 +217,7 @@ class CorpusMetrics:
                     INITCAP(TRIM(mapping ->> 'primary_category'))  AS primary_category,
                     INITCAP(TRIM(mapping ->> 'subcategory'))       AS subcategory
                 FROM documents d,
-                     LATERAL {unnest}(d.keywords -> 'keyword_mappings') AS mapping
+                     LATERAL {unnest}({mappings_expr}) AS mapping
             )
             SELECT 'primary' AS level, primary_category AS name,
                    COUNT(DISTINCT doc_id) AS docs
