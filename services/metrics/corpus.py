@@ -236,12 +236,17 @@ class CorpusMetrics:
         try:
             rows = self.db.execute(sql).fetchall()
         except Exception as e:
-            logger.warning(f"Metrics: topic aggregation failed: {e}")
+            # Logged at ERROR with the traceback, and reported as a failure
+            # rather than as an absence. Returning bare empty lists here made
+            # a broken query indistinguishable from a corpus with no taxonomy
+            # mappings: the panel rendered "No data." and the only trace was a
+            # WARNING nobody had reason to look for.
+            logger.error(f"Metrics: topic aggregation failed: {e}", exc_info=True)
             try:
                 self.db.rollback()
             except Exception:
                 logger.warning("Metrics: rollback after topic aggregation failed")
-            return {"topics": [], "subtopics": []}
+            return {"topics": [], "subtopics": [], "failed": str(e)}
 
         topics, subtopics = [], []
         for level, name, docs in rows:
@@ -462,6 +467,10 @@ class CorpusMetrics:
         topic_levels = self._topic_levels()
         g.series["topics"] = topic_levels["topics"]
         g.series["subtopics"] = topic_levels["subtopics"]
+        if topic_levels.get("failed"):
+            # Travels to the panel so a failed aggregation reads as broken
+            # rather than as an empty taxonomy.
+            g.series["topics_error"] = [{"detail": topic_levels["failed"]}]
         g.series["franking"] = [franking]
         g.series["frank_by_state"] = self._frank_by_state()
         g.series["ingest_source"] = self._ingest_source(total)

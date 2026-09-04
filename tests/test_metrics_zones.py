@@ -357,3 +357,81 @@ class TestNaiveCutoff:
         aware = scope.ago(days=30)
         naive = scope.ago_naive(days=30)
         assert abs((aware.replace(tzinfo=None) - naive).total_seconds()) < 2
+
+
+# ---------------------------------------------------------------------------
+# Cached payloads
+# ---------------------------------------------------------------------------
+
+
+class TestPayloadCache:
+    """
+    Building these takes about a minute on production — measured, not guessed.
+    They are refreshed by a beat task and served from Redis, so the cost stays
+    off the request path.
+    """
+
+    def test_cache_hit_is_marked_and_not_rebuilt(self):
+        from unittest.mock import MagicMock, patch
+
+        from services.metrics import payloads
+
+        stored = {"success": True, "pipeline": {}, "generated_at": "2026-09-04T00:00:00+00:00"}
+        with patch.object(payloads, "read", return_value={**stored, "cached": True}), \
+             patch.object(payloads, "build_pipeline") as builder:
+            out = payloads.get_or_build("pipeline", MagicMock())
+        assert out["cached"] is True
+        builder.assert_not_called()
+
+    def test_cache_miss_builds_and_stores(self):
+        """
+        A stopped beat, or an unreachable Redis, must leave the dashboard slow
+        rather than broken.
+        """
+        from unittest.mock import MagicMock, patch
+
+        from services.metrics import payloads
+
+        # Patch through BUILDERS, not the module attribute: the registry holds
+        # the function object captured at import, and that is the reference
+        # get_or_build actually dispatches through.
+        builder = MagicMock(return_value={"success": True, "corpus": {}})
+        with patch.object(payloads, "read", return_value=None), \
+             patch.dict(payloads.BUILDERS, {"corpus": builder}), \
+             patch.object(payloads, "write") as writer:
+            out = payloads.get_or_build("corpus", MagicMock())
+        builder.assert_called_once()
+        writer.assert_called_once()
+        assert out["cached"] is False
+
+    def test_refresh_continues_after_one_builder_fails(self):
+        """
+        One broken zone must not stop the other refreshing — otherwise a single
+        failure re-exposes every panel to a cold rebuild.
+        """
+        from unittest.mock import MagicMock, patch
+
+        from services.metrics import payloads
+
+        with patch.dict(
+            payloads.BUILDERS,
+            {
+                "pipeline": MagicMock(side_effect=RuntimeError("boom")),
+                "corpus": MagicMock(return_value={"success": True}),
+            },
+            clear=True,
+        ), patch.object(payloads, "write") as writer:
+            results = payloads.refresh_all(MagicMock())
+
+        assert results["pipeline"].startswith("failed")
+        assert results["corpus"] == "ok"
+        assert writer.call_count == 1
+
+    def test_refresh_interval_is_inside_the_ttl(self):
+        """
+        A single missed refresh must not expose a cold rebuild, so the beat
+        interval has to be comfortably shorter than how long a payload lives.
+        """
+        from services.metrics import payloads
+
+        assert payloads.REFRESH_SECONDS * 2 < payloads.CACHE_SECONDS

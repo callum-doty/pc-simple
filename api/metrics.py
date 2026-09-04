@@ -27,88 +27,25 @@ FastAPI runs a plain ``def`` path operation in a threadpool, so a slow or
 blocked query costs one worker thread instead of the entire application.
 """
 
-import json
 import logging
-from typing import Optional
-
-import redis as redis_lib
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from config import get_settings
 from database import get_db
-from services.metrics import jsonb, scope
-from services.metrics.activity import ActivityMetrics
-from services.metrics.corpus import CorpusMetrics
-from services.metrics.cost import CostMetrics
+from services.metrics import jsonb, payloads
 from services.metrics.now import NowMetrics
-from services.metrics.pipeline import PipelineMetrics, StageDrilldown
-from services.metrics.quality import QualityMetrics
-from services.metrics.reliability import ReliabilityMetrics
+from services.metrics.pipeline import StageDrilldown
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 router = APIRouter()
 
-#: Cache TTL for the heavy zones. Zone 0 is deliberately uncached — it is the
-#: only zone whose whole purpose is to be current.
-#:
-#: Five minutes, not one. These aggregate the whole corpus, which changes on
-#: the timescale of documents being processed, not seconds; and while the JSON
-#: columns remain `json` they are genuinely expensive. Every response carries
-#: its own `as_of`, so a reader can always see how old the figures are.
-PIPELINE_CACHE_SECONDS = 300
-
-#: Namespace for cached metric payloads. Add this to the /api/admin/clear-cache
-#: sweep alongside search:* and facets:*.
-CACHE_PREFIX = "metrics:"
-
-
-def _cache_client() -> Optional[redis_lib.Redis]:
-    if not settings.redis_url:
-        return None
-    try:
-        client = redis_lib.from_url(settings.redis_url, decode_responses=True)
-        client.ping()
-        return client
-    except Exception as e:
-        logger.warning(f"Metrics cache unavailable, serving uncached: {e}")
-        return None
-
-
-def _cached(key: str, builder, ttl: int = PIPELINE_CACHE_SECONDS) -> dict:
-    """
-    Serve a metric payload from Redis, or build and store it.
-
-    A cache miss or an unreachable Redis both fall through to building the
-    payload — metrics degrade to slower, never to wrong. The stored payload
-    keeps its original ``as_of``, so a cached response reports its true age
-    rather than implying it was read now.
-    """
-    client = _cache_client()
-    full_key = f"{CACHE_PREFIX}{key}"
-
-    if client is not None:
-        try:
-            hit = client.get(full_key)
-            if hit:
-                payload = json.loads(hit)
-                payload["cached"] = True
-                return payload
-        except Exception as e:
-            logger.warning(f"Metrics cache read failed for {full_key}: {e}")
-
-    payload = builder()
-    payload["cached"] = False
-
-    if client is not None:
-        try:
-            client.set(full_key, json.dumps(payload, default=str), ex=ttl)
-        except Exception as e:
-            logger.warning(f"Metrics cache write failed for {full_key}: {e}")
-
-    return payload
+#: Payload construction and caching live in services/metrics/payloads.py so
+#: the Celery beat worker can build the same payloads without importing this
+#: module. See that file for why the worker builds them at all.
+CACHE_PREFIX = payloads.CACHE_PREFIX
 
 
 @router.get(
@@ -155,17 +92,7 @@ def get_pipeline_metrics(db: Session = Depends(get_db)):
         # One catalog query per process, cached: decides whether the JSON
         # predicates below need a ::jsonb cast. See services/metrics/jsonb.
         jsonb.configure(db)
-        def build() -> dict:
-            return {
-                "success": True,
-                "pipeline": PipelineMetrics(db).collect().as_dict(),
-                "reliability": ReliabilityMetrics(db).collect().as_dict(),
-                "cost": CostMetrics(db).collect().as_dict(),
-                "activity": ActivityMetrics(db).collect().as_dict(),
-                "generated_at": scope.now_utc().isoformat(),
-            }
-
-        return _cached("pipeline", build)
+        return payloads.get_or_build("pipeline", db)
     except Exception as e:
         logger.error(f"Error collecting pipeline metrics: {e}", exc_info=True)
         raise HTTPException(
@@ -237,15 +164,7 @@ def get_corpus_metrics(db: Session = Depends(get_db)):
         # One catalog query per process, cached: decides whether the JSON
         # predicates below need a ::jsonb cast. See services/metrics/jsonb.
         jsonb.configure(db)
-        def build() -> dict:
-            return {
-                "success": True,
-                "corpus": CorpusMetrics(db).collect().as_dict(),
-                "quality": QualityMetrics(db).collect().as_dict(),
-                "generated_at": scope.now_utc().isoformat(),
-            }
-
-        return _cached("corpus", build)
+        return payloads.get_or_build("corpus", db)
     except Exception as e:
         logger.error(f"Error collecting corpus metrics: {e}", exc_info=True)
         raise HTTPException(

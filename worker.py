@@ -8,6 +8,7 @@ from services.ai_service import AIService
 from services.storage_service import StorageService
 from services.preview_service import PreviewService
 from services.feature_extraction_service import extract_document_features, load_canonical_map_from_db
+from services.metrics.payloads import REFRESH_SECONDS
 from models.document import DocumentStatus
 import logging
 from typing import Generator, Tuple, List, Dict, Any, Optional
@@ -207,6 +208,15 @@ celery_app.conf.update(
             "task": "recover_abandoned_documents_task",
             "schedule": 120.0,  # 2 minutes
         },
+        # Keeps the dashboard's expensive corpus aggregates warm. Measured on
+        # production, building them takes about a minute — far too long to do
+        # inside a web request. Interval is well inside the cache TTL so a
+        # single missed run never exposes a cold rebuild.
+        # See services/metrics/payloads.py.
+        "refresh-dashboard-metrics": {
+            "task": "refresh_dashboard_metrics_task",
+            "schedule": float(REFRESH_SECONDS),
+        },
     },
 )
 
@@ -401,6 +411,35 @@ def _process_document_holistically(
 
 
 from database import get_db
+
+
+@celery_app.task(name="refresh_dashboard_metrics_task")
+def refresh_dashboard_metrics_task():
+    """
+    Rebuild the dashboard's cached metric payloads.
+
+    Moves roughly a minute of corpus-wide aggregation off the request path.
+    The API still builds on a cache miss, so if this stops running the
+    dashboard gets slow rather than broken — and logs a cache miss saying to
+    check beat.
+    """
+    from database import SessionLocal
+    from services.metrics.payloads import refresh_all
+
+    db = SessionLocal()
+    try:
+        started = datetime.now(timezone.utc)
+        results = refresh_all(db)
+        elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+        logger.info(
+            "Dashboard metrics refreshed in %.1fs: %s",
+            elapsed,
+            ", ".join(f"{k}={v}" for k, v in results.items()),
+        )
+    except Exception as e:
+        logger.error(f"Error refreshing dashboard metrics: {e}", exc_info=True)
+    finally:
+        db.close()
 
 
 @celery_app.task(name="recover_abandoned_documents_task")

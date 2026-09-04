@@ -903,6 +903,9 @@
           const r = await fetch("/api/metrics/pipeline");
           const d = await r.json();
           renderKeyMetrics(d);
+          // Held for the stage drill-down, which reads the same funnel counts
+          // rather than re-fetching them.
+          pipelineData = d.pipeline;
           renderFunnel(d.pipeline);
           renderCoverage(d.pipeline);
           renderCost(d.cost);
@@ -1148,23 +1151,16 @@
       // --- Zone 1: pipeline funnel + coverage ------------------------------
       // Both read /api/metrics/pipeline, whose counts come from the same stage
       // predicates the drill-down uses, so a bar and its list cannot disagree.
+      //
+      // The fetch lives in loadPipeline() above, with the rest of the zones
+      // that endpoint feeds. There was a second loadPipeline() here that
+      // rendered only these two panels; being the later declaration it won
+      // hoisting and silently replaced the first, so the key metrics, cost,
+      // status, trend, recent-upload and search panels were never drawn — no
+      // error, because the surviving function did its own job correctly.
 
       let pipelineData = null;
       let openStageKey = null;
-
-      async function loadPipeline() {
-        try {
-          const response = await fetch("/api/metrics/pipeline");
-          const payload = await response.json();
-          pipelineData = payload.pipeline;
-          renderFunnel(pipelineData);
-          renderCoverage(pipelineData);
-        } catch (error) {
-          console.error("Error fetching pipeline metrics:", error);
-          document.getElementById("funnel-rows").innerHTML =
-            '<p style="color:#dc3545">Could not load pipeline metrics.</p>';
-        }
-      }
 
       function renderFunnel(data) {
         const rows = (data.series && data.series.funnel) || [];
@@ -1901,8 +1897,23 @@
           "</div>";
 
         barList("corpus-clients", corpus.series.top_clients, "client", "docs");
-        barList("corpus-topics", corpus.series.topics, "name", "docs");
-        barList("corpus-subtopics", corpus.series.subtopics, "name", "docs");
+        // A failed aggregation says so. "No data." here previously meant
+        // either an empty taxonomy or a query that raised, with nothing on
+        // the page distinguishing them.
+        const topicsError = (corpus.series.topics_error || [])[0];
+        if (topicsError) {
+          const msg =
+            '<p style="color:#dc3545">Topic aggregation failed — see the ' +
+            "service log.</p>" +
+            '<p class="mini-note">' +
+            Metrics.escapeHtml(topicsError.detail) +
+            "</p>";
+          document.getElementById("corpus-topics").innerHTML = msg;
+          document.getElementById("corpus-subtopics").innerHTML = "";
+        } else {
+          barList("corpus-topics", corpus.series.topics, "name", "docs");
+          barList("corpus-subtopics", corpus.series.subtopics, "name", "docs");
+        }
         barList("corpus-sizes", corpus.series.size_bands, "band", "docs");
         barList("corpus-types", corpus.series.file_types, "type", "docs");
         barList("corpus-ingest", corpus.series.ingest_source, "source", "docs");
